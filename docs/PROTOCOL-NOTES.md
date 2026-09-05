@@ -186,13 +186,23 @@ So neither percentage on its own means the job is over, and a client that
 stopped at `print == 100` would cut the label off mid-feed. Judging completion
 on the page counter is not conservatism, it is the only correct reading.
 
-**The undocumented `u16` at `data[4..6]` of a print status looks like a count of
-row packets.** It stood at 8877 before the job, rose to 8998 during it, and then
-stayed flat - a rise of **121 while 122 row packets were sent**. That is one
-observation on one printer and could be coincidence, but it is the first
-evidence of what those bytes are, and a per-row counter would make a genuine
-dropped-row check possible. Worth confirming by printing two labels in a row and
-seeing whether it continues from where it stopped.
+**The undocumented `u16` at `data[4..6]` of a print status is not a counter.**
+It is worth recording how this was got wrong, because the first reading was
+convincing. On the first print it stood at 8877, rose to 8998, and went flat - a
+rise of 121 while 122 row packets were sent, which looked exactly like a
+per-packet counter and would have made a real dropped-row check possible.
+
+A second print settled it, and settled it the other way. That job sent 194 row
+packets, so a counter would have resumed above 8998 and finished near 9192.
+Instead the value was **below** 8998 for most of the job and **plateaued on 8998
+again**. It is not cumulative, and the 121-versus-122 match was coincidence.
+
+What it does do is ramp while printing and level off at the same figure every
+time, which is the signature of a physical quantity reaching a steady state
+rather than of anything being counted. Print-head temperature is the obvious
+candidate - 8998 would be 89.98 C in hundredths, which is a believable working
+temperature for a thermal head - but that is a guess from two samples and the
+units are unconfirmed. relabel surfaces the raw bytes and acts on none of it.
 
 **The sacrificial sends went out and nothing objected.** The discarded status
 request after `PrintStart` and the discarded heartbeat after `PrintEnd` are both
