@@ -6,8 +6,11 @@ label, and prints it. Linux, macOS and Windows, one codebase.
 
 Rust throughout, Slint for the GUI. No webview, no Qt, no C++, no vendor SDK.
 
-**Status: early. Nothing prints yet.** The protocol layer is written and
-tested; the transport, the renderer and the GUI are not. See
+**Status: early. Nothing has been printed yet.** The protocol layer, the
+transport abstraction with a BLE implementation, the session and the job engine
+are written and tested against an in-memory printer. None of it has met real
+hardware, so treat every claim about a physical printer as untested. The
+renderer and the GUI do not exist yet. See
 [Milestones](docs/DESIGN.md#7-milestones) for the order things land in.
 
 Not affiliated with, endorsed by, or connected to NIIMBOT or Gengcon. "NIIMBOT"
@@ -26,13 +29,34 @@ Bluetooth-first and MIT at once.
 | Crate | Contents |
 | --- | --- |
 | `crates/relabel-proto` | Frame codec, command set, payload builders and parsers, image encoder, print-flow selection, model registry. Bytes in, bytes out — no I/O, no async, no GUI types, one dependency. |
+| `crates/relabel-core` | Transports (BLE, and an in-memory printer), the session that owns reassembly and request/response matching, and the print-job engine. |
 
-The rest of the workspace — `relabel-render`, `relabel-core`, `relabel-gui` and
-a bring-up CLI — is designed but not yet written.
+The rest of the workspace — `relabel-render`, `relabel-gui` and a bring-up CLI —
+is designed but not yet written.
 
 The split is deliberate. `relabel-proto` is pure and synchronous, so the fuzz
 target builds in a second and the protocol tests need neither a Bluetooth stack
 nor a font. Anything that touches a device belongs a layer up.
+
+## Testing without a printer
+
+`relabel-core` ships an in-memory printer that decodes what the session writes
+using the same accumulator the real path uses, and replies as a device would —
+including delivering several frames in one read, or splitting one frame across
+several, which is what a real BLE link does and what most clients get wrong.
+
+The whole session and job engine is tested against it on a simulated clock, so
+`cargo test` needs no hardware, no Bluetooth stack and no permissions:
+
+```bash
+cargo test --workspace
+```
+
+That covers the command sequence and payload widths each print flow emits, that
+`PrintEnd` still goes out on the error path, that unsolicited packets never
+satisfy a pending request, and that a frame too large for the link is refused
+rather than split. What it cannot cover is what firmware actually *enforces* —
+see `docs/PROTOCOL-NOTES.md`.
 
 ## What is known, and how well
 

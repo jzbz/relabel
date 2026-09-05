@@ -2,7 +2,7 @@
 resolver = "3"
 # Members are added as they gain a manifest; the layout the design calls for is
 # proto -> render -> core -> gui, plus a cli used only for hardware bring-up.
-members = ["crates/relabel-proto"]
+members = ["crates/relabel-proto", "crates/relabel-core"]
 
 [workspace.package]
 version = "0.1.0"
@@ -30,6 +30,16 @@ anyhow = "1"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# btleplug needs a tokio runtime, and a print job is a multi-second streaming
+# session with live progress rather than a short request/response - so the
+# runtime lives on its own thread and the GUI hears about it through the Slint
+# event loop, never by blocking on it.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
+# Trait objects. Native async-fn-in-trait is stable, but it is not dyn
+# compatible, and `Box<dyn Transport>` is the whole point of the abstraction:
+# BLE, serial and the replay transport have to be interchangeable at runtime.
+async-trait = "0.1"
 
 [profile.release]
 opt-level = 3

@@ -1,0 +1,29 @@
+[package]
+name = "relabel-core"
+description = "Transports, session and print-job engine for NIIMBOT label printers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+relabel-proto.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+
+# The only maintained cross-platform BLE central in Rust: BlueZ over D-Bus on
+# Linux, CoreBluetooth on macOS, WinRT on Windows. 0.13 is the first release
+# where CoreBluetooth reports the *negotiated* MTU and routes
+# write-without-response through a queue that honours the platform's
+# can-send-now signal - which is exactly the backpressure a printer being fed a
+# few hundred row packets depends on.
+btleplug = "0.13"
+futures-util = "0.3"
+uuid = "1"
+
+[dev-dependencies]
+# The whole session and job engine is exercised against the replay transport,
+# so `cargo test` needs no printer, no Bluetooth stack and no permissions.
+tokio = { workspace = true, features = ["test-util"] }
