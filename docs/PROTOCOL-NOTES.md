@@ -174,6 +174,31 @@ counts must be read unsigned: this roll reported 192 total, but the widely
 copied reference reads them signed, which would turn a roll above 32767 into a
 negative number.
 
+## 3a. Observed during a real print
+
+The first successful print, same unit: a 96 x 200 dot label, 122 row packets,
+about 3 KB on the wire, complete in roughly 5 seconds.
+
+**The two progress percentages run in sequence, not in parallel.** The print
+figure ramps 0 to 100 while the rows are consumed, and only then does the feed
+figure ramp 0 to 100 while the paper moves; the page counter increments last.
+So neither percentage on its own means the job is over, and a client that
+stopped at `print == 100` would cut the label off mid-feed. Judging completion
+on the page counter is not conservatism, it is the only correct reading.
+
+**The undocumented `u16` at `data[4..6]` of a print status looks like a count of
+row packets.** It stood at 8877 before the job, rose to 8998 during it, and then
+stayed flat - a rise of **121 while 122 row packets were sent**. That is one
+observation on one printer and could be coincidence, but it is the first
+evidence of what those bytes are, and a per-row counter would make a genuine
+dropped-row check possible. Worth confirming by printing two labels in a row and
+seeing whether it continues from where it stopped.
+
+**The sacrificial sends went out and nothing objected.** The discarded status
+request after `PrintStart` and the discarded heartbeat after `PrintEnd` are both
+visible in the log, and the job completed cleanly with them in place. That does
+not prove they are *needed* on this model - only that they are harmless.
+
 ## 4. Still open after this pass
 
 The SDK shows what the vendor *sends*. It cannot show what the firmware

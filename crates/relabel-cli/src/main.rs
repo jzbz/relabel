@@ -50,6 +50,22 @@ struct Cli {
     cmd: Cmd,
 }
 
+/// Mirrors [`PrintDirection`] so it can be a command-line value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Dir {
+    Top,
+    Left,
+}
+
+impl From<Dir> for PrintDirection {
+    fn from(d: Dir) -> PrintDirection {
+        match d {
+            Dir::Top => PrintDirection::Top,
+            Dir::Left => PrintDirection::Left,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Cmd {
     /// List Bluetooth devices in range.
@@ -85,6 +101,10 @@ enum Cmd {
         /// Assume this print head width for a dry run, in dots.
         #[arg(long, default_value = "96")]
         head: u16,
+        /// Which axis lies across the head, for a dry run. `left` is what the
+        /// D11/D110 family uses; a real print takes this from the model.
+        #[arg(long, value_enum, default_value = "left")]
+        direction: Dir,
         /// Send the three row counter bytes as zero, to test whether firmware
         /// checks them.
         #[arg(long)]
@@ -111,6 +131,7 @@ async fn main() -> Result<()> {
         dry_run: true,
         file,
         head,
+        direction,
         dither,
         threshold,
         invert,
@@ -122,6 +143,7 @@ async fn main() -> Result<()> {
         return dry_run(
             file,
             *head,
+            (*direction).into(),
             *dither,
             *threshold,
             *invert,
@@ -342,22 +364,22 @@ async fn run(cli: &Cli, session: &Session, id: &Identity, t: &Timeouts) -> Resul
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dry_run(
     file: &std::path::Path,
     head: u16,
+    direction: PrintDirection,
     dither: bitmap::Dither,
     threshold: u8,
     invert: bool,
     zero_counters: bool,
     preview: bool,
 ) -> Result<()> {
-    // Direction is a model property and no model is known here, so the dry run
-    // assumes the simple one and says so.
-    let plane = bitmap::load(file, head, PrintDirection::Top, dither, threshold, invert)?;
+    let plane = bitmap::load(file, head, direction, dither, threshold, invert)?;
     if preview {
         println!("{}", bitmap::preview(&plane, 120));
     }
-    let mut spec = HeadSpec::new(head, PrintDirection::Top);
+    let mut spec = HeadSpec::new(head, direction);
     if zero_counters {
         spec.counts = CountsMode::ForceZero;
     }
@@ -372,7 +394,7 @@ fn dry_run(
     // Throughput is dominated by the write count times the pace, not by bytes.
     let secs = page.frames.len() as f64 * 0.012;
     println!("Roughly {secs:.1}s of row streaming at a 10 ms pace.");
-    println!("(dry run: assumed a {head} dot head, printing along the width)");
+    println!("(dry run: assumed a {head} dot head, direction {direction:?})");
     Ok(())
 }
 
