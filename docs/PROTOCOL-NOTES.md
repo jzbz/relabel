@@ -223,6 +223,19 @@ because **the printer never reports label dimensions**. The tag carries a
 barcode and a used/total count, not millimetres, and the barcode-to-size lookup
 is a cloud endpoint this project does not call.
 
+**`GetPaperInfo` does not answer the label-size question.** This was the most
+promising lead for it, since the command is documented for protocol version 4
+and above and this printer reports exactly 4. It does reply - `0x59` returns
+`0x69` - but with only **four bytes**, `00 18 00 18`: two 16-bit values, both 24
+dots, or 3 mm at 203 dpi. That is a believable gap height and nothing else. The
+documented long form needs nine bytes or more before paper width, direction and
+tail length appear, and this firmware sends four, so none of that arrives.
+Neither figure is anywhere near the 40 mm the label actually measures.
+
+So the size problem stands: a preset table plus a way for the user to measure
+is the answer, not a protocol query. Printing a millimetre ruler on the label
+is the cheapest measuring tool and it needs no new protocol work.
+
 **The sacrificial sends went out and nothing objected.** The discarded status
 request after `PrintStart` and the discarded heartbeat after `PrintEnd` are both
 visible in the log, and the job completed cleanly with them in place. That does
