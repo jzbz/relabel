@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+# Members are added as they gain a manifest; the layout the design calls for is
+# proto -> render -> core -> gui, plus a cli used only for hardware bring-up.
+members = ["crates/relabel-proto"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# What cargo will actually enforce, not what the edition alone asks for. The
+# edition's own floor is 1.85, but slint 1.17 declares 1.92 throughout its tree
+# and cargo enforces the maximum over the whole graph. relabel-proto and
+# relabel-render carry no Slint dependency and still check on 1.85; the toolkit
+# is the whole of the difference, exactly as it is in rpgp.
+rust-version = "1.92"
+license = "MIT"
+repository = "https://github.com/jzbz/relabel"
+
+[workspace.dependencies]
+relabel-proto = { path = "crates/relabel-proto" }
+relabel-render = { path = "crates/relabel-render" }
+relabel-core = { path = "crates/relabel-core" }
+
+# Error enums in every crate. No runtime cost, and it keeps the cores returning
+# typed errors that the GUI can match on rather than strings it has to parse.
+thiserror = "2"
+# GUI and CLI only. The library crates never return anyhow::Error - a caller
+# needs to be able to tell "printer said cover open" from "the socket died".
+anyhow = "1"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "debuginfo"

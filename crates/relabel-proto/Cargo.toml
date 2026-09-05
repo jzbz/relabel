@@ -1,0 +1,22 @@
+[package]
+name = "relabel-proto"
+description = "NIIMBOT label printer wire protocol: frame codec, command set, image encoder, model registry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Deliberately the only dependency. This crate is pure and synchronous so that
+# the fuzz target builds in a second, the protocol tests need no fonts and no
+# Bluetooth stack, and the whole thing stays usable from a context that has no
+# async runtime. Anything that needs I/O belongs in relabel-core.
+[dependencies]
+thiserror.workspace = true
+
+[build-dependencies]
+# Reads vendor/devices.json and emits the model table. serde_json only - the
+# generator is forty lines of matching on a Value, and deriving Deserialize for
+# a schema we do not control would break the build every time the vendor adds a
+# field.
+serde_json.workspace = true

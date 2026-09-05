@@ -1,0 +1,4214 @@
+{
+  "source": "NIIMBOT 6.6.7 (com.gengcon.android.jccloudprinter), assets/DevicesModule_en.json",
+  "extracted": "2026-09-05",
+  "models": [
+    {
+      "id": "10046",
+      "name": "A1 Pro",
+      "series_id": "14",
+      "series_name": "B18 & N1",
+      "wire_codes": [
+        7424
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 120,
+      "label_width_mm": [
+        3,
+        25
+      ],
+      "default_label_mm": [
+        25,
+        38
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 270,
+      "align": "center",
+      "rfid_type": 0,
+      "label_types": [
+        4,
+        3
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10009",
+      "name": "A20",
+      "series_id": "15",
+      "series_name": "B203",
+      "wire_codes": [
+        2817
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        50
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "LOW_DENSITY_2",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10017",
+      "name": "A203",
+      "series_id": "15",
+      "series_name": "B203",
+      "wire_codes": [
+        2818
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        50
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "LOW_DENSITY_2",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10007",
+      "name": "A63",
+      "series_id": "10",
+      "series_name": "B32 系列",
+      "wire_codes": [
+        2054
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 240,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 15,
+        "default": 10,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 2,
+      "label_types": [
+        1,
+        5,
+        2
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10013",
+      "name": "A8",
+      "series_id": "3",
+      "series_name": "B3S 系列",
+      "wire_codes": [
+        256
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 2
+      },
+      "print_direction_deg": 0,
+      "align": "left",
+      "rfid_type": 0,
+      "label_types": [
+        2,
+        1,
+        3
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10031",
+      "name": "A8_P",
+      "series_id": "3",
+      "series_name": "B3S 系列",
+      "wire_codes": [
+        273
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10003",
+      "name": "B1",
+      "series_id": "10003",
+      "series_name": "B1",
+      "wire_codes": [
+        4096
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "LOW_DENSITY_2",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10040",
+      "name": "B1 Pro",
+      "series_id": "10003",
+      "series_name": "B1",
+      "wire_codes": [
+        4097
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10043",
+      "name": "B1 SE",
+      "series_id": "10003",
+      "series_name": "B1",
+      "wire_codes": [
+        4098
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 54,
+      "max_print_height_mm": 350,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "2",
+      "name": "B11",
+      "series_id": "6",
+      "series_name": "B11 系列",
+      "wire_codes": [
+        51457
+      ],
+      "interface": "daozhen",
+      "interface_name": "道臻",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        10,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 6,
+        "max": 15,
+        "default": 10,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "right",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10",
+      "name": "B16",
+      "series_id": "13",
+      "series_name": "萌印",
+      "wire_codes": [
+        1792
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 100,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 270,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "LOW_DENSITY_2",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "47",
+      "name": "B18",
+      "series_id": "14",
+      "series_name": "B18 & N1",
+      "wire_codes": [
+        3584
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 120,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 3,
+      "label_types": [
+        1,
+        5,
+        10,
+        11,
+        3
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10018",
+      "name": "B18S",
+      "series_id": "14",
+      "series_name": "B18 & N1",
+      "wire_codes": [
+        3585
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 120,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 3,
+      "label_types": [
+        1,
+        5,
+        10,
+        11,
+        3
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10038",
+      "name": "B2",
+      "series_id": "10014",
+      "series_name": "B2系列",
+      "wire_codes": [
+        6913
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10042",
+      "name": "B2 Pro",
+      "series_id": "10014",
+      "series_name": "B2系列",
+      "wire_codes": [
+        6912
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 200,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "48",
+      "name": "B203",
+      "series_id": "15",
+      "series_name": "B203",
+      "wire_codes": [
+        2816
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        50
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "LOW_DENSITY_2",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "27",
+      "name": "B21",
+      "series_id": "1",
+      "series_name": "B21系列",
+      "wire_codes": [
+        768
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "left",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        3,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "32",
+      "name": "B21-C2B",
+      "series_id": "1",
+      "series_name": "B21系列",
+      "wire_codes": [
+        771,
+        775
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        10,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        3,
+        5,
+        2
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "LOW_DENSITY_2",
+      "rfid_unsupported_fw": [
+        "1.01",
+        "1.02",
+        "1.03",
+        "1.04",
+        "2.01",
+        "2.02",
+        "2.03",
+        "2.04",
+        "2.05",
+        "2.06",
+        "2.07",
+        "2.08",
+        "2.09",
+        "3.01",
+        "5.01",
+        "5.02",
+        "6.00",
+        "10.01",
+        "20.01",
+        "21.01",
+        "30.01",
+        "31.01",
+        "32.01",
+        "33.01",
+        "35.01"
+      ],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "31",
+      "name": "B21-L2B",
+      "series_id": "1",
+      "series_name": "B21系列",
+      "wire_codes": [
+        769
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "left",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "51",
+      "name": "B21S",
+      "series_id": "1",
+      "series_name": "B21系列",
+      "wire_codes": [
+        777
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        10,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        3,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "LOW_DENSITY_2",
+      "rfid_unsupported_fw": [
+        "1.01",
+        "1.02",
+        "1.03",
+        "1.04",
+        "2.01",
+        "2.02",
+        "2.03",
+        "2.04",
+        "2.05",
+        "2.06",
+        "2.07",
+        "2.08",
+        "2.09",
+        "3.01",
+        "5.01",
+        "5.02",
+        "6.00",
+        "10.01",
+        "20.01",
+        "21.01",
+        "30.01",
+        "31.01",
+        "32.01",
+        "33.01",
+        "35.01"
+      ],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "50",
+      "name": "B21S-C2B",
+      "series_id": "1",
+      "series_name": "B21系列",
+      "wire_codes": [
+        776
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "LOW_DENSITY_2",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10027",
+      "name": "B21_Pro",
+      "series_id": "1",
+      "series_name": "B21系列",
+      "wire_codes": [
+        785
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        50
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        3,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "LOW_DENSITY_2",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "1",
+      "name": "B3",
+      "series_id": "2",
+      "series_name": "B3 系列",
+      "wire_codes": [
+        52993
+      ],
+      "interface": "zkc",
+      "interface_name": "芝柯",
+      "dpi": 203,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        75
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "left",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10028",
+      "name": "B31",
+      "series_id": "10009",
+      "series_name": "B31",
+      "wire_codes": [
+        5632
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 77,
+      "max_print_height_mm": 350,
+      "label_width_mm": [
+        20,
+        75
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "LOW_DENSITY_2",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "37",
+      "name": "B32",
+      "series_id": "10",
+      "series_name": "B32 系列",
+      "wire_codes": [
+        2049
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 240,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 15,
+        "default": 10,
+        "set_type": 2
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 2,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "38",
+      "name": "B32R",
+      "series_id": "10",
+      "series_name": "B32 系列",
+      "wire_codes": [
+        2050
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 240,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 15,
+        "default": 10,
+        "set_type": 2
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 2,
+      "label_types": [
+        1
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "18",
+      "name": "B3S",
+      "series_id": "3",
+      "series_name": "B3S 系列",
+      "wire_codes": [
+        256,
+        260,
+        262
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 2
+      },
+      "print_direction_deg": 0,
+      "align": "left",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10025",
+      "name": "B3S_P",
+      "series_id": "3",
+      "series_name": "B3S 系列",
+      "wire_codes": [
+        272
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 350,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 2
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        3,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10033",
+      "name": "B4",
+      "series_id": "10010",
+      "series_name": "B4",
+      "wire_codes": [
+        6656
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 108,
+      "max_print_height_mm": 350,
+      "label_width_mm": [
+        20,
+        104
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "LOW_DENSITY_2",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10045",
+      "name": "B4 Pro",
+      "series_id": "10010",
+      "series_name": "B4",
+      "wire_codes": [
+        6657
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 108,
+      "max_print_height_mm": 350,
+      "label_width_mm": [
+        20,
+        104
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": true,
+      "supports_5g_wifi": true,
+      "supports_mqtt": true,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": [
+        ""
+      ]
+    },
+    {
+      "id": "3",
+      "name": "B50",
+      "series_id": "5",
+      "series_name": "B50 系列",
+      "wire_codes": [
+        51713
+      ],
+      "interface": "daozhen",
+      "interface_name": "道臻",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        50
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 6,
+        "max": 15,
+        "default": 10,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "right",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "15",
+      "name": "B50W",
+      "series_id": "5",
+      "series_name": "B50 系列",
+      "wire_codes": [
+        51714
+      ],
+      "interface": "daozhen",
+      "interface_name": "道臻",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 6,
+        "max": 15,
+        "default": 10,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "right",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10008",
+      "name": "Betty",
+      "series_id": "12",
+      "series_name": "D101 系列",
+      "wire_codes": [
+        2561
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 25,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        12,
+        24
+      ],
+      "default_label_mm": [
+        30,
+        25
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10035",
+      "name": "C1",
+      "series_id": "10012",
+      "series_name": "C1",
+      "wire_codes": [
+        5120
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 50,
+      "label_width_mm": [
+        12,
+        15
+      ],
+      "default_label_mm": [
+        12,
+        40
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 2
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 2,
+      "label_types": [
+        3
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "44",
+      "name": "D101",
+      "series_id": "12",
+      "series_name": "D101 系列",
+      "wire_codes": [
+        2560
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 25,
+      "max_print_height_mm": 100,
+      "label_width_mm": [
+        12,
+        24
+      ],
+      "default_label_mm": [
+        30,
+        25
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "20",
+      "name": "D11",
+      "series_id": "4",
+      "series_name": "D11 系列",
+      "wire_codes": [
+        512
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 100,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [
+        "1.01",
+        "1.04",
+        "1.05",
+        "1.06",
+        "1.07",
+        "1.08",
+        "1.09",
+        "2.02",
+        "2.03",
+        "2.08",
+        "2.16"
+      ],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "39",
+      "name": "D110",
+      "series_id": "11",
+      "series_name": "D110 系列",
+      "wire_codes": [
+        2304,
+        2305
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 100,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10024",
+      "name": "D110_M",
+      "series_id": "11",
+      "series_name": "D110 系列",
+      "wire_codes": [
+        2320
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 100,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "49",
+      "name": "D11S",
+      "series_id": "4",
+      "series_name": "D11 系列",
+      "wire_codes": [
+        514
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 75,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10023",
+      "name": "D11_H",
+      "series_id": "4",
+      "series_name": "D11 系列",
+      "wire_codes": [
+        528
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10039",
+      "name": "D11_Pro",
+      "series_id": "4",
+      "series_name": "D11 系列",
+      "wire_codes": [
+        531
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        5,
+        1
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "26",
+      "name": "D41",
+      "series_id": "4",
+      "series_name": "D11 系列",
+      "wire_codes": [],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 75,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [
+        "1.04",
+        "1.05",
+        "1.06",
+        "1.07",
+        "1.08",
+        "1.09",
+        "2.02",
+        "2.03",
+        "2.08",
+        "2.16"
+      ],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "24",
+      "name": "D61",
+      "series_id": "4",
+      "series_name": "D11 系列",
+      "wire_codes": [],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 75,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [
+        "1.04",
+        "1.08",
+        "1.09",
+        "2.02",
+        "2.03",
+        "2.08",
+        "2.09",
+        "2.14",
+        "2.15",
+        "2.16"
+      ],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "28",
+      "name": "Dxx",
+      "series_id": "4",
+      "series_name": "D11 系列",
+      "wire_codes": [],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [
+        "1.04",
+        "1.08",
+        "1.09",
+        "2.14",
+        "2.15",
+        "2.16",
+        "2.08",
+        "1.14",
+        "1.15",
+        "1.16",
+        "1.17",
+        "1.18",
+        "1.19",
+        "2.03",
+        "2.04",
+        "2.09",
+        "1.06",
+        "1.07",
+        "0.0"
+      ],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10047",
+      "name": "EP1C",
+      "series_id": "10012",
+      "series_name": "C1",
+      "wire_codes": [
+        5121
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 50,
+      "label_width_mm": [
+        12,
+        15
+      ],
+      "default_label_mm": [
+        12,
+        40
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 2
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 2,
+      "label_types": [
+        3
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10036",
+      "name": "EP2M_H",
+      "series_id": "10007",
+      "series_name": "M2",
+      "wire_codes": [
+        4610
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 200,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 3,
+      "label_types": [
+        1,
+        5,
+        2,
+        10
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10041",
+      "name": "EP3M",
+      "series_id": "10013",
+      "series_name": "M3",
+      "wire_codes": [
+        6402
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 78,
+      "max_print_height_mm": 350,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 3,
+      "label_types": [
+        1,
+        5,
+        2,
+        10
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10020",
+      "name": "ET10",
+      "series_id": "10008",
+      "series_name": "ET10",
+      "wire_codes": [
+        5376
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 200,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        10,
+        200
+      ],
+      "default_label_mm": [
+        200,
+        200
+      ],
+      "density": {
+        "min": 3,
+        "max": 3,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 0,
+      "label_types": [
+        3
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "42",
+      "name": "Fust",
+      "series_id": "4",
+      "series_name": "D11 系列",
+      "wire_codes": [
+        513
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10005",
+      "name": "H1",
+      "series_id": "10004",
+      "series_name": "一小台H1",
+      "wire_codes": [
+        3840
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        8,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10010",
+      "name": "H1S",
+      "series_id": "10005",
+      "series_name": "一小台H1S",
+      "wire_codes": [
+        4352
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        8,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        15
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        3,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "52",
+      "name": "Hi-D110",
+      "series_id": "11",
+      "series_name": "D110 系列",
+      "wire_codes": [
+        2305
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 100,
+      "label_width_mm": [
+        12,
+        15
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "46",
+      "name": "Hi-NB-D11",
+      "series_id": "4",
+      "series_name": "D11 系列",
+      "wire_codes": [
+        512
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 100,
+      "label_width_mm": [
+        12,
+        15
+      ],
+      "default_label_mm": [
+        12,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [
+        "1.04",
+        "1.08",
+        "1.09",
+        "2.02",
+        "2.03",
+        "2.08",
+        "2.09",
+        "2.14",
+        "2.15",
+        "2.16"
+      ],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "13",
+      "name": "JC-M90",
+      "series_id": "6",
+      "series_name": "B11 系列",
+      "wire_codes": [
+        51461
+      ],
+      "interface": "daozhen",
+      "interface_name": "道臻",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 6,
+        "max": 15,
+        "default": 10,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "right",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "12",
+      "name": "JCB3S",
+      "series_id": "3",
+      "series_name": "B3S 系列",
+      "wire_codes": [
+        256
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "left",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10034",
+      "name": "K2",
+      "series_id": "10011",
+      "series_name": "K2",
+      "wire_codes": [
+        6144
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 60,
+      "max_print_height_mm": 300,
+      "label_width_mm": [
+        20,
+        56
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10014",
+      "name": "K3",
+      "series_id": "10006",
+      "series_name": "K3 系列",
+      "wire_codes": [
+        4864
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 82,
+      "max_print_height_mm": 300,
+      "label_width_mm": [
+        20,
+        80
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10044",
+      "name": "K3_ITD",
+      "series_id": "10006",
+      "series_name": "K3 系列",
+      "wire_codes": [
+        4868
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 82,
+      "max_print_height_mm": 300,
+      "label_width_mm": [
+        20,
+        80
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10015",
+      "name": "K3_W",
+      "series_id": "10006",
+      "series_name": "K3 系列",
+      "wire_codes": [
+        4865
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 82,
+      "max_print_height_mm": 300,
+      "label_width_mm": [
+        20,
+        80
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": true,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": [
+        ""
+      ]
+    },
+    {
+      "id": "10048",
+      "name": "K4",
+      "series_id": "10006",
+      "series_name": "K3 系列",
+      "wire_codes": [
+        7168
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 82,
+      "max_print_height_mm": 300,
+      "label_width_mm": [
+        20,
+        104
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 15,
+        "default": 7,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": true,
+      "cutter_type": "AUTOMATIC",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10019",
+      "name": "M2_H",
+      "series_id": "10007",
+      "series_name": "M2",
+      "wire_codes": [
+        4608
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 240,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 3,
+      "label_types": [
+        1,
+        5,
+        2,
+        10
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10037",
+      "name": "M3",
+      "series_id": "10013",
+      "series_name": "M3",
+      "wire_codes": [
+        6400
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 78,
+      "max_print_height_mm": 350,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 3,
+      "label_types": [
+        1,
+        5,
+        2,
+        10
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10021",
+      "name": "MP3K",
+      "series_id": "10006",
+      "series_name": "K3 系列",
+      "wire_codes": [
+        4866
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 82,
+      "max_print_height_mm": 300,
+      "label_width_mm": [
+        20,
+        80
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10022",
+      "name": "MP3K_W",
+      "series_id": "10006",
+      "series_name": "K3 系列",
+      "wire_codes": [
+        4867
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 82,
+      "max_print_height_mm": 300,
+      "label_width_mm": [
+        20,
+        80
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": true,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": [
+        ""
+      ]
+    },
+    {
+      "id": "10032",
+      "name": "N1",
+      "series_id": "14",
+      "series_name": "B18 & N1",
+      "wire_codes": [
+        3586
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 15,
+      "max_print_height_mm": 120,
+      "label_width_mm": [
+        12,
+        12
+      ],
+      "default_label_mm": [
+        30,
+        12
+      ],
+      "density": {
+        "min": 1,
+        "max": 3,
+        "default": 2,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 3,
+      "label_types": [
+        1,
+        11,
+        5,
+        10,
+        3
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "30",
+      "name": "P1",
+      "series_id": "8",
+      "series_name": "P1S",
+      "wire_codes": [
+        1024
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 80,
+      "max_print_height_mm": 150,
+      "label_width_mm": [
+        20,
+        59
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 2
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 2,
+      "label_types": [
+        6
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10016",
+      "name": "P18",
+      "series_id": "8",
+      "series_name": "P1S",
+      "wire_codes": [
+        1026
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 87,
+      "max_print_height_mm": 150,
+      "label_width_mm": [
+        20,
+        56
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 2,
+      "label_types": [
+        6
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "34",
+      "name": "P1S",
+      "series_id": "8",
+      "series_name": "P1S",
+      "wire_codes": [
+        1025
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 87,
+      "max_print_height_mm": 150,
+      "label_width_mm": [
+        20,
+        56
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 90,
+      "align": "center",
+      "rfid_type": 2,
+      "label_types": [
+        6
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "14",
+      "name": "S1",
+      "series_id": "6",
+      "series_name": "B11 系列",
+      "wire_codes": [
+        51458
+      ],
+      "interface": "daozhen",
+      "interface_name": "道臻",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 6,
+        "max": 15,
+        "default": 10,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "left",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "8",
+      "name": "S3",
+      "series_id": "6",
+      "series_name": "B11 系列",
+      "wire_codes": [
+        51460
+      ],
+      "interface": "daozhen",
+      "interface_name": "道臻",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 6,
+        "max": 15,
+        "default": 10,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "left",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "41",
+      "name": "S6",
+      "series_id": "3",
+      "series_name": "B3S 系列",
+      "wire_codes": [
+        261,
+        259,
+        258,
+        257
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "left",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10030",
+      "name": "S6_P",
+      "series_id": "3",
+      "series_name": "B3S 系列",
+      "wire_codes": [
+        274
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 203,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        75
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 1,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10012",
+      "name": "T2S",
+      "series_id": "10001",
+      "series_name": "T2",
+      "wire_codes": [
+        53250
+      ],
+      "interface": "snbc",
+      "interface_name": "新北洋",
+      "dpi": 203,
+      "max_print_width_mm": 107,
+      "max_print_height_mm": 280,
+      "label_width_mm": [
+        20,
+        104
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 20,
+        "default": 15,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "22",
+      "name": "T6",
+      "series_id": "5",
+      "series_name": "B50 系列",
+      "wire_codes": [
+        51715
+      ],
+      "interface": "daozhen",
+      "interface_name": "道臻",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 6,
+        "max": 15,
+        "default": 10,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "right",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "21",
+      "name": "T7",
+      "series_id": "5",
+      "series_name": "B50 系列",
+      "wire_codes": [
+        51717
+      ],
+      "interface": "daozhen",
+      "interface_name": "道臻",
+      "dpi": 203,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 6,
+        "max": 15,
+        "default": 10,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "right",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "7",
+      "name": "T8",
+      "series_id": "7",
+      "series_name": "T8 系列",
+      "wire_codes": [
+        51718
+      ],
+      "interface": "daozhen",
+      "interface_name": "道臻",
+      "dpi": 300,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 200,
+      "label_width_mm": [
+        20,
+        48
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 6,
+        "max": 15,
+        "default": 10,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "right",
+      "rfid_type": 0,
+      "label_types": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "supports_calibration": false,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10006",
+      "name": "T8S",
+      "series_id": "10",
+      "series_name": "B32 系列",
+      "wire_codes": [
+        2053
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 120,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 15,
+        "default": 10,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 0,
+      "label_types": [
+        1
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "NORMAL",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "10029",
+      "name": "TP2M_H",
+      "series_id": "10007",
+      "series_name": "M2",
+      "wire_codes": [
+        4609
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 50,
+      "max_print_height_mm": 240,
+      "label_width_mm": [
+        20,
+        50
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 5,
+        "default": 3,
+        "set_type": 1
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 3,
+      "label_types": [
+        1,
+        2,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    },
+    {
+      "id": "45",
+      "name": "Z401",
+      "series_id": "10",
+      "series_name": "B32 系列",
+      "wire_codes": [
+        2051
+      ],
+      "interface": "niimbot",
+      "interface_name": "精臣-全系列",
+      "dpi": 300,
+      "max_print_width_mm": 75,
+      "max_print_height_mm": 240,
+      "label_width_mm": [
+        20,
+        72
+      ],
+      "default_label_mm": [
+        50,
+        30
+      ],
+      "density": {
+        "min": 1,
+        "max": 15,
+        "default": 10,
+        "set_type": 2
+      },
+      "print_direction_deg": 0,
+      "align": "center",
+      "rfid_type": 2,
+      "label_types": [
+        1,
+        5
+      ],
+      "supports_calibration": true,
+      "supports_cutter": false,
+      "cutter_type": "NONE",
+      "supports_wifi": false,
+      "supports_5g_wifi": false,
+      "supports_mqtt": false,
+      "error_print_strategy": "FORBID",
+      "rfid_unsupported_fw": [],
+      "wifi_unsupported_fw": []
+    }
+  ],
+  "label_sensing_types": [
+    {
+      "code": 1,
+      "name_en": "Gap",
+      "name_zh": "间隙纸"
+    },
+    {
+      "code": 2,
+      "name_en": "Black",
+      "name_zh": "黑标纸"
+    },
+    {
+      "code": 3,
+      "name_en": "Continuous",
+      "name_zh": "连续纸"
+    },
+    {
+      "code": 4,
+      "name_en": "Hole",
+      "name_zh": "定孔纸"
+    },
+    {
+      "code": 5,
+      "name_en": "Transparent",
+      "name_zh": "透明纸"
+    },
+    {
+      "code": 6,
+      "name_en": "PVC tag",
+      "name_zh": "标牌"
+    },
+    {
+      "code": 10,
+      "name_en": "Black mark gap",
+      "name_zh": "黑标间隙"
+    },
+    {
+      "code": 11,
+      "name_en": "Heat-shrink tube",
+      "name_zh": "热缩管"
+    }
+  ],
+  "consumable_materials": [
+    {
+      "code": 1,
+      "name_en": "Thermal Paper",
+      "name_zh": "热敏合成纸-通用",
+      "print_mode": null
+    },
+    {
+      "code": 2,
+      "name_en": "PVC tag",
+      "name_zh": "标牌",
+      "print_mode": null
+    },
+    {
+      "code": 3,
+      "name_en": "PP Paper",
+      "name_zh": "PP合成纸",
+      "print_mode": null
+    },
+    {
+      "code": 4,
+      "name_en": "Thermal Paper - Cardboard",
+      "name_zh": "热敏卡纸",
+      "print_mode": "1"
+    },
+    {
+      "code": 5,
+      "name_en": "Transparent PET",
+      "name_zh": "透明PET",
+      "print_mode": null
+    },
+    {
+      "code": 6,
+      "name_en": "Semi-gloss paper",
+      "name_zh": "铜版纸",
+      "print_mode": "2"
+    },
+    {
+      "code": 7,
+      "name_en": "Semi-gloss cardboard",
+      "name_zh": "铜板卡纸",
+      "print_mode": "2"
+    },
+    {
+      "code": 8,
+      "name_en": "Silver PET",
+      "name_zh": "哑银PET",
+      "print_mode": null
+    },
+    {
+      "code": 9,
+      "name_en": "White PET",
+      "name_zh": "白色PET",
+      "print_mode": null
+    },
+    {
+      "code": 10,
+      "name_en": "White PVC",
+      "name_zh": "白色PVC",
+      "print_mode": "2"
+    },
+    {
+      "code": 11,
+      "name_en": "Premium Thermal Paper",
+      "name_zh": "三防热敏纸",
+      "print_mode": "1"
+    },
+    {
+      "code": 12,
+      "name_en": "PP-Enhanced Cardstock",
+      "name_zh": "PP卡纸",
+      "print_mode": "2"
+    },
+    {
+      "code": 13,
+      "name_en": "Transparent PE",
+      "name_zh": "透明PE",
+      "print_mode": "2"
+    },
+    {
+      "code": 14,
+      "name_en": "White PE",
+      "name_zh": "白色PE",
+      "print_mode": "2"
+    },
+    {
+      "code": 15,
+      "name_en": "Pearlized film",
+      "name_zh": "珠光合成纸",
+      "print_mode": "2"
+    },
+    {
+      "code": 18,
+      "name_en": "Matt black PET",
+      "name_zh": "哑黑PET",
+      "print_mode": "2"
+    },
+    {
+      "code": 19,
+      "name_en": "Transparent Thermal Paper",
+      "name_zh": "透明热敏",
+      "print_mode": "1"
+    },
+    {
+      "code": 21,
+      "name_en": "Iron On Polyurethane Label",
+      "name_zh": "烫印",
+      "print_mode": "2"
+    },
+    {
+      "code": 22,
+      "name_en": "Transparent PP Paper - Wraparound label",
+      "name_zh": "透明PP-缠绕",
+      "print_mode": null
+    },
+    {
+      "code": 23,
+      "name_en": "White Nylon - Liquid nitrogen stick",
+      "name_zh": "白色液氮",
+      "print_mode": "2"
+    },
+    {
+      "code": 28,
+      "name_en": "Thermal Paper - Red Text",
+      "name_zh": "热敏合成纸-红色字迹",
+      "print_mode": "1"
+    },
+    {
+      "code": 29,
+      "name_en": "Thermal Paper - Red and Black",
+      "name_zh": "热敏合成纸-红黑双色",
+      "print_mode": "1"
+    },
+    {
+      "code": 31,
+      "name_en": "Thermal Paper - Low Temp",
+      "name_zh": "热敏合成纸-低温",
+      "print_mode": "1"
+    },
+    {
+      "code": 35,
+      "name_en": "PET Cardstock",
+      "name_zh": "PET卡纸",
+      "print_mode": "2"
+    },
+    {
+      "code": 37,
+      "name_en": "Silk Ribbon",
+      "name_zh": "丝带",
+      "print_mode": "2"
+    },
+    {
+      "code": 53,
+      "name_en": "Heat-shrink tube",
+      "name_zh": "热缩管",
+      "print_mode": "2"
+    },
+    {
+      "code": 54,
+      "name_en": "Tube",
+      "name_zh": "线号管",
+      "print_mode": "2"
+    },
+    {
+      "code": 55,
+      "name_en": "Transparent PP Paper",
+      "name_zh": "透明PP-通用",
+      "print_mode": "2"
+    },
+    {
+      "code": 64,
+      "name_en": "Thermal Paper -Thick",
+      "name_zh": "热敏合成纸-厚款",
+      "print_mode": "1"
+    },
+    {
+      "code": 65,
+      "name_en": "Thermal Paper - Writable",
+      "name_zh": "热敏合成纸-书写",
+      "print_mode": "2"
+    },
+    {
+      "code": 67,
+      "name_en": "PP Paper-Writable",
+      "name_zh": "PP合成纸-书写",
+      "print_mode": "2"
+    },
+    {
+      "code": 70,
+      "name_en": "Thermal Paper - Grayscale",
+      "name_zh": "热敏合成纸-灰阶",
+      "print_mode": "1"
+    },
+    {
+      "code": 80,
+      "name_en": "Thermal Paper - Red and Black (thick)",
+      "name_zh": "热敏合成纸-红黑双色(厚款)",
+      "print_mode": "1"
+    },
+    {
+      "code": 93,
+      "name_en": "Matte white PET",
+      "name_zh": "哑白PET",
+      "print_mode": "2"
+    },
+    {
+      "code": 103,
+      "name_en": "Transparent PVC - Static Sticker",
+      "name_zh": "透明PVC-静电贴",
+      "print_mode": "2"
+    },
+    {
+      "code": 110,
+      "name_en": "Thermal Paper - Flexible",
+      "name_zh": "热敏合成纸-柔性",
+      "print_mode": "2"
+    },
+    {
+      "code": 129,
+      "name_en": "PVC tag",
+      "name_zh": "PVC标牌",
+      "print_mode": "2"
+    }
+  ],
+  "series": [
+    {
+      "id": 10003,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/0d52b9e469a9cbeb56d817880bdc49dd.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/0ba61ef25f7d9006d9147c9c14e79b1b.png",
+      "guide_name": "B1",
+      "hardware_series_id": "10003,10040,10043",
+      "machine_name": "B1,B1 Pro,B1 SE",
+      "sort": 0,
+      "update_time": ""
+    },
+    {
+      "id": 3,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/12c417141d75ce453f5ef22449636861.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/abd0d5483ff4c8803c016e7bfe78aad4.png",
+      "guide_name": "B3S Series",
+      "hardware_series_id": "12,18,41,10013,10025,10030,10031",
+      "machine_name": "JCB3S,B3S,S6,A8,B3S_P,S6_P,A8_P",
+      "sort": 1,
+      "update_time": ""
+    },
+    {
+      "id": 12,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/9fc72ff07a317576ffc06d43028ce248.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/da37a9e76367ce33b9022278019417ab.png",
+      "guide_name": "D101",
+      "hardware_series_id": "44,10008",
+      "machine_name": "D101,Betty",
+      "sort": 2,
+      "update_time": ""
+    },
+    {
+      "id": 1,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/fba8f2eb0934dfd8e164127c4c0f3a9e.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/01d8558fad54fb78ec1e7552eb9ecc5b.png",
+      "guide_name": "B21 Series",
+      "hardware_series_id": "27,31,32,50,51,10027",
+      "machine_name": "B21,B21-L2B,B21-C2B,B21S-C2B,B21S,B21_Pro",
+      "sort": 3,
+      "update_time": ""
+    },
+    {
+      "id": 14,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/ecb5c1ddeb2beda4736befdef29d9fc2.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/959d4a0d5dc3ed386ba3f25380533d4e.png",
+      "guide_name": "B18",
+      "hardware_series_id": "47,10018,10032,10046",
+      "machine_name": "B18,B18S,N1,A1 Pro",
+      "sort": 4,
+      "update_time": ""
+    },
+    {
+      "id": 4,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/8e1c3e4eca1975cdb7b18d7688a1d512.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/5d720ceb7bf02ecf6eaf4d5071730a0e.png",
+      "guide_name": "D11 Series",
+      "hardware_series_id": "20,24,26,28,42,46,49,10023,10039",
+      "machine_name": "D11,D61,D41,Dxx,Fust,Hi-NB-D11,D11S,D11_H,D11_Pro",
+      "sort": 5,
+      "update_time": ""
+    },
+    {
+      "id": 11,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/6f28972b0b5d4c30c62ab67fe6cd08eb.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/1ac2f4d4c6f0f20c1441194c858145af.png",
+      "guide_name": "D110 Series",
+      "hardware_series_id": "39,52,10024",
+      "machine_name": "D110,Hi-D110,D110_M",
+      "sort": 6,
+      "update_time": ""
+    },
+    {
+      "id": 13,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/3296635b88089e19b03465cf3897df87.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/7f9675cfd0dbd70cc855125c0dc6f308.png",
+      "guide_name": "B16",
+      "hardware_series_id": "10",
+      "machine_name": "B16",
+      "sort": 7,
+      "update_time": ""
+    },
+    {
+      "id": 15,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/65c89c0b3b2dafc9b7396eb66140d62f.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/f620f1cc1ba41299b9bf8f5c11db7e43.png",
+      "guide_name": "B203",
+      "hardware_series_id": "48,10009,10017",
+      "machine_name": "B203,A20,A203",
+      "sort": 8,
+      "update_time": ""
+    },
+    {
+      "id": 10,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/aaad40c11f8d6bba715662e0f47e9a26.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/70e4b6ca8e8e6c0c5be2d8e2ae83e2c9.png",
+      "guide_name": "B32 Series",
+      "hardware_series_id": "37,38,45,10006,10007",
+      "machine_name": "B32,B32R,Z401,T8S,A63",
+      "sort": 9,
+      "update_time": ""
+    },
+    {
+      "id": 5,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/47bb2d4d7b2a533d173eea3b9bf34d30.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/a69a50e22a833eda04c936accc1539a8.png",
+      "guide_name": "B50 Series",
+      "hardware_series_id": "3,15,21,22",
+      "machine_name": "B50,B50W,T7,T6",
+      "sort": 10,
+      "update_time": ""
+    },
+    {
+      "id": 6,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/8d42eb911f2088415faf62cba944ba92.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/371e999027af4dc8b817bd94105bf44b.png",
+      "guide_name": "B11 Series",
+      "hardware_series_id": "2,8,13,14",
+      "machine_name": "B11,S3,JC-M90,S1",
+      "sort": 11,
+      "update_time": ""
+    },
+    {
+      "id": 7,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/8d42eb911f2088415faf62cba944ba92.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/939ce5310329665fcc13b194dc7cc9f4.png",
+      "guide_name": "T8 Series",
+      "hardware_series_id": "7",
+      "machine_name": "T8",
+      "sort": 12,
+      "update_time": ""
+    },
+    {
+      "id": 2,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/8d42eb911f2088415faf62cba944ba92.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/32879cbdd6155497e87d3fd219344885.png",
+      "guide_name": "B3 Series",
+      "hardware_series_id": "1",
+      "machine_name": "B3",
+      "sort": 13,
+      "update_time": ""
+    },
+    {
+      "id": 8,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/0dbcb5dc209b6b7c013a588edc302049.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/d6d6b6ce98e7bdbc5d2bfb4658826096.png",
+      "guide_name": "P1S Series",
+      "hardware_series_id": "30,34,10016",
+      "machine_name": "P1,P1S,P18",
+      "sort": 14,
+      "update_time": ""
+    },
+    {
+      "id": 10001,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/53efc05af4391feaa64658d77f26fa59.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/bf1bb2fab76c8ced38eb91c8765b9798.png",
+      "guide_name": "T2",
+      "hardware_series_id": "10001,10012",
+      "machine_name": "T2,T2S",
+      "sort": 15,
+      "update_time": ""
+    },
+    {
+      "id": 10006,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/38a55debc8ae8994fa20e77d9c44d731.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/3c712e0fb9325322d6d2694fce0bbca8.png",
+      "guide_name": "K3",
+      "hardware_series_id": "10014,10015,10021,10022,10044,10048",
+      "machine_name": "K3,K3_W,MP3K,MP3K_W,K3_ITD,K4",
+      "sort": 17,
+      "update_time": ""
+    },
+    {
+      "id": 10005,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/8d42eb911f2088415faf62cba944ba92.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/e43f13f58662ea016c61301b59ba9c3f.png",
+      "guide_name": "H1S",
+      "hardware_series_id": "10010",
+      "machine_name": "H1S",
+      "sort": 18,
+      "update_time": ""
+    },
+    {
+      "id": 10007,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/e5badb6eff071f394984efa0cb4d1def.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/596d254d4d7271502f2497f409687c5a.png",
+      "guide_name": "M2",
+      "hardware_series_id": "10019,10029,10036",
+      "machine_name": "M2_H,TP2M_H,EP2M_H",
+      "sort": 19,
+      "update_time": ""
+    },
+    {
+      "id": 10004,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/8d42eb911f2088415faf62cba944ba92.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/9ea0e5e5ac490a674f75faea8c0bbc3c.png",
+      "guide_name": "H1",
+      "hardware_series_id": "10005",
+      "machine_name": "H1",
+      "sort": 20,
+      "update_time": ""
+    },
+    {
+      "id": 10008,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/71bbaf761a6d6f8511311f5bacccc306.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/28861b00398a3c3b1fc7209be543e9b4.png",
+      "guide_name": "ET10",
+      "hardware_series_id": "10020",
+      "machine_name": "ET10",
+      "sort": 21,
+      "update_time": ""
+    },
+    {
+      "id": 10009,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/024d581124becd617ca7c63b3c960483.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/abb049b7223c167efcf782ecaa660b4a.png",
+      "guide_name": "B31",
+      "hardware_series_id": "10028",
+      "machine_name": "B31",
+      "sort": 22,
+      "update_time": ""
+    },
+    {
+      "id": 10010,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/8d42eb911f2088415faf62cba944ba92.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/0841474a7c38b22241248e015b4df9bf.png",
+      "guide_name": "B4",
+      "hardware_series_id": "10033,10045",
+      "machine_name": "B4,B4 Pro",
+      "sort": 23,
+      "update_time": ""
+    },
+    {
+      "id": 10011,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/cbbccd8657df0bb95b4a0b6a191e0a18.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/a2afc356e535708aa95fe32230feb928.png",
+      "guide_name": "K2",
+      "hardware_series_id": "10034",
+      "machine_name": "K2",
+      "sort": 24,
+      "update_time": ""
+    },
+    {
+      "id": 10012,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/8d42eb911f2088415faf62cba944ba92.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/0e644653b70572d6abb2b42aeb460a28.png",
+      "guide_name": "C1",
+      "hardware_series_id": "10035,10047",
+      "machine_name": "C1,EP1C",
+      "sort": 25,
+      "update_time": ""
+    },
+    {
+      "id": 10013,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/8d42eb911f2088415faf62cba944ba92.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/3e0fa1628a2533466994f2c61eac0e05.png",
+      "guide_name": "M3",
+      "hardware_series_id": "10037,10041",
+      "machine_name": "M3,EP3M",
+      "sort": 26,
+      "update_time": ""
+    },
+    {
+      "id": 10014,
+      "helpVideo": "https://oss-print.niimbot.com/public_resources/images/8d42eb911f2088415faf62cba944ba92.mp4",
+      "guide_image": "https://oss-print.niimbot.com/public_resources/images/e08d464e8ccd02f5b33522ccc79e293a.png",
+      "guide_name": "B2 Series",
+      "hardware_series_id": "10038,10042",
+      "machine_name": "B2,B2 Pro",
+      "sort": 27,
+      "update_time": ""
+    }
+  ]
+}

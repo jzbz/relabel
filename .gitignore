@@ -1,0 +1,14 @@
+/target
+target/
+Cargo.lock.orig
+*.rs.bk
+
+# macOS, which is a target platform, so these will appear.
+.DS_Store
+
+# cargo-fuzz build state and corpora. The targets in fuzz/fuzz_targets are the
+# thing worth keeping; a corpus grows without bound and does not belong in the
+# working tree.
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
