@@ -64,6 +64,31 @@ impl PrintFlow {
     pub fn copies_in_print_quantity(self) -> bool {
         matches!(self, PrintFlow::Base | PrintFlow::Mid)
     }
+
+    /// Whether each page opens with `PageStart`.
+    ///
+    /// [`V5`](Self::V5) does not: its geometry command opens the page.
+    pub fn uses_page_start(self) -> bool {
+        !matches!(self, PrintFlow::V5)
+    }
+
+    /// Whether the label type is set *before* the density.
+    ///
+    /// The order is reversed on [`V5`](Self::V5). Cheap to honour and there is
+    /// no reason to assume it is arbitrary.
+    pub fn label_type_before_density(self) -> bool {
+        matches!(self, PrintFlow::V5)
+    }
+
+    /// Whether this flow needs two deliberately discarded packets.
+    ///
+    /// Printers on this flow drop the first packet after `PrintStart` and the
+    /// first after `PrintEnd`. Sending something disposable at each of those
+    /// points is the documented workaround; without it the packet that gets
+    /// eaten is a real one.
+    pub fn needs_sacrificial_sends(self) -> bool {
+        matches!(self, PrintFlow::V5)
+    }
 }
 
 /// Model ids whose factory offers the three-level D11-family ladder.
@@ -132,13 +157,20 @@ pub fn select_flow(model_id: Option<u16>, protocol: u8) -> PrintFlow {
                 PrintFlow::High
             }
         }
-        _ => {
-            if protocol >= 5 {
-                PrintFlow::V5
-            } else {
-                PrintFlow::V4
-            }
-        }
+        // The generic ladder: the negotiated level *is* the flow. Levels 4 and
+        // 5 send the same payload widths and differ only in whether the
+        // firmware will also accept compressed rows, which relabel never sends.
+        //
+        // This is not the same as "newest wins". Several families cap below
+        // their level - B1 above stops at V4 - so a model-specific rule always
+        // takes precedence over this.
+        _ => match protocol {
+            0 => PrintFlow::Base,
+            1 => PrintFlow::Mid,
+            2 => PrintFlow::High,
+            3 => PrintFlow::V4,
+            _ => PrintFlow::V5,
+        },
     }
 }
 
@@ -185,11 +217,33 @@ mod tests {
         assert_eq!(select_flow(Some(4096), 5), PrintFlow::V4);
     }
 
+    /// The negotiated level is the flow, for anything without a model-specific
+    /// rule. Getting this off by one is silent: the printer acknowledges a
+    /// `PrintStart` of the wrong width and then does nothing useful.
     #[test]
-    fn unknown_models_fall_back_to_the_widely_working_flow() {
-        assert_eq!(select_flow(None, 0), PrintFlow::V4);
-        assert_eq!(select_flow(Some(0xFFFF), 3), PrintFlow::V4);
+    fn the_generic_ladder_maps_level_to_flow() {
+        assert_eq!(select_flow(None, 0), PrintFlow::Base);
+        assert_eq!(select_flow(None, 1), PrintFlow::Mid);
+        assert_eq!(select_flow(None, 2), PrintFlow::High);
+        assert_eq!(select_flow(None, 3), PrintFlow::V4);
+        assert_eq!(select_flow(None, 4), PrintFlow::V5);
         assert_eq!(select_flow(None, 5), PrintFlow::V5);
+    }
+
+    /// A D110_M is not a D110: different wire id, different ladder, and at the
+    /// level real hardware reports it wants the widest payloads.
+    #[test]
+    fn a_d110_m_at_level_four_takes_the_widest_flow() {
+        let f = select_flow(Some(2320), 4);
+        assert_eq!(f, PrintFlow::V5);
+        assert_eq!(f.print_start_len(), 9);
+        assert_eq!(f.set_page_size_len(), 13);
+        assert!(!f.uses_page_start());
+        assert!(f.label_type_before_density());
+        assert!(f.needs_sacrificial_sends());
+        // And it is emphatically not on the D110's ladder.
+        assert!(!D11_FAMILY.contains(&2320));
+        assert_eq!(copies_per_job(Some(2320)), None);
     }
 
     #[test]

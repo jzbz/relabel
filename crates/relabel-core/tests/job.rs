@@ -375,3 +375,45 @@ async fn an_uncapped_printer_still_gets_one_job() {
     let starts = handle.received_ids().iter().filter(|i| **i == 0x01).count();
     assert_eq!(starts, 1, "one job carrying four copies");
 }
+
+/// A D110_M reports protocol level 4, which is the widest flow: nine-byte
+/// PrintStart, thirteen-byte SetPageSize, no PageStart, label type set before
+/// density, and two deliberately discarded packets.
+#[tokio::test(start_paused = true)]
+async fn v5_flow_matches_what_a_d110_m_wants() {
+    let (t, handle) = counting_printer();
+    let s = Session::start(Box::new(t));
+    let flow = relabel_proto::select_flow(Some(2320), 4);
+    assert_eq!(flow, PrintFlow::V5);
+    let pages = one_page(96, 40, 96);
+    print(&s, flow, &pages, &PrintOptions::default(), |_| {})
+        .await
+        .unwrap();
+
+    let got = handle.received();
+    let ids: Vec<u8> = got.iter().map(|f| f.id).collect();
+
+    assert!(!ids.contains(&0x03), "no PageStart on this flow");
+    assert!(!ids.contains(&0x20), "and no PrintClear");
+
+    // Label type before density.
+    let lt = ids.iter().position(|i| *i == 0x23).unwrap();
+    let de = ids.iter().position(|i| *i == 0x21).unwrap();
+    assert!(lt < de, "label type is set first");
+
+    let start = got.iter().find(|f| f.id == 0x01).unwrap();
+    assert_eq!(start.data.len(), 9);
+    let size = got.iter().find(|f| f.id == 0x13).unwrap();
+    assert_eq!(size.data.len(), 13);
+
+    // A discarded status request right after PrintStart, and a discarded
+    // heartbeat after PrintEnd.
+    let ps = ids.iter().position(|i| *i == 0x01).unwrap();
+    let first_status = ids.iter().position(|i| *i == 0xA3).unwrap();
+    assert!(first_status > ps, "the sacrificial send follows PrintStart");
+    assert_eq!(
+        *ids.last().unwrap(),
+        0xDC,
+        "and a heartbeat trails PrintEnd"
+    );
+}

@@ -184,6 +184,7 @@ async fn one_job(
     let _ = session
         .request(payload::print_end(), opts.timeouts.print_end)
         .await;
+    after_print_end(session, flow).await;
 
     result
 }
@@ -199,23 +200,21 @@ async fn run(
 ) -> Result<(), JobError> {
     let t = &opts.timeouts;
 
-    // Settings first. An unsupported value comes back as a fault report rather
-    // than a refusal, and it is not fatal to the job.
-    match session
-        .request(payload::set_density(opts.density), t.settings)
-        .await
-    {
-        Ok(_) => {}
-        Err(e) if e.is_unsupported() => {}
-        Err(e) => return Err(e.into()),
-    }
-    match session
-        .request(payload::set_label_type(opts.label_type), t.settings)
-        .await
-    {
-        Ok(_) => {}
-        Err(e) if e.is_unsupported() => {}
-        Err(e) => return Err(e.into()),
+    // Settings first, in the order this flow wants them. An unsupported value
+    // comes back as a fault report rather than a refusal, and is not fatal.
+    let density = payload::set_density(opts.density);
+    let label_type = payload::set_label_type(opts.label_type);
+    let ordered = if flow.label_type_before_density() {
+        [label_type, density]
+    } else {
+        [density, label_type]
+    };
+    for f in ordered {
+        match session.request(f, t.settings).await {
+            Ok(_) => {}
+            Err(e) if e.is_unsupported() => {}
+            Err(e) => return Err(e.into()),
+        }
     }
 
     let start = match flow {
@@ -226,6 +225,13 @@ async fn run(
     };
     session.request(start, t.print_start).await?;
 
+    // This flow's printers eat the first packet after PrintStart. Give them
+    // something disposable so the one that gets eaten is not a real command.
+    if flow.needs_sacrificial_sends() {
+        let _ = session.send_oneway(payload::print_status()).await;
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+
     for page in pages {
         check_deadline(started, t.job)?;
 
@@ -234,8 +240,10 @@ async fn run(
             refused(&r, "PrintClear")?;
         }
 
-        let r = session.request(payload::page_start(), t.page_start).await?;
-        refused(&r, "PageStart")?;
+        if flow.uses_page_start() {
+            let r = session.request(payload::page_start(), t.page_start).await?;
+            refused(&r, "PageStart")?;
+        }
 
         let geometry = match flow {
             PrintFlow::Base | PrintFlow::Mid => {
@@ -261,6 +269,20 @@ async fn run(
     }
 
     wait_for_pages(session, total, started, opts, on_progress).await
+}
+
+/// The second discarded packet, sent after `PrintEnd`.
+///
+/// Separate from [`run`] because `PrintEnd` is issued by the caller on every
+/// path, including the failure one, and this has to follow it.
+pub(crate) async fn after_print_end(session: &Session, flow: PrintFlow) {
+    if flow.needs_sacrificial_sends() {
+        let _ = session
+            .send_oneway(payload::heartbeat(
+                relabel_proto::payload::HeartbeatKind::Advanced2,
+            ))
+            .await;
+    }
 }
 
 /// Wait until the printer's page counter reaches `total`.

@@ -415,6 +415,15 @@ fn report_identity(id: &Identity, mtu: usize) {
         println!("  battery    about {b}%");
     }
     println!("  mtu        {mtu}");
+    if let Some(st) = &id.status {
+        // Surfaced rather than acted on: the exact meaning of these is not
+        // confirmed, and clamping writes to a field we have guessed at would
+        // break models this has never run against.
+        println!(
+            "  reported   packet<={} send<={} interval={}ms colour={}",
+            st.single_packet_size, st.max_send_size, st.packet_interval, st.supports_color
+        );
+    }
     if !id.missing.is_empty() {
         println!("  unanswered {}", id.missing.join(", "));
     }

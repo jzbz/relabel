@@ -125,7 +125,56 @@ label content well enough, and the framing for those opcodes carries a wider
 length field whose checksum width is unspecified. But the gap is now a decision
 rather than an unknown.
 
-## 3. Still open after this pass
+## 3. Observed on real hardware
+
+First contact, 2026-09-05: a **D110_M**, wire id 2320, firmware 4.17, hardware
+4.01, over BLE on Linux/BlueZ. Negotiated MTU 244.
+
+**A D110_M is not a D110.** Different wire id, a different position on the
+ladder, and a different print flow. The name is misleading and the registry is
+the thing to trust.
+
+**The negotiated level is the flow, and it is easy to be off by one.** This unit
+answers `Connect` with result 3 - "level 2 or better" - and then resolves to
+**level 4** from the status reply, whose two version bytes read 3 and 1 for
+`3 * 100 + 1 = 301`. Level 4 wants the **nine-byte `PrintStart` and thirteen-byte
+`SetPageSize`**, no `PageStart`, the label type set before the density, and two
+deliberately discarded packets. An earlier reading of this table mapped level 4
+to the seven-byte flow; the printer would have acknowledged that and printed
+nothing useful.
+
+**The heartbeat charge byte is the 0-4 enum, not a percentage.** Sources
+disagreed on this. The `PrinterInfo` battery sub-type and the heartbeat charge
+byte were read seconds apart and both returned `3`, which settles it: they are
+the same coarse scale, and 3 means about three quarters.
+
+**The heartbeat temperature byte is plausibly Fahrenheit.** It read `0x49` = 73
+on a printer that had been idle at room temperature. As Celsius that is
+implausible; as Fahrenheit it is 22.8 C, which is exactly a room. One reading is
+not proof, but it is the first evidence either way and it explains why the value
+has always looked too high.
+
+**The status reply carries more than a version.** This unit reported a single
+packet ceiling of 9000, a maximum send size of 200, a packet interval of 0, and
+no colour support. relabel surfaces these in `info` and does **not** act on them:
+their exact semantics are unconfirmed, and clamping writes to a misread field
+would break models this has never run against. Worth revisiting if a wide-head
+printer ever rejects a row that fits the length byte.
+
+**Parsers confirmed against real replies.** Model id from a two-byte payload,
+serial as ASCII from a ten-byte one, both version fields as `major.minor`, and
+the battery enum all decoded correctly first time.
+
+**The tag layout is confirmed too**, against a genuine roll: eight raw UUID
+bytes, a length-prefixed barcode, a length-prefixed serial, then the total and
+used counts as unsigned 16-bit, then the consumable type - and **no trailing
+capacity field**, which exercises the branch that treats it as optional. A
+hand-decode of the captured bytes matched the parser field for field. The
+counts must be read unsigned: this roll reported 192 total, but the widely
+copied reference reads them signed, which would turn a roll above 32767 into a
+negative number.
+
+## 4. Still open after this pass
 
 The SDK shows what the vendor *sends*. It cannot show what the firmware
 *enforces*, so these remain hardware questions:

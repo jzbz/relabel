@@ -122,6 +122,14 @@ Four deliberate limits:
 Needs a recent stable Rust. On Linux, BLE goes through BlueZ, so `bluetoothd`
 must be running and the D-Bus system bus reachable.
 
+Inside a container (distrobox, toolbox, or plain podman) the host's system bus
+is usually mounted but not where the D-Bus client looks for it. Point it at the
+host socket:
+
+```bash
+export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/host/run/dbus/system_bus_socket
+```
+
 ```bash
 cargo test --workspace
 ```
