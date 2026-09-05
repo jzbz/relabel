@@ -204,6 +204,25 @@ candidate - 8998 would be 89.98 C in hundredths, which is a believable working
 temperature for a thermal head - but that is a guess from two samples and the
 units are unconfirmed. relabel surfaces the raw bytes and acts on none of it.
 
+**Single-dot features print.** The ruler on the second test label draws its
+ticks one dot wide, and the thinnest of its four calibration bars is a single
+dot; both came out cleanly. So no columns are being lost across the head, the
+bit packing is right way round, and the practical resolution really is the full
+203 dpi rather than something coarser after the round trip.
+
+**No rows are dropped or duplicated.** A dotted diagonal running the length of
+the label came out evenly spaced end to end across 194 row packets. A dropped
+row would have shown as a kink and a duplicated one as a stutter.
+
+**The label on this roll is 40 mm x 12 mm**, or 320 x 96 dots, which fills the
+printable area almost exactly: the solid block placed hard against the far end
+of the image printed complete, with no bare paper past it. That was measured by
+printing a ruler on the label itself - a tick every millimetre, a taller one
+every five - which is a reasonable trick for any roll whose size is unknown,
+because **the printer never reports label dimensions**. The tag carries a
+barcode and a used/total count, not millimetres, and the barcode-to-size lookup
+is a cloud endpoint this project does not call.
+
 **The sacrificial sends went out and nothing objected.** The discarded status
 request after `PrintStart` and the discarded heartbeat after `PrintEnd` are both
 visible in the log, and the job completed cleanly with them in place. That does
