@@ -93,8 +93,18 @@ pub async fn handshake(session: &Session, t: &Timeouts) -> Result<Identity, Sess
         Ok(f) => match ConnectResult::parse(&f.data) {
             Ok(r) => match r.protocol_version() {
                 Some(v) => id.protocol = v,
-                // "Version 3 or more"; the status query resolves it.
-                None => id.protocol = 3,
+                // `ConnectedV3` means "level 2 or better", and **2 is the
+                // baseline**, not 3. The status query below may raise it.
+                //
+                // The distinction is not academic. A D110 answers that query
+                // with a payload too short to carry a version, so the upgrade
+                // never happens and whatever is assumed here is what the job
+                // engine uses - and 2 against 3 is the difference between the
+                // two-byte and the one-byte `PrintStart`.
+                None => {
+                    id.protocol = 2;
+                    id.protocol_assumed = true;
+                }
             },
             Err(_) => id.missing.push("connect result"),
         },
@@ -105,8 +115,8 @@ pub async fn handshake(session: &Session, t: &Timeouts) -> Result<Identity, Sess
         }
     }
 
-    // 2. Resolve 3-or-more into an exact level.
-    if id.protocol >= 3 {
+    // 2. Try to raise the baseline to an exact level.
+    if id.protocol >= 2 {
         match session
             .request(payload::printer_status_data(), t.default)
             .await
@@ -115,6 +125,7 @@ pub async fn handshake(session: &Session, t: &Timeouts) -> Result<Identity, Sess
                 Ok(s) => {
                     if let Some(v) = s.protocol_version {
                         id.protocol = v;
+                        id.protocol_assumed = false;
                     } else {
                         // A payload too short to carry one. Known behaviour on
                         // at least one model; keep the level we have.

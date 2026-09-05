@@ -33,4 +33,4 @@ pub use error::{PrinterErrorCode, ProtoError};
 pub use frame::{Frame, MAX_FRAME, MAX_PAYLOAD};
 pub use image::{BitPlane, CountsMode, EncodedPage, HeadSpec, encode_page};
 pub use models::{LabelType, ModelSpec, PrintDirection, RfidKind, Vendor};
-pub use task::{PrintFlow, select_flow};
+pub use task::{PrintFlow, copies_per_job, select_flow};

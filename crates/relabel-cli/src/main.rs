@@ -313,7 +313,14 @@ async fn run(cli: &Cli, session: &Session, id: &Identity, t: &Timeouts) -> Resul
                     .unwrap_or(LabelType::Gap),
                 copies: *copies,
                 ..PrintOptions::default()
-            };
+            }
+            .for_model(id.model_id);
+            if opts.copies_per_job == Some(1) && *copies > 1 {
+                println!(
+                    "This model prints one label per job, so {copies} copies will go as \
+                     {copies} separate jobs."
+                );
+            }
             println!(
                 "Printing at density {} on {}, flow {:?}.",
                 opts.density,

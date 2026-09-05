@@ -70,6 +70,12 @@ pub struct PrintOptions {
     /// Copies of each page.
     pub copies: u16,
     pub color: PageColor,
+    /// How many copies this printer will honour in one job.
+    ///
+    /// `None` means no known limit. Set from
+    /// [`relabel_proto::copies_per_job`], which knows the models that quietly
+    /// print once and then refuse everything.
+    pub copies_per_job: Option<u16>,
     pub timeouts: Timeouts,
 }
 
@@ -80,8 +86,17 @@ impl Default for PrintOptions {
             label_type: LabelType::Gap,
             copies: 1,
             color: PageColor::SingleColor,
+            copies_per_job: None,
             timeouts: Timeouts::default(),
         }
+    }
+}
+
+impl PrintOptions {
+    /// Fill in the per-model copy limit for a printer.
+    pub fn for_model(mut self, model_id: Option<u16>) -> Self {
+        self.copies_per_job = relabel_proto::copies_per_job(model_id);
+        self
     }
 }
 
@@ -111,12 +126,59 @@ pub async fn print(
         return Ok(());
     }
     let started = Instant::now();
+
+    // Some printers print exactly one page whatever the copy count says, then
+    // refuse every command that follows. For those the copies become that many
+    // complete jobs instead - which is slower, and is the only thing that works.
+    let per_job = opts.copies_per_job.unwrap_or(u16::MAX).max(1);
+    if opts.copies > per_job {
+        let mut done = 0u16;
+        let grand_total = pages.len() as u16 * opts.copies;
+        while done < opts.copies {
+            let batch = per_job.min(opts.copies - done);
+            let batch_opts = PrintOptions {
+                copies: batch,
+                ..*opts
+            };
+            let base = done * pages.len() as u16;
+            one_job(
+                session,
+                flow,
+                pages,
+                &batch_opts,
+                started,
+                &mut |p: Progress| {
+                    on_progress(Progress {
+                        page: base + p.page,
+                        total: grand_total,
+                        ..p
+                    })
+                },
+            )
+            .await?;
+            done += batch;
+        }
+        return Ok(());
+    }
+
+    one_job(session, flow, pages, opts, started, &mut on_progress).await
+}
+
+/// One complete start-to-`PrintEnd` cycle.
+async fn one_job(
+    session: &Session,
+    flow: PrintFlow,
+    pages: &[EncodedPage],
+    opts: &PrintOptions,
+    started: Instant,
+    on_progress: &mut impl FnMut(Progress),
+) -> Result<(), JobError> {
     let total: u16 = pages
         .iter()
         .map(|_| opts.copies)
         .fold(0u16, |a, b| a.saturating_add(b));
 
-    let result = run(session, flow, pages, opts, total, started, &mut on_progress).await;
+    let result = run(session, flow, pages, opts, total, started, on_progress).await;
 
     // Always, on every path. See the module note.
     let _ = session

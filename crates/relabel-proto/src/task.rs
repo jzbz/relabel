@@ -85,6 +85,29 @@ pub const B1_FAMILY: &[u16] = &[
     4096, // B1
 ];
 
+/// Models that silently print only one page however many copies are asked for.
+///
+/// The failure is quiet and expensive: the printer acknowledges the request,
+/// prints once, parks its counter at one page and a hundred percent, refuses the
+/// next `PageStart`, and then rejects everything that follows. A client that
+/// merely waits sees nothing but a timeout.
+///
+/// The fix is to send the copies as that many complete jobs.
+pub const ONE_PAGE_PER_JOB: &[u16] = &[
+    2304, // D110
+    3586, // N1
+];
+
+/// How many copies this model will honour in a single job.
+///
+/// `None` means no known limit.
+pub fn copies_per_job(model_id: Option<u16>) -> Option<u16> {
+    match model_id {
+        Some(id) if ONE_PAGE_PER_JOB.contains(&id) => Some(1),
+        _ => None,
+    }
+}
+
 /// Pick the flow for a printer.
 ///
 /// `protocol` is the level negotiated at connect time: the `Connect` reply gives
@@ -200,6 +223,14 @@ mod tests {
             PrintFlow::V5.set_page_size_len(),
             set_page_size::v4(1, 1, 1, true, 0).data.len()
         );
+    }
+
+    #[test]
+    fn the_d110_is_known_to_cap_a_job_at_one_page() {
+        assert_eq!(copies_per_job(Some(2304)), Some(1), "D110");
+        assert_eq!(copies_per_job(Some(3586)), Some(1), "N1");
+        assert_eq!(copies_per_job(Some(512)), None, "D11 has no known cap");
+        assert_eq!(copies_per_job(None), None);
     }
 
     #[test]

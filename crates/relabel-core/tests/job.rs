@@ -297,3 +297,81 @@ async fn rows_are_streamed_before_the_page_ends() {
     assert!(geometry < first_row, "geometry before rows");
     assert!(first_row < page_end, "rows before PageEnd");
 }
+
+/// The D110 acknowledges a multi-copy request, prints once, and then refuses
+/// everything. Asking it for three copies in one job produces one label and a
+/// timeout, so the copies have to become three complete jobs.
+#[tokio::test(start_paused = true)]
+async fn a_printer_that_caps_at_one_page_gets_one_job_per_copy() {
+    // Mimics the documented behaviour: the counter never passes 1 within a job,
+    // and it resets when a new job starts.
+    let printed = Arc::new(Mutex::new(0u16));
+    let in_job = Arc::new(Mutex::new(0u16));
+    let tally = Arc::clone(&printed);
+    let (t, handle) = MockTransport::new(Box::new(move |req: &relabel_proto::Frame| {
+        use relabel_proto::{Expect, Frame, RequestId};
+        match req.id {
+            0x01 => *in_job.lock().unwrap() = 0,
+            0xE3 => {
+                let mut n = in_job.lock().unwrap();
+                if *n == 0 {
+                    *n = 1;
+                    *tally.lock().unwrap() += 1;
+                }
+            }
+            _ => {}
+        }
+        match RequestId(req.id).expect() {
+            Expect::Nothing => vec![],
+            Expect::One(r) if r.0 == 0xB3 => {
+                let p = *in_job.lock().unwrap();
+                let b = p.to_be_bytes();
+                vec![Frame::new(0xB3, [b[0], b[1], 100, 100])]
+            }
+            Expect::One(r) => vec![Frame::new(r.0, [0x01])],
+            Expect::Any(set) => vec![Frame::new(set[0].0, [0x01])],
+            Expect::InfoSubtype => vec![],
+        }
+    }));
+    let s = Session::start(Box::new(t));
+    let pages = one_page(96, 40, 96);
+    let opts = PrintOptions {
+        copies: 3,
+        ..PrintOptions::default()
+    }
+    .for_model(Some(2304));
+    assert_eq!(
+        opts.copies_per_job,
+        Some(1),
+        "the D110 is a known-capped model"
+    );
+
+    print(&s, PrintFlow::Base, &pages, &opts, |_| {})
+        .await
+        .unwrap();
+
+    assert_eq!(*printed.lock().unwrap(), 3, "three labels came out");
+    let starts = handle.received_ids().iter().filter(|i| **i == 0x01).count();
+    let ends = handle.received_ids().iter().filter(|i| **i == 0xF3).count();
+    assert_eq!(starts, 3, "three complete jobs");
+    assert_eq!(ends, 3, "each one ended properly");
+}
+
+/// A model with no known cap must not be split into separate jobs.
+#[tokio::test(start_paused = true)]
+async fn an_uncapped_printer_still_gets_one_job() {
+    let (t, handle) = counting_printer();
+    let s = Session::start(Box::new(t));
+    let pages = one_page(96, 40, 96);
+    let opts = PrintOptions {
+        copies: 4,
+        ..PrintOptions::default()
+    }
+    .for_model(Some(512)); // D11
+    assert_eq!(opts.copies_per_job, None);
+    print(&s, PrintFlow::Base, &pages, &opts, |_| {})
+        .await
+        .unwrap();
+    let starts = handle.received_ids().iter().filter(|i| **i == 0x01).count();
+    assert_eq!(starts, 1, "one job carrying four copies");
+}
