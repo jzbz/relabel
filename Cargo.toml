@@ -2,7 +2,7 @@
 resolver = "3"
 # Members are added as they gain a manifest; the layout the design calls for is
 # proto -> render -> core -> gui, plus a cli used only for hardware bring-up.
-members = ["crates/relabel-proto", "crates/relabel-core"]
+members = ["crates/relabel-proto", "crates/relabel-core", "crates/relabel-cli"]
 
 [workspace.package]
 version = "0.1.0"

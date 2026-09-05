@@ -30,9 +30,10 @@ Bluetooth-first and MIT at once.
 | --- | --- |
 | `crates/relabel-proto` | Frame codec, command set, payload builders and parsers, image encoder, print-flow selection, model registry. Bytes in, bytes out — no I/O, no async, no GUI types, one dependency. |
 | `crates/relabel-core` | Transports (BLE, and an in-memory printer), the session that owns reassembly and request/response matching, and the print-job engine. |
+| `crates/relabel-cli` | Headless driver for hardware bring-up. Not a shipped binary. |
 
-The rest of the workspace — `relabel-render`, `relabel-gui` and a bring-up CLI —
-is designed but not yet written.
+The rest of the workspace — `relabel-render` and `relabel-gui` — is designed but
+not yet written.
 
 The split is deliberate. `relabel-proto` is pure and synchronous, so the fuzz
 target builds in a second and the protocol tests need neither a Bluetooth stack
@@ -118,11 +119,57 @@ Four deliberate limits:
 
 ## Build and run
 
-Needs a recent stable Rust. Nothing else — no `capnp`, no SQLite, no OpenSSL.
+Needs a recent stable Rust. On Linux, BLE goes through BlueZ, so `bluetoothd`
+must be running and the D-Bus system bus reachable.
 
 ```bash
-cargo test -p relabel-proto
+cargo test --workspace
 ```
+
+## Bring-up
+
+There is no GUI yet. `relabel-cli` is how the stack gets pointed at a printer.
+
+Encode an image without touching any hardware, and see what would go on the
+wire:
+
+```bash
+cargo run -p relabel-cli -- print --dry-run --preview --head 96 label.png
+```
+
+Find a printer:
+
+```bash
+cargo run -p relabel-cli -- scan
+```
+
+Connect and report what it says about itself — model, wire id, negotiated
+protocol level, print head, density range, firmware, battery, and which reads it
+declined to answer:
+
+```bash
+cargo run -p relabel-cli -- info
+```
+
+Print something:
+
+```bash
+cargo run -p relabel-cli -- print --copies 1 --dither atkinson label.png
+```
+
+Useful flags while something is going wrong:
+
+| Flag | What it is for |
+| --- | --- |
+| `--trace` | Dump every frame in both directions afterwards. The best thing to attach to a bug report. |
+| `--pace-ms 0` | Remove the inter-write delay, to find out whether pacing is needed on this model at all. |
+| `--zero-counters` | Send the three row counter bytes as zero, to find out whether the firmware checks them. |
+| `--device <text>` | Pick a printer by name or id when there is more than one. |
+| `raw 40 08` | Send a frame by hand — this one asks for the model id. |
+
+The last two flags in that table exist because those questions are genuinely
+open. See the bring-up checklist in
+[docs/DESIGN.md](docs/DESIGN.md#81-things-a-hardware-session-settles).
 
 ## Licence
 

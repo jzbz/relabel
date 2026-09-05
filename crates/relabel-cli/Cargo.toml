@@ -1,0 +1,32 @@
+[package]
+name = "relabel-cli"
+description = "Headless driver for NIIMBOT printer bring-up. Not a shipped binary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "relabel-cli"
+path = "src/main.rs"
+
+[dependencies]
+relabel-proto.workspace = true
+relabel-core.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+anyhow.workspace = true
+
+# Argument parsing. A dependency worth having in a tool whose whole job is to be
+# driven by hand while a printer is on the desk.
+clap = { version = "4", features = ["derive"] }
+
+# Loading whatever the user points at. Pure Rust for every format enabled here -
+# only the AVIF decoder pulls a C library, and it is off.
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "bmp",
+    "gif",
+] }

@@ -83,9 +83,16 @@ fn looks_like_printer(name: Option<&str>) -> bool {
 
 /// Get the first Bluetooth adapter the platform offers.
 pub async fn adapter() -> Result<Adapter, TransportError> {
-    let manager = Manager::new()
-        .await
-        .map_err(|e| TransportError::Connect(format!("no Bluetooth manager: {e}")))?;
+    let manager = Manager::new().await.map_err(|e| {
+        // The overwhelmingly common cause on Linux is that there is no session
+        // bus to talk to, which the underlying message does say but not in a
+        // way that suggests what to do about it.
+        TransportError::Connect(format!(
+            "could not reach the Bluetooth stack: {e}\n\
+             On Linux this usually means bluetoothd is not running, or this \
+             process cannot reach the D-Bus system bus."
+        ))
+    })?;
     let adapters = manager
         .adapters()
         .await
