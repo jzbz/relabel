@@ -1,0 +1,265 @@
+//! The drawing surface, and the two paints allowed on it.
+//!
+//! # Why a pixmap and not a mask
+//!
+//! `tiny_skia::Mask` is the obvious choice for a monochrome renderer - one byte
+//! per pixel, no colour to throw away - and it is the wrong one. It has no
+//! `fill_rect` and no `stroke_path`, so every rectangle would become a path,
+//! and paths take a different route through the rasteriser with different
+//! degenerate-bounds behaviour. A 32-bit buffer for a 320x96 label is 120 KB;
+//! the correctness is worth more than the memory.
+//!
+//! # Why every draw goes through a wrapper
+//!
+//! Three properties of the rasteriser matter here, and all three are lost if a
+//! call site talks to it directly:
+//!
+//! - **`fill_rect` silently degrades.** Given any transform that is not the
+//!   identity it converts the rectangle to a path and fills that instead, which
+//!   changes the snapping. So the transform is always the identity and geometry
+//!   is transformed by us, in whole dots, beforehand.
+//! - **Anti-aliasing defaults to on.** For a barcode module or a rule that is
+//!   wrong: a half-lit module is a scan failure. There are exactly two paints,
+//!   [`hard`](Canvas::hard) and [`soft`](Canvas::soft), and only glyph outlines
+//!   get the soft one.
+//! - **Rounding is a floor, not a round.** A caller passing a fractional dot has
+//!   usually made an arithmetic mistake, so this crate refuses fractions rather
+//!   than quietly flooring them.
+
+use crate::error::RenderError;
+use crate::greymap::GreyMap;
+use crate::target::Target;
+use tiny_skia::{Color, Paint, Pixmap, Rect, Shader, Transform};
+
+/// Whether a primitive lays ink down or clears it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ink {
+    Black,
+    /// Clears back to paper. Needed for knockout text on a filled panel.
+    White,
+}
+
+pub struct Canvas {
+    pixmap: Pixmap,
+    w: u16,
+    h: u16,
+}
+
+impl Canvas {
+    /// A blank canvas the size of the target, white all over.
+    ///
+    /// White rather than transparent because the ground has to be opaque: with
+    /// an opaque ground and opaque ink every pixel ends up at alpha 255, so the
+    /// premultiplied red byte *is* the luminance and reading it back needs no
+    /// division and no colour conversion.
+    pub fn new(target: &Target) -> Result<Canvas, RenderError> {
+        let mut pixmap = Pixmap::new(u32::from(target.width_px), u32::from(target.height_px))
+            .ok_or(RenderError::EmptyTarget {
+                w: target.width_px,
+                h: target.height_px,
+            })?;
+        pixmap.fill(Color::WHITE);
+        Ok(Canvas {
+            pixmap,
+            w: target.width_px,
+            h: target.height_px,
+        })
+    }
+
+    pub fn width(&self) -> u16 {
+        self.w
+    }
+    pub fn height(&self) -> u16 {
+        self.h
+    }
+
+    /// The paint for anything with an edge that must land on a dot boundary:
+    /// barcode bars, 2D modules, rules, rectangles, image blits.
+    pub fn hard(ink: Ink) -> Paint<'static> {
+        let mut p = Paint {
+            anti_alias: false,
+            ..Paint::default()
+        };
+        p.shader = Shader::SolidColor(match ink {
+            Ink::Black => Color::BLACK,
+            Ink::White => Color::WHITE,
+        });
+        p
+    }
+
+    /// The paint for glyph outlines, which are thresholded afterwards.
+    ///
+    /// The only thing that gets anti-aliasing. Everything else is
+    /// [`hard`](Self::hard).
+    pub fn soft(ink: Ink) -> Paint<'static> {
+        Paint {
+            anti_alias: true,
+            ..Canvas::hard(ink)
+        }
+    }
+
+    /// Fill a rectangle given in whole dots.
+    ///
+    /// Clipped to the canvas rather than refused: an element hanging off the
+    /// edge is a layout question for preflight to report, not a reason for the
+    /// rasteriser to fail.
+    pub fn fill_rect_dots(&mut self, x: i32, y: i32, w: i32, h: i32, ink: Ink) {
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        let (x0, y0) = (x.max(0), y.max(0));
+        let x1 = (x + w).min(i32::from(self.w));
+        let y1 = (y + h).min(i32::from(self.h));
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let Some(rect) = Rect::from_ltrb(x0 as f32, y0 as f32, x1 as f32, y1 as f32) else {
+            return;
+        };
+        // Identity, always. See the module note.
+        self.pixmap
+            .fill_rect(rect, &Canvas::hard(ink), Transform::identity(), None);
+    }
+
+    /// A horizontal rule `thickness` dots deep.
+    ///
+    /// Expressed as a rectangle rather than a stroked path on purpose: a
+    /// one-dot stroke centred on an integer coordinate straddles two rows and
+    /// lights neither fully, which on a thermal head is a grey line where a
+    /// black one was asked for.
+    pub fn hline_dots(&mut self, x: i32, y: i32, len: i32, thickness: i32, ink: Ink) {
+        self.fill_rect_dots(x, y, len, thickness.max(1), ink);
+    }
+
+    /// A vertical rule `thickness` dots wide.
+    pub fn vline_dots(&mut self, x: i32, y: i32, len: i32, thickness: i32, ink: Ink) {
+        self.fill_rect_dots(x, y, thickness.max(1), len, ink);
+    }
+
+    /// Reject a coordinate that is not a whole dot.
+    ///
+    /// Called by anything taking geometry from a document, so the failure is
+    /// reported where the number came from rather than silently floored.
+    pub fn require_whole(what: &'static str, value: f32) -> Result<i32, RenderError> {
+        if value.fract() != 0.0 || !value.is_finite() {
+            return Err(RenderError::NotOnGrid { what, value });
+        }
+        Ok(value as i32)
+    }
+
+    /// Take the ink coverage, 0 meaning fully inked and 255 meaning bare paper.
+    ///
+    /// The pixmap is opaque throughout, so every pixel has alpha 255 and the
+    /// premultiplied red byte is already the luminance. No division, no
+    /// weighted sum, and nothing to get wrong about which luminance
+    /// coefficients apply - that question only arises when a colour image is
+    /// blitted in, and it is settled there.
+    pub fn finish(self) -> GreyMap {
+        let src = self.pixmap.data();
+        let mut px = Vec::with_capacity(usize::from(self.w) * usize::from(self.h));
+        for chunk in src.chunks_exact(4) {
+            px.push(chunk[0]);
+        }
+        GreyMap {
+            w: self.w,
+            h: self.h,
+            px,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn canvas(w: u16, h: u16) -> Canvas {
+        Canvas::new(&Target::new(w, h, 203).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_new_canvas_is_bare_paper() {
+        let g = canvas(16, 4).finish();
+        assert!(g.px.iter().all(|p| *p == 255));
+        assert_eq!(g.px.len(), 64);
+    }
+
+    /// The trap this whole wrapper exists for: a one-dot rule must light
+    /// exactly one row, fully, and leave its neighbours untouched.
+    #[test]
+    fn a_one_dot_rule_lights_exactly_one_row() {
+        let mut c = canvas(8, 5);
+        c.hline_dots(0, 2, 8, 1, Ink::Black);
+        let g = c.finish();
+        for x in 0..8 {
+            assert_eq!(g.at(x, 1), 255, "row above stays clear");
+            assert_eq!(g.at(x, 2), 0, "the rule is fully inked");
+            assert_eq!(g.at(x, 3), 255, "row below stays clear");
+        }
+    }
+
+    #[test]
+    fn a_one_dot_column_lights_exactly_one_column() {
+        let mut c = canvas(5, 8);
+        c.vline_dots(3, 0, 8, 1, Ink::Black);
+        let g = c.finish();
+        for y in 0..8 {
+            assert_eq!(g.at(2, y), 255);
+            assert_eq!(g.at(3, y), 0);
+            assert_eq!(g.at(4, y), 255);
+        }
+    }
+
+    #[test]
+    fn hard_paint_has_no_partial_coverage() {
+        // Anti-aliasing on a rect edge would show up as a value between the two
+        // extremes somewhere. With the hard paint there is nothing in between.
+        let mut c = canvas(10, 10);
+        c.fill_rect_dots(2, 2, 5, 5, Ink::Black);
+        let g = c.finish();
+        assert!(
+            g.px.iter().all(|p| *p == 0 || *p == 255),
+            "every dot is fully on or fully off"
+        );
+    }
+
+    #[test]
+    fn drawing_off_the_edge_clips_rather_than_panicking() {
+        let mut c = canvas(8, 8);
+        c.fill_rect_dots(-4, -4, 6, 6, Ink::Black);
+        c.fill_rect_dots(6, 6, 100, 100, Ink::Black);
+        let g = c.finish();
+        assert_eq!(g.at(0, 0), 0, "the part that is on the canvas is drawn");
+        assert_eq!(g.at(7, 7), 0);
+        assert_eq!(g.at(3, 3), 255, "and the rest is not");
+    }
+
+    #[test]
+    fn degenerate_rectangles_draw_nothing() {
+        let mut c = canvas(8, 8);
+        c.fill_rect_dots(2, 2, 0, 5, Ink::Black);
+        c.fill_rect_dots(2, 2, 5, -1, Ink::Black);
+        let g = c.finish();
+        assert!(g.px.iter().all(|p| *p == 255));
+    }
+
+    #[test]
+    fn white_ink_clears_back_to_paper() {
+        let mut c = canvas(8, 8);
+        c.fill_rect_dots(0, 0, 8, 8, Ink::Black);
+        c.fill_rect_dots(2, 2, 4, 4, Ink::White);
+        let g = c.finish();
+        assert_eq!(g.at(0, 0), 0);
+        assert_eq!(g.at(3, 3), 255, "knocked back out");
+    }
+
+    #[test]
+    fn fractional_geometry_is_refused_not_floored() {
+        assert!(Canvas::require_whole("x", 10.0).is_ok());
+        assert_eq!(Canvas::require_whole("x", 10.0).unwrap(), 10);
+        assert!(matches!(
+            Canvas::require_whole("x", 10.875),
+            Err(RenderError::NotOnGrid { .. })
+        ));
+        assert!(Canvas::require_whole("x", f32::NAN).is_err());
+    }
+}

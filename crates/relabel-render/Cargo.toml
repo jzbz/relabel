@@ -1,0 +1,24 @@
+[package]
+name = "relabel-render"
+description = "Label document model and rasteriser: a label in, a 1-bit plane out"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# For BitPlane, which is the boundary type, and for the millimetre/dot
+# conversions. This direction is one-way on purpose: BitPlane lives in proto so
+# that a headless print server can link the protocol without linking a text
+# stack.
+relabel-proto.workspace = true
+tiny-skia.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Golden files are PBM P4, whose bit layout is byte-identical to BitPlane's own
+# - 8 pixels per byte, MSB first, 1 meaning black, rows padded to a byte. So a
+# golden file is a short header followed by the plane's own bytes: viewable in
+# any image viewer, diffable, and comparable with a single assert_eq. No image
+# codec and no hashing crate in the test path.

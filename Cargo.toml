@@ -2,7 +2,12 @@
 resolver = "3"
 # Members are added as they gain a manifest; the layout the design calls for is
 # proto -> render -> core -> gui, plus a cli used only for hardware bring-up.
-members = ["crates/relabel-proto", "crates/relabel-core", "crates/relabel-cli"]
+members = [
+    "crates/relabel-proto",
+    "crates/relabel-render",
+    "crates/relabel-core",
+    "crates/relabel-cli",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -40,6 +45,13 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "m
 # compatible, and `Box<dyn Transport>` is the whole point of the abstraction:
 # BLE, serial and the replay transport have to be interchangeable at runtime.
 async-trait = "0.1"
+
+# CPU rasteriser, pure Rust, BSD-3-Clause. 0.12 rather than 0.11: 0.11.4 panics
+# in its anti-aliased hairline scan near a pixmap edge, and a barcode bar on a
+# 96-dot label is exactly that case - in a debug build, which is what
+# `cargo test` is. `default-features = false` drops the PNG codec it would
+# otherwise pull for its own tests; `image` handles files.
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 
 [profile.release]
 opt-level = 3

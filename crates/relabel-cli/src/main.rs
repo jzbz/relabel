@@ -113,6 +113,28 @@ enum Cmd {
         #[arg(long)]
         preview: bool,
     },
+    /// Print a millimetre ruler, to measure a label whose size is unknown.
+    ///
+    /// The printer never reports how long its labels are, so the label measures
+    /// itself: the scale is rendered longer than the label can be, and wherever
+    /// the paper runs out is the answer. Tick height encodes the scale and every
+    /// centimetre is counted out in squares, so it reads without numerals.
+    Ruler {
+        /// How long a scale to render. Make it longer than the label.
+        #[arg(long, default_value = "60")]
+        length_mm: u16,
+        /// Render and preview without printing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Assume this head width for a dry run, in dots.
+        #[arg(long, default_value = "96")]
+        head: u16,
+        /// Which axis lies across the head, for a dry run.
+        #[arg(long, value_enum, default_value = "left")]
+        direction: Dir,
+        #[arg(long)]
+        preview: bool,
+    },
     /// Send a frame by hand: command byte, then payload, as hex.
     Raw {
         /// Command byte first, then the payload. For example `40 08` asks for
@@ -142,14 +164,40 @@ async fn main() -> Result<()> {
     {
         return dry_run(
             file,
-            *head,
-            (*direction).into(),
-            *dither,
-            *threshold,
-            *invert,
-            *zero_counters,
-            *preview,
+            &ImageOpts {
+                head: *head,
+                direction: (*direction).into(),
+                dither: *dither,
+                threshold: *threshold,
+                invert: *invert,
+                zero_counters: *zero_counters,
+                preview: *preview,
+            },
         );
+    }
+
+    if let Cmd::Ruler {
+        dry_run: true,
+        length_mm,
+        head,
+        direction,
+        preview,
+    } = &cli.cmd
+    {
+        let dir: PrintDirection = (*direction).into();
+        let plane = build_ruler(*head, *length_mm, 203, dir)?;
+        if *preview {
+            println!("{}", bitmap::preview(&plane, 150));
+        }
+        let page = encode_page(&plane, &HeadSpec::new(*head, dir))?;
+        println!(
+            "{}x{} dots, {} frames, {} bytes on the wire.",
+            page.cols,
+            page.rows,
+            page.frames.len(),
+            page.wire_bytes()
+        );
+        return Ok(());
     }
 
     let adapter = ble::adapter().await?;
@@ -226,7 +274,44 @@ async fn main() -> Result<()> {
 
 async fn run(cli: &Cli, session: &Session, id: &Identity, t: &Timeouts) -> Result<()> {
     match &cli.cmd {
-        Cmd::Scan { .. } | Cmd::Print { dry_run: true, .. } => unreachable!("handled earlier"),
+        Cmd::Scan { .. } | Cmd::Print { dry_run: true, .. } | Cmd::Ruler { dry_run: true, .. } => {
+            unreachable!("handled earlier")
+        }
+
+        Cmd::Ruler {
+            length_mm, preview, ..
+        } => {
+            let model = id.model;
+            let head = id.printhead_px();
+            if head == 0 {
+                bail!("this printer's head width is unknown, so a ruler cannot be sized for it");
+            }
+            let dir = model.map(|m| m.direction).unwrap_or(PrintDirection::Top);
+            let dpi = model.map(|m| m.dpi).unwrap_or(203);
+            let plane = build_ruler(head, *length_mm, dpi, dir)?;
+            if *preview {
+                println!("{}", bitmap::preview(&plane, 150));
+            }
+            let page = encode_page(&plane, &HeadSpec::new(head, dir))?;
+            println!(
+                "Printing a {length_mm} mm scale: {}x{} dots, {} frames.",
+                page.cols,
+                page.rows,
+                page.frames.len()
+            );
+            println!("Read off where the paper runs out - that is the label length.");
+            let opts = PrintOptions {
+                density: model.map(|m| m.density.2).unwrap_or(2),
+                label_type: model
+                    .and_then(|m| m.label_types.first().copied())
+                    .unwrap_or(LabelType::Gap),
+                ..PrintOptions::default()
+            }
+            .for_model(id.model_id);
+            print(session, id.flow(), &[page], &opts, |_| {}).await?;
+            println!("Done.");
+            Ok(())
+        }
 
         Cmd::Info => Ok(()),
 
@@ -365,8 +450,26 @@ async fn run(cli: &Cli, session: &Session, id: &Identity, t: &Timeouts) -> Resul
 }
 
 #[allow(clippy::too_many_arguments)]
-fn dry_run(
-    file: &std::path::Path,
+/// Render the calibration ruler to a 1-bit plane.
+///
+/// The scale is deliberately longer than the label: the whole point is that the
+/// paper runs out part way through it.
+fn build_ruler(
+    head: u16,
+    length_mm: u16,
+    dpi: u16,
+    dir: PrintDirection,
+) -> Result<relabel_proto::BitPlane> {
+    let length_px =
+        relabel_render::Dpmm::for_dpi(dpi).dots_from_tenths_mm(i32::from(length_mm) * 10);
+    let target = relabel_render::Target::for_label(head, length_px as u16, dpi, dir)?;
+    let grey = relabel_render::calibration::ruler(&target, dir == PrintDirection::Left)?;
+    Ok(grey.threshold(128))
+}
+
+/// How an image becomes dots. Bundled because these travel together everywhere,
+/// and an eight-argument call is an eight-argument bug waiting to happen.
+struct ImageOpts {
     head: u16,
     direction: PrintDirection,
     dither: bitmap::Dither,
@@ -374,13 +477,16 @@ fn dry_run(
     invert: bool,
     zero_counters: bool,
     preview: bool,
-) -> Result<()> {
-    let plane = bitmap::load(file, head, direction, dither, threshold, invert)?;
-    if preview {
+}
+
+fn dry_run(file: &std::path::Path, o: &ImageOpts) -> Result<()> {
+    let plane = bitmap::load(file, o.head, o.direction, o.dither, o.threshold, o.invert)?;
+    if o.preview {
         println!("{}", bitmap::preview(&plane, 120));
     }
+    let (head, direction) = (o.head, o.direction);
     let mut spec = HeadSpec::new(head, direction);
-    if zero_counters {
+    if o.zero_counters {
         spec.counts = CountsMode::ForceZero;
     }
     let page = encode_page(&plane, &spec)?;

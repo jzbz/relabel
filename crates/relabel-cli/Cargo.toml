@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 relabel-proto.workspace = true
 relabel-core.workspace = true
+relabel-render.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 anyhow.workspace = true
 
