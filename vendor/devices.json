@@ -43,6 +43,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 4,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -88,6 +108,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "LOW_DENSITY_2",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -133,6 +182,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "LOW_DENSITY_2",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            15,
+            5,
+            5
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            5,
+            15,
+            5,
+            5
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            5,
+            15,
+            5,
+            5
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -178,6 +256,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -223,6 +330,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            50,
+            10,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -268,6 +404,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -313,6 +478,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "LOW_DENSITY_2",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -358,6 +552,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -403,6 +626,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -450,6 +702,53 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 4,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -494,6 +793,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "LOW_DENSITY_2",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            15,
+            15,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            15,
+            15,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -541,6 +860,53 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 10,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 11,
+          "tenths_mm": [
+            0,
+            0,
+            10,
+            10
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -588,6 +954,53 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            15,
+            5,
+            5
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            5,
+            15,
+            5,
+            5
+          ]
+        },
+        {
+          "label_type": 10,
+          "tenths_mm": [
+            5,
+            15,
+            5,
+            5
+          ]
+        },
+        {
+          "label_type": 11,
+          "tenths_mm": [
+            5,
+            15,
+            5,
+            5
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -633,6 +1046,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -678,6 +1120,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -723,6 +1194,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "LOW_DENSITY_2",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -769,6 +1269,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -816,6 +1354,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "LOW_DENSITY_2",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [
         "1.01",
         "1.02",
@@ -887,6 +1463,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -933,6 +1538,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "LOW_DENSITY_2",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [
         "1.01",
         "1.02",
@@ -1004,6 +1647,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "LOW_DENSITY_2",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1050,6 +1722,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "LOW_DENSITY_2",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            10,
+            5,
+            5
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            25,
+            25,
+            5,
+            5
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            5,
+            10,
+            5,
+            5
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            5,
+            10,
+            5,
+            5
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1096,6 +1806,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1141,6 +1889,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "LOW_DENSITY_2",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            10,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1185,6 +1962,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1228,6 +2025,17 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1276,6 +2084,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            60,
+            10,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1322,6 +2168,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            60,
+            10,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            5,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1367,6 +2251,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "LOW_DENSITY_2",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1412,6 +2325,35 @@
       "supports_5g_wifi": true,
       "supports_mqtt": true,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": [
         ""
@@ -1460,6 +2402,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 4,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1506,6 +2486,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 4,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1550,6 +2568,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            10,
+            10
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            10,
+            10
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1593,6 +2631,17 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1637,6 +2686,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1681,6 +2750,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [
         "1.01",
         "1.04",
@@ -1738,6 +2827,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            15,
+            15,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1782,6 +2891,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1826,6 +2955,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            15,
+            15,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            15,
+            15,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1870,6 +3019,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1914,6 +3083,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            10,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -1956,6 +3145,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [
         "1.04",
         "1.05",
@@ -2009,6 +3218,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [
         "1.04",
         "1.08",
@@ -2062,6 +3291,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [
         "1.04",
         "1.08",
@@ -2125,6 +3374,17 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2171,6 +3431,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 10,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2217,6 +3515,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 10,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2260,6 +3596,17 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2304,6 +3651,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            15,
+            15,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            15,
+            15,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2348,6 +3715,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2393,6 +3780,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            20,
+            20,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2437,6 +3853,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2481,6 +3917,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [
         "1.04",
         "1.08",
@@ -2538,6 +3994,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 4,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2584,6 +4078,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            50,
+            10,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2629,6 +4161,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2674,6 +4235,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2719,6 +4309,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2764,6 +4383,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": [
         ""
@@ -2811,6 +4459,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2857,6 +4534,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 10,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2903,6 +4618,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 10,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2948,6 +4701,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -2993,6 +4775,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": [
         ""
@@ -3042,6 +4853,53 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 10,
+          "tenths_mm": [
+            0,
+            0,
+            20,
+            0
+          ]
+        },
+        {
+          "label_type": 11,
+          "tenths_mm": [
+            0,
+            0,
+            10,
+            10
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3085,6 +4943,17 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 6,
+          "tenths_mm": [
+            15,
+            15,
+            15,
+            15
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3128,6 +4997,17 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 6,
+          "tenths_mm": [
+            15,
+            15,
+            15,
+            15
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3171,6 +5051,17 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 6,
+          "tenths_mm": [
+            15,
+            15,
+            15,
+            15
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3217,6 +5108,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 4,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3263,6 +5192,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 4,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3311,6 +5278,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            50,
+            10,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            5,
+            5,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3355,6 +5351,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3399,6 +5415,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3445,6 +5481,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 4,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3491,6 +5565,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 4,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3537,6 +5649,44 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 3,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 4,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3580,6 +5730,17 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "NORMAL",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3625,6 +5786,35 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 2,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     },
@@ -3669,6 +5859,26 @@
       "supports_5g_wifi": false,
       "supports_mqtt": false,
       "error_print_strategy": "FORBID",
+      "blind_zones": [
+        {
+          "label_type": 1,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "label_type": 5,
+          "tenths_mm": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
       "rfid_unsupported_fw": [],
       "wifi_unsupported_fw": []
     }

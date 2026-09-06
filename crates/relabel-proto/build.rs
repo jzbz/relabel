@@ -103,6 +103,30 @@ fn main() {
                     .collect()
             })
             .unwrap_or_default();
+        // Unprintable margins, per label type. Genuinely differs between label
+        // types on 18 models, so it cannot be flattened onto the model.
+        let zones: Vec<String> = m["blind_zones"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|z| {
+                        let lt = z["label_type"].as_u64()?;
+                        let v: Vec<u64> = z["tenths_mm"].as_array()?
+                            .iter()
+                            .filter_map(|x| x.as_u64())
+                            .collect();
+                        if v.len() != 4 {
+                            return None;
+                        }
+                        Some(format!(
+                            "BlindZone {{ label_type: LabelType::from_code({lt}), tenths_mm: [{}, {}, {}, {}] }}",
+                            v[0], v[1], v[2], v[3]
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let bad_fw: Vec<String> = m["rfid_unsupported_fw"]
             .as_array()
             .map(|a| {
@@ -134,6 +158,7 @@ fn main() {
              \x20       supports_wifi: {wifi},\n\
              \x20       vendor: {vendor},\n\
              \x20       unrecognised_paper: {policy},\n\
+             \x20       blind_zones: &[{zones}],\n\
              \x20       rfid_unsupported_fw: &[{bad_fw}],\n\
              \x20   }},\n",
             name = name,
@@ -158,6 +183,7 @@ fn main() {
             wifi = m["supports_wifi"].as_bool().unwrap_or(false),
             vendor = vendor,
             policy = policy,
+            zones = zones.join(", "),
             bad_fw = bad_fw.join(", "),
         ));
     }

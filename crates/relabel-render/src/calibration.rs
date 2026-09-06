@@ -17,7 +17,8 @@
 //! encodes the scale, and every centimetre is counted out in dots so the
 //! reading is unambiguous without numerals.
 
-use crate::canvas::{Canvas, Ink};
+use crate::canvas::Canvas;
+use crate::document::Ink;
 use crate::error::RenderError;
 use crate::greymap::GreyMap;
 use crate::target::Target;

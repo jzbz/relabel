@@ -141,6 +141,33 @@ pub enum PaperPolicy {
     Forbid,
 }
 
+/// An unprintable margin, for one label type, in tenths of a millimetre.
+///
+/// The manufacturer's registry carries these per model **and per label type**,
+/// and they really do differ: a D110_M is 1.0 mm on its first edge for both its
+/// papers, a plain D110 is 0.5 mm on gap stock and 1.5 mm on transparent, and a
+/// B3S is 6.0 mm on black mark. Flattening them onto the model would be wrong.
+///
+/// **Which of the four values is which edge is not confirmed.** The one
+/// observation available is that a bar drawn at the very start of the feed on a
+/// D110_M - whose registry gives 1.0 mm in the first position - did not appear
+/// on the label, which is consistent with the first being the leading edge and
+/// falls well short of proving it. Until a print settles it, treat the largest
+/// value as the margin to keep clear on every edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlindZone {
+    pub label_type: LabelType,
+    pub tenths_mm: [u16; 4],
+}
+
+impl BlindZone {
+    /// The largest of the four, which is the only safe reading until the edges
+    /// are identified.
+    pub fn worst_tenths_mm(&self) -> u16 {
+        self.tenths_mm.iter().copied().max().unwrap_or(0)
+    }
+}
+
 /// Everything the protocol layer needs to know about one printer.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelSpec {
@@ -164,6 +191,8 @@ pub struct ModelSpec {
     pub direction: PrintDirection,
     pub rfid: RfidKind,
     pub label_types: &'static [LabelType],
+    /// Unprintable margins, per label type. Empty when the registry says none.
+    pub blind_zones: &'static [BlindZone],
     pub supports_calibration: bool,
     pub supports_cutter: bool,
     pub supports_wifi: bool,
@@ -184,6 +213,18 @@ impl ModelSpec {
     /// Whether this firmware version is one where the RFID read is broken.
     pub fn rfid_broken_on(&self, firmware: &str) -> bool {
         self.rfid_unsupported_fw.contains(&firmware)
+    }
+
+    /// The unprintable margin for a label type, in tenths of a millimetre.
+    ///
+    /// Returns the largest of the four recorded values; see [`BlindZone`] for
+    /// why that is the honest answer for now.
+    pub fn blind_zone_tenths_mm(&self, label_type: LabelType) -> u16 {
+        self.blind_zones
+            .iter()
+            .find(|z| z.label_type == label_type)
+            .map(BlindZone::worst_tenths_mm)
+            .unwrap_or(0)
     }
 
     /// The printhead axis in dots, rounded down to a whole byte.
@@ -238,6 +279,7 @@ pub const UNKNOWN: ModelSpec = ModelSpec {
     direction: PrintDirection::Top,
     rfid: RfidKind::None,
     label_types: &[LabelType::Gap],
+    blind_zones: &[],
     supports_calibration: false,
     supports_cutter: false,
     supports_wifi: false,
@@ -356,6 +398,29 @@ mod tests {
             assert_eq!(b50.vendor, Vendor::Daozhen);
         }
         assert!(lookup(512).unwrap().vendor.speaks_niimbot());
+    }
+
+    /// A physical observation drove this into the table: a bar drawn at dot
+    /// zero on a D110_M did not print, and the registry says 1 mm.
+    #[test]
+    fn blind_zones_are_per_label_type() {
+        let d110m = lookup(2320).expect("D110_M");
+        assert_eq!(d110m.blind_zone_tenths_mm(LabelType::Gap), 10, "1.0 mm");
+        assert_eq!(d110m.blind_zone_tenths_mm(LabelType::Transparent), 10);
+
+        // The plain D110 differs *between* its two papers, which is why this
+        // cannot be a single per-model number.
+        let d110 = lookup(2304).expect("D110");
+        assert_eq!(d110.blind_zone_tenths_mm(LabelType::Gap), 5);
+        assert_eq!(d110.blind_zone_tenths_mm(LabelType::Transparent), 15);
+
+        // A model with no margin recorded reports none.
+        assert_eq!(
+            lookup(4096).unwrap().blind_zone_tenths_mm(LabelType::Gap),
+            0
+        );
+        // And an unknown label type is not an error.
+        assert_eq!(d110m.blind_zone_tenths_mm(LabelType::Hole), 0);
     }
 
     #[test]

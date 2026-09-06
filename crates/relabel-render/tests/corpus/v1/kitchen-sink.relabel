@@ -1,0 +1,20 @@
+{
+  "format": "relabel-label",
+  "version": 1,
+  "meta": {
+    "title": "corpus: every element type",
+    "app": "relabel 0.1.0",
+    "authored_for": { "model": "D110_M", "head_px": 96, "dpi": 203 }
+  },
+  "media": { "feed_tenths_mm": 400, "head_tenths_mm": 120 },
+  "canvas": { "feed": 320, "head": 96, "dpmm": { "num": 8, "den": 1 } },
+  "elements": [
+    { "type": "rect", "id": 1, "frame": { "feed": 0, "head": 0, "feed_len": 320, "head_len": 96 }, "stroke_dots": 2 },
+    { "type": "line", "id": 2, "frame": { "feed": 8, "head": 48, "feed_len": 304, "head_len": 1 }, "thickness_dots": 1 },
+    { "type": "text", "id": 3, "frame": { "feed": 8, "head": 8, "feed_len": 200, "head_len": 32 }, "text": "{sku}", "family": "Noto Sans", "size": 20.0 },
+    { "type": "barcode", "id": 4, "frame": { "feed": 8, "head": 56, "feed_len": 200, "head_len": 32 }, "symbology": "code128", "data": "{sku}", "module_dots": 3, "bar_dots": 32 },
+    { "type": "qr", "id": 5, "frame": { "feed": 232, "head": 8, "feed_len": 80, "head_len": 80 }, "data": "https://example.invalid", "module_dots": 3 },
+    { "type": "data_matrix", "id": 6, "frame": { "feed": 232, "head": 8, "feed_len": 80, "head_len": 80 }, "data": "12345", "module_dots": 4 },
+    { "type": "image", "id": 7, "frame": { "feed": 0, "head": 0, "feed_len": 32, "head_len": 32 }, "path": "logo.png" }
+  ]
+}

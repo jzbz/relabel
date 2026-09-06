@@ -11,11 +11,15 @@
 
 pub mod calibration;
 pub mod canvas;
+pub mod document;
 pub mod error;
 pub mod greymap;
+pub mod rasterise;
 pub mod target;
 
-pub use canvas::{Canvas, Ink};
+pub use canvas::Canvas;
+pub use document::{Element, ElementOrRaw, Ink, Label, LoadError};
 pub use error::RenderError;
 pub use greymap::GreyMap;
+pub use rasterise::{RenderReport, rasterise, rasterise_plane};
 pub use target::{Dpmm, Target};

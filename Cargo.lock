@@ -788,6 +788,8 @@ name = "relabel-render"
 version = "0.1.0"
 dependencies = [
  "relabel-proto",
+ "serde",
+ "serde_json",
  "thiserror",
  "tiny-skia",
 ]

@@ -1,0 +1,11 @@
+{
+  "format": "relabel-label",
+  "version": 1,
+  "media": { "feed_tenths_mm": 400, "head_tenths_mm": 120 },
+  "canvas": { "feed": 320, "head": 96, "dpmm": { "num": 8, "den": 1 } },
+  "elements": [
+    { "type": "rect", "id": 1, "frame": { "feed": -2147483648, "head": 2147483647, "feed_len": 2147483647, "head_len": 1 } },
+    { "type": "rect", "id": 2, "frame": { "feed": 0, "head": 0, "feed_len": 0, "head_len": 0 }, "rot": 45 },
+    { "type": "line", "id": 3, "frame": { "feed": 0, "head": 0, "feed_len": 10, "head_len": 10 }, "rot": -90 }
+  ]
+}

@@ -11,10 +11,47 @@ use relabel_proto::PrintDirection;
 /// uses a truncated decimal constant, which happens never to change an answer
 /// for any model in the vendor table - but a document format should not depend
 /// on a happens-never, so conversions in this crate go through here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "DpmmRaw")]
 pub struct Dpmm {
     pub num: u32,
     pub den: u32,
+}
+
+/// The unvalidated shape as it appears in a file.
+///
+/// A pitch arrives from disk and can be anything a text editor or a truncated
+/// write left behind. A zero denominator divides by zero on the first
+/// millimetre readout, which is the most ordinary action an editor performs, so
+/// it is refused at the boundary rather than trusted.
+#[derive(serde::Deserialize)]
+struct DpmmRaw {
+    num: u32,
+    den: u32,
+}
+
+/// No print head is anywhere near this many dots per millimetre; the bound
+/// exists to keep the conversions' `i64` intermediates in range.
+const MAX_PITCH: u32 = 100_000;
+
+impl TryFrom<DpmmRaw> for Dpmm {
+    type Error = String;
+
+    fn try_from(r: DpmmRaw) -> Result<Dpmm, String> {
+        if r.num == 0 || r.den == 0 {
+            return Err(format!(
+                "dot pitch {}/{} is not a usable ratio: neither part may be zero",
+                r.num, r.den
+            ));
+        }
+        if r.num > MAX_PITCH || r.den > MAX_PITCH {
+            return Err(format!("dot pitch {}/{} is out of range", r.num, r.den));
+        }
+        Ok(Dpmm {
+            num: r.num,
+            den: r.den,
+        })
+    }
 }
 
 impl Dpmm {
@@ -83,10 +120,30 @@ pub struct Target {
     pub width_px: u16,
     pub height_px: u16,
     pub dpi: u16,
+    /// Which canvas axis the print head lies along.
+    ///
+    /// The rasteriser needs this and cannot be given only the two sizes: a
+    /// document places elements in feed and head coordinates, and which of
+    /// those is horizontal depends entirely on the printer. Without it, every
+    /// label drawn for a `Top` printer comes out transposed - and silently,
+    /// because a transposed rectangle is still a rectangle.
+    pub direction: PrintDirection,
 }
 
 impl Target {
+    /// A target in canvas orientation, for a printer whose head lies along the
+    /// canvas height - the D11/D110/D101 family and anything else that prints a
+    /// landscape strip.
     pub fn new(width_px: u16, height_px: u16, dpi: u16) -> Result<Target, RenderError> {
+        Target::with_direction(width_px, height_px, dpi, PrintDirection::Left)
+    }
+
+    pub fn with_direction(
+        width_px: u16,
+        height_px: u16,
+        dpi: u16,
+        direction: PrintDirection,
+    ) -> Result<Target, RenderError> {
         if width_px == 0 || height_px == 0 {
             return Err(RenderError::EmptyTarget {
                 w: width_px,
@@ -97,7 +154,27 @@ impl Target {
             width_px,
             height_px,
             dpi,
+            direction,
         })
+    }
+
+    /// Map a document coordinate onto the canvas.
+    ///
+    /// The single place the axis swap happens for drawing. Everything that puts
+    /// ink down goes through here, so a `Top` printer cannot be transposed by
+    /// one call site forgetting.
+    pub fn place(&self, feed: i32, head: i32) -> (i32, i32) {
+        match self.direction {
+            // The head runs across the top, so a head coordinate is horizontal.
+            PrintDirection::Top => (head, feed),
+            // The label reads landscape, so a feed coordinate is horizontal.
+            PrintDirection::Left => (feed, head),
+        }
+    }
+
+    /// Map a document extent onto the canvas. Same swap as [`place`](Self::place).
+    pub fn extent(&self, feed_len: i32, head_len: i32) -> (i32, i32) {
+        self.place(feed_len, head_len)
     }
 
     /// The canvas for a label of `length_px` along the feed, on a print head of
@@ -110,12 +187,13 @@ impl Target {
         dpi: u16,
         direction: PrintDirection,
     ) -> Result<Target, RenderError> {
-        match direction {
+        let (w, h) = match direction {
             // The head runs across the top of the canvas.
-            PrintDirection::Top => Target::new(head_px, length_px, dpi),
+            PrintDirection::Top => (head_px, length_px),
             // The head runs down the side, so the label reads landscape.
-            PrintDirection::Left => Target::new(length_px, head_px, dpi),
-        }
+            PrintDirection::Left => (length_px, head_px),
+        };
+        Target::with_direction(w, h, dpi, direction)
     }
 
     pub fn dpmm(&self) -> Dpmm {
@@ -124,16 +202,16 @@ impl Target {
 
     /// Which axis will be handed to the print head once the encoder has
     /// rotated the plane.
-    pub fn head_axis(&self, direction: PrintDirection) -> u16 {
-        match direction {
+    pub fn head_axis(&self) -> u16 {
+        match self.direction {
             PrintDirection::Top => self.width_px,
             PrintDirection::Left => self.height_px,
         }
     }
 
     /// The other axis: how far the paper travels.
-    pub fn feed_axis(&self, direction: PrintDirection) -> u16 {
-        match direction {
+    pub fn feed_axis(&self) -> u16 {
+        match self.direction {
             PrintDirection::Top => self.height_px,
             PrintDirection::Left => self.width_px,
         }
@@ -146,12 +224,8 @@ impl Target {
     /// the head does not print inset with even margins - the padding all ends
     /// up on one side and the label prints shifted. See
     /// [`RenderError::HeadAxisMismatch`].
-    pub fn require_head(
-        &self,
-        printhead_px: u16,
-        direction: PrintDirection,
-    ) -> Result<(), RenderError> {
-        let got = self.head_axis(direction);
+    pub fn require_head(&self, printhead_px: u16) -> Result<(), RenderError> {
+        let got = self.head_axis();
         if got != printhead_px {
             return Err(RenderError::HeadAxisMismatch {
                 got,
@@ -162,9 +236,8 @@ impl Target {
     }
 
     /// The label's extent along the feed, in tenths of a millimetre.
-    pub fn feed_tenths_mm(&self, direction: PrintDirection) -> i32 {
-        self.dpmm()
-            .tenths_mm_from_dots(i32::from(self.feed_axis(direction)))
+    pub fn feed_tenths_mm(&self) -> i32 {
+        self.dpmm().tenths_mm_from_dots(i32::from(self.feed_axis()))
     }
 }
 
@@ -228,12 +301,12 @@ mod tests {
             (320, 96),
             "landscape strip"
         );
-        assert_eq!(d110.head_axis(PrintDirection::Left), 96);
-        assert_eq!(d110.feed_axis(PrintDirection::Left), 320);
+        assert_eq!(d110.head_axis(), 96);
+        assert_eq!(d110.feed_axis(), 320);
 
         let b1 = Target::for_label(384, 320, 203, PrintDirection::Top).unwrap();
         assert_eq!((b1.width_px, b1.height_px), (384, 320));
-        assert_eq!(b1.head_axis(PrintDirection::Top), 384);
+        assert_eq!(b1.head_axis(), 384);
     }
 
     /// A canvas that does not match the head does not print inset, it prints
@@ -242,16 +315,27 @@ mod tests {
     fn the_head_axis_must_match_exactly() {
         let t = Target::new(320, 92, 203).unwrap();
         assert_eq!(
-            t.require_head(96, PrintDirection::Left),
+            t.require_head(96),
             Err(RenderError::HeadAxisMismatch { got: 92, want: 96 })
         );
         let ok = Target::for_label(96, 320, 203, PrintDirection::Left).unwrap();
-        assert!(ok.require_head(96, PrintDirection::Left).is_ok());
+        assert!(ok.require_head(96).is_ok());
+    }
+
+    /// The swap that M4 was: a document coordinate is not a canvas coordinate.
+    #[test]
+    fn document_coordinates_are_mapped_through_the_direction() {
+        let landscape = Target::for_label(96, 320, 203, PrintDirection::Left).unwrap();
+        assert_eq!(landscape.place(10, 20), (10, 20), "feed is horizontal");
+
+        let portrait = Target::for_label(384, 320, 203, PrintDirection::Top).unwrap();
+        assert_eq!(portrait.place(10, 20), (20, 10), "head is horizontal");
+        assert_eq!(portrait.extent(320, 384), (384, 320));
     }
 
     #[test]
     fn feed_length_is_reported_in_tenths_of_a_millimetre() {
         let t = Target::for_label(96, 320, 203, PrintDirection::Left).unwrap();
-        assert_eq!(t.feed_tenths_mm(PrintDirection::Left), 400, "40.0 mm");
+        assert_eq!(t.feed_tenths_mm(), 400, "40.0 mm");
     }
 }

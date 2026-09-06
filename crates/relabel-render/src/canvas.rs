@@ -26,18 +26,11 @@
 //!   usually made an arithmetic mistake, so this crate refuses fractions rather
 //!   than quietly flooring them.
 
+use crate::document::Ink;
 use crate::error::RenderError;
 use crate::greymap::GreyMap;
 use crate::target::Target;
 use tiny_skia::{Color, Paint, Pixmap, Rect, Shader, Transform};
-
-/// Whether a primitive lays ink down or clears it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ink {
-    Black,
-    /// Clears back to paper. Needed for knockout text on a filled panel.
-    White,
-}
 
 pub struct Canvas {
     pixmap: Pixmap,
@@ -107,12 +100,17 @@ impl Canvas {
         if w <= 0 || h <= 0 {
             return;
         }
-        let (x0, y0) = (x.max(0), y.max(0));
-        let x1 = (x + w).min(i32::from(self.w));
-        let y1 = (y + h).min(i32::from(self.h));
+        // Clipped in i64. These coordinates come from a document, which came
+        // from a file: a frame near `i32::MAX` overflows the addition, which
+        // panics in a debug build and silently wraps in a release one - turning
+        // an out-of-bounds element into one that draws somewhere plausible.
+        let (x0, y0) = (i64::from(x).max(0), i64::from(y).max(0));
+        let x1 = (i64::from(x) + i64::from(w)).min(i64::from(self.w));
+        let y1 = (i64::from(y) + i64::from(h)).min(i64::from(self.h));
         if x1 <= x0 || y1 <= y0 {
             return;
         }
+        let (x0, y0, x1, y1) = (x0 as i32, y0 as i32, x1 as i32, y1 as i32);
         let Some(rect) = Rect::from_ltrb(x0 as f32, y0 as f32, x1 as f32, y1 as f32) else {
             return;
         };
@@ -231,6 +229,25 @@ mod tests {
         assert_eq!(g.at(0, 0), 0, "the part that is on the canvas is drawn");
         assert_eq!(g.at(7, 7), 0);
         assert_eq!(g.at(3, 3), 255, "and the rest is not");
+    }
+
+    /// Coordinates arrive from a file, so the clip arithmetic must survive the
+    /// extremes of the type rather than panicking in debug and wrapping in
+    /// release.
+    #[test]
+    fn extreme_coordinates_clip_without_overflowing() {
+        let mut c = canvas(8, 8);
+        // Starts far left and is wide enough to reach the canvas: draws.
+        c.fill_rect_dots(-100, 0, i32::MAX, 4, Ink::Black);
+        // Starts past the right edge: draws nothing.
+        c.fill_rect_dots(i32::MAX, 4, i32::MAX, 4, Ink::Black);
+        // Ends at -1, entirely off to the left: draws nothing.
+        c.fill_rect_dots(i32::MIN, 4, i32::MAX, 4, Ink::Black);
+        let g = c.finish();
+        assert_eq!(g.at(0, 0), 0, "the visible part is drawn");
+        assert_eq!(g.at(7, 0), 0);
+        assert_eq!(g.at(0, 4), 255, "and the two off-canvas ones are not");
+        assert_eq!(g.at(7, 4), 255);
     }
 
     #[test]
