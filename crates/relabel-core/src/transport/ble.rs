@@ -168,12 +168,7 @@ pub struct BleTransport {
 impl BleTransport {
     /// Connect, discover the channel, and start draining notifications.
     pub async fn connect(peripheral: Peripheral) -> Result<BleTransport, TransportError> {
-        if !peripheral.is_connected().await.unwrap_or(false) {
-            peripheral
-                .connect()
-                .await
-                .map_err(|e| TransportError::Connect(e.to_string()))?;
-        }
+        connect_with_retry(&peripheral).await?;
         peripheral
             .discover_services()
             .await
@@ -247,6 +242,43 @@ impl BleTransport {
     pub fn id(&self) -> PeripheralId {
         self.peripheral.id()
     }
+}
+
+/// Connect, tolerating an attempt that is already under way.
+///
+/// BlueZ answers `In Progress` when something else - often this same program a
+/// moment earlier, or a previous run whose link has not finished tearing down -
+/// already has a connect in flight for this device. `is_connected` reports
+/// false throughout that window, so checking it first does not help: the honest
+/// fix is to wait for the attempt in flight to settle and look again.
+///
+/// Three tries at 400 ms covers the case comfortably. Anything longer is a real
+/// failure and should be reported as one rather than hidden behind a spinner.
+async fn connect_with_retry(peripheral: &Peripheral) -> Result<(), TransportError> {
+    const TRIES: usize = 3;
+    const PAUSE: Duration = Duration::from_millis(400);
+
+    let mut last = String::new();
+    for attempt in 0..TRIES {
+        if peripheral.is_connected().await.unwrap_or(false) {
+            return Ok(());
+        }
+        match peripheral.connect().await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                let msg = e.to_string();
+                let busy = msg.contains("In Progress") || msg.contains("in progress");
+                if !busy || attempt + 1 == TRIES {
+                    return Err(TransportError::Connect(msg));
+                }
+                last = msg;
+                tokio::time::sleep(PAUSE).await;
+            }
+        }
+    }
+    Err(TransportError::Connect(format!(
+        "still busy after {TRIES} attempts: {last}"
+    )))
 }
 
 /// Read the MTU without letting a backend panic take the process down.
