@@ -1,15 +1,20 @@
 //! Getting an image file onto a print head.
 //!
-//! Deliberately minimal: scale to fit, then reduce to one bit per pixel. The
-//! full compositor - text, barcodes, QR, layout - is `relabel-render`'s job.
-//! What is here is what bring-up needs, and it is the half that decides whether
-//! a photograph comes out as a picture or as a black rectangle.
+//! Loading and scaling live here because they are bring-up concerns. The
+//! reduction to one bit does not: it is `relabel-render`'s, so this tool and
+//! the eventual designer dither identically and there is one implementation of
+//! each kernel to get right.
 
 use anyhow::{Context, Result, bail};
 use image::imageops::FilterType;
 use relabel_proto::{BitPlane, PrintDirection};
+use relabel_render::{BinariseOpts, GreyMap, Halftone, Zone, binarise};
 
 /// How a grey pixel becomes black or white.
+///
+/// A command-line mirror of [`Halftone`]: the library cannot derive a `clap`
+/// trait without depending on `clap`, and a rendering crate has no business
+/// knowing about argument parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Dither {
     /// Hard cut at the threshold. Right for line art, text and barcodes, where
@@ -17,9 +22,25 @@ pub enum Dither {
     Threshold,
     /// Floyd-Steinberg. The usual choice for photographs.
     Floyd,
-    /// Atkinson. Diffuses only three quarters of the error, which keeps more
-    /// contrast and tends to suit thermal paper better than Floyd does.
+    /// Atkinson. Diffuses only six eighths of the error and almost never fires
+    /// an isolated dot, which tends to suit thermal paper.
     Atkinson,
+    /// Three-row Sierra, between the two above.
+    Sierra,
+    /// Ordered 8x8 dither: a regular texture, and no error travels at all.
+    Bayer,
+}
+
+impl From<Dither> for Halftone {
+    fn from(d: Dither) -> Halftone {
+        match d {
+            Dither::Threshold => Halftone::Threshold,
+            Dither::Floyd => Halftone::FloydSteinberg,
+            Dither::Atkinson => Halftone::Atkinson,
+            Dither::Sierra => Halftone::Sierra3,
+            Dither::Bayer => Halftone::Bayer8,
+        }
+    }
 }
 
 /// Load an image and reduce it to a 1-bit plane sized for the print head.
@@ -45,6 +66,12 @@ pub fn load(
     // Which axis of the image lies across the head depends on the model. A
     // `Left` printer - the whole 96-dot D11 family - takes a landscape strip
     // whose *height* is the label width, so that is the axis to constrain.
+    //
+    // The render plan proposed deleting this in favour of the protocol
+    // crate's `BitPlane::oriented`. That would be a mistake: `oriented`
+    // *rotates*, this *resizes* an image larger than the head, and without it
+    // printing any large image fails outright. It stays until image elements
+    // carry their own frames and the document decides the size.
     let img = if head_px == 0 {
         img
     } else {
@@ -62,59 +89,16 @@ pub fn load(
         }
     };
 
-    let (w, h) = (img.width(), img.height());
-    let mut grey: Vec<i16> = img.pixels().map(|p| i16::from(p.0[0])).collect();
-    let mut plane = BitPlane::new(w as u16, h as u16);
-
-    let t = i16::from(threshold);
-    for y in 0..h {
-        // Serpentine: alternating the scan direction stops diffusion errors
-        // building into visible diagonal streaks.
-        let ltr = y % 2 == 0;
-        for i in 0..w {
-            let x = if ltr { i } else { w - 1 - i };
-            let idx = (y * w + x) as usize;
-            let old = grey[idx];
-            let lit = old < t;
-            let black = if invert { !lit } else { lit };
-            plane.set(x as u16, y as u16, black);
-
-            if dither == Dither::Threshold {
-                continue;
-            }
-            let new = if lit { 0 } else { 255 };
-            let err = old - new;
-            let mut push = |dx: i32, dy: i32, num: i32, den: i32| {
-                let nx = if ltr { x as i32 + dx } else { x as i32 - dx };
-                let ny = y as i32 + dy;
-                if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
-                    return;
-                }
-                let j = (ny as u32 * w + nx as u32) as usize;
-                grey[j] = (grey[j] + (i32::from(err) * num / den) as i16).clamp(-255, 510);
-            };
-            match dither {
-                Dither::Floyd => {
-                    push(1, 0, 7, 16);
-                    push(-1, 1, 3, 16);
-                    push(0, 1, 5, 16);
-                    push(1, 1, 1, 16);
-                }
-                Dither::Atkinson => {
-                    // Denominator 8 over six neighbours: only six eighths of the
-                    // error is diffused, which is the point of the kernel.
-                    push(1, 0, 1, 8);
-                    push(2, 0, 1, 8);
-                    push(-1, 1, 1, 8);
-                    push(0, 1, 1, 8);
-                    push(1, 1, 1, 8);
-                    push(0, 2, 1, 8);
-                }
-                Dither::Threshold => unreachable!("handled above"),
-            }
-        }
-    }
-    Ok(plane)
+    let w = u16::try_from(img.width()).context("image is wider than 65535 dots")?;
+    let h = u16::try_from(img.height()).context("image is taller than 65535 dots")?;
+    let grey = GreyMap::from_px(w, h, img.into_raw());
+    let zones = [Zone {
+        halftone: dither.into(),
+        threshold,
+        strength: 1.0,
+        invert,
+    }];
+    Ok(binarise(&grey, &BinariseOpts::with_zones(&zones)))
 }
 
 /// Render a plane as text, so a dry run shows what would be printed.
@@ -199,5 +183,20 @@ mod tests {
         assert!(p.get(0, 0), "a black pixel prints");
         let p = load(&dark, 0, PrintDirection::Top, Dither::Threshold, 128, true).unwrap();
         assert!(!p.get(0, 0), "inverted, it does not");
+    }
+
+    /// Every command-line choice maps onto a distinct library kernel.
+    #[test]
+    fn each_dither_maps_to_its_own_halftone() {
+        use clap::ValueEnum;
+        let mapped: Vec<Halftone> = Dither::value_variants()
+            .iter()
+            .map(|d| (*d).into())
+            .collect();
+        for (i, a) in mapped.iter().enumerate() {
+            for b in &mapped[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
     }
 }

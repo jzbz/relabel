@@ -1,8 +1,10 @@
-//! Ink coverage, and the reduction to one bit.
+//! Ink coverage, and the zone each dot belongs to.
 
+use crate::halftone::{BinariseOpts, Zone, binarise};
 use relabel_proto::BitPlane;
 
-/// One byte of ink coverage per dot: 0 fully inked, 255 bare paper.
+/// One byte of ink coverage per dot, 0 fully inked and 255 bare paper, and one
+/// byte of zone id per dot.
 ///
 /// Deliberately not a `tiny_skia::Pixmap`. Keeping the rasteriser out of the
 /// public API means the halftoning code, the tests and any future caller work
@@ -14,14 +16,36 @@ pub struct GreyMap {
     pub h: u16,
     /// Row-major, `w * h` bytes.
     pub px: Vec<u8>,
+    /// Row-major, `w * h` zone ids. 0 is the page; each element is painted into
+    /// its own id so that halftoning error never travels between elements. See
+    /// [`crate::halftone`].
+    pub zone: Vec<u8>,
 }
 
 impl GreyMap {
     pub fn new(w: u16, h: u16) -> GreyMap {
+        let n = usize::from(w) * usize::from(h);
         GreyMap {
             w,
             h,
-            px: vec![255; usize::from(w) * usize::from(h)],
+            px: vec![255; n],
+            zone: vec![0; n],
+        }
+    }
+
+    /// Wrap existing coverage, all in the page zone.
+    ///
+    /// A buffer of the wrong length is padded with paper or cut short rather
+    /// than refused, so an image decoded to a slightly different size cannot
+    /// turn into a panic here.
+    pub fn from_px(w: u16, h: u16, mut px: Vec<u8>) -> GreyMap {
+        let n = usize::from(w) * usize::from(h);
+        px.resize(n, 255);
+        GreyMap {
+            w,
+            h,
+            px,
+            zone: vec![0; n],
         }
     }
 
@@ -30,28 +54,24 @@ impl GreyMap {
         if x >= self.w || y >= self.h {
             return 255;
         }
-        self.px[usize::from(y) * usize::from(self.w) + usize::from(x)]
+        self.px
+            .get(usize::from(y) * usize::from(self.w) + usize::from(x))
+            .copied()
+            .unwrap_or(255)
     }
 
     /// Reduce to one bit with a hard threshold: anything at or below `t` is
     /// black.
     ///
-    /// The right choice for line art, rules, barcodes and 2D modules, all of
-    /// which are already exactly 0 or 255 and so come through bit-exact
-    /// whatever the threshold is. Photographs want a diffusion kernel instead;
-    /// that arrives with the halftoning module, along with the per-element
-    /// isolation that stops diffusion error leaking out of a photograph and
-    /// across a barcode.
+    /// The same rule the halftoning module uses - this is that module with a
+    /// single thresholding zone - so there is exactly one definition of "is
+    /// this dot ink" in the crate.
     pub fn threshold(&self, t: u8) -> BitPlane {
-        let mut plane = BitPlane::new(self.w, self.h);
-        for y in 0..self.h {
-            for x in 0..self.w {
-                if self.at(x, y) <= t {
-                    plane.set(x, y, true);
-                }
-            }
-        }
-        plane
+        let zones = [Zone {
+            threshold: t,
+            ..Zone::PAGE
+        }];
+        binarise(self, &BinariseOpts::with_zones(&zones))
     }
 
     /// How much of the canvas is inked, as a fraction.
@@ -94,5 +114,13 @@ mod tests {
         let mut g = GreyMap::new(4, 1);
         g.px = vec![0, 0, 255, 255];
         assert_eq!(g.coverage(128), 0.5);
+    }
+
+    #[test]
+    fn a_wrong_length_buffer_is_normalised() {
+        let g = GreyMap::from_px(4, 2, vec![0, 0, 0]);
+        assert_eq!(g.px.len(), 8);
+        assert_eq!(g.at(3, 1), 255, "padded with paper");
+        assert_eq!(g.zone.len(), 8);
     }
 }

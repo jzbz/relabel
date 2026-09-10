@@ -34,6 +34,8 @@ use tiny_skia::{Color, Paint, Pixmap, Rect, Shader, Transform};
 
 pub struct Canvas {
     pixmap: Pixmap,
+    /// Zone id per dot, painted alongside the ink. See [`crate::halftone`].
+    zone: Vec<u8>,
     w: u16,
     h: u16,
 }
@@ -54,6 +56,7 @@ impl Canvas {
         pixmap.fill(Color::WHITE);
         Ok(Canvas {
             pixmap,
+            zone: vec![0; usize::from(target.width_px) * usize::from(target.height_px)],
             w: target.width_px,
             h: target.height_px,
         })
@@ -119,6 +122,32 @@ impl Canvas {
             .fill_rect(rect, &Canvas::hard(ink), Transform::identity(), None);
     }
 
+    /// Mark a rectangle of dots as belonging to a zone.
+    ///
+    /// Called with the same rectangle as the ink it accompanies, so an element's
+    /// zone is exactly where it draws - an outline claims its four bars, not
+    /// the empty box inside them. A bounding box would be simpler to explain
+    /// and fails badly in one ordinary case: a border drawn last would claim the
+    /// whole label and put every element back into one zone.
+    ///
+    /// Clipped in `i64` for the same reason as [`fill_rect_dots`](Self::fill_rect_dots).
+    pub fn paint_zone(&mut self, x: i32, y: i32, w: i32, h: i32, id: u8) {
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        let (x0, y0) = (i64::from(x).max(0), i64::from(y).max(0));
+        let x1 = (i64::from(x) + i64::from(w)).min(i64::from(self.w));
+        let y1 = (i64::from(y) + i64::from(h)).min(i64::from(self.h));
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let stride = usize::from(self.w);
+        for yy in y0 as usize..y1 as usize {
+            let row = yy * stride;
+            self.zone[row + x0 as usize..row + x1 as usize].fill(id);
+        }
+    }
+
     /// A horizontal rule `thickness` dots deep.
     ///
     /// Expressed as a rectangle rather than a stroked path on purpose: a
@@ -162,6 +191,7 @@ impl Canvas {
             w: self.w,
             h: self.h,
             px,
+            zone: self.zone,
         }
     }
 }

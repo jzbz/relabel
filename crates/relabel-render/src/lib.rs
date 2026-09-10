@@ -14,6 +14,7 @@ pub mod canvas;
 pub mod document;
 pub mod error;
 pub mod greymap;
+pub mod halftone;
 pub mod rasterise;
 pub mod target;
 
@@ -21,5 +22,6 @@ pub use canvas::Canvas;
 pub use document::{Element, ElementOrRaw, Ink, Label, LoadError};
 pub use error::RenderError;
 pub use greymap::GreyMap;
+pub use halftone::{BinariseOpts, Halftone, Zone, binarise};
 pub use rasterise::{RenderReport, rasterise, rasterise_plane};
 pub use target::{Dpmm, Target};

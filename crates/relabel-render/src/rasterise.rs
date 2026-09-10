@@ -4,12 +4,21 @@
 //! skipped; elements this build does not recognise are skipped too, and
 //! reported, because a label that quietly loses an element is worse than one
 //! that says it could not draw it.
+//!
+//! Each element is also painted into its own halftoning zone as it is drawn,
+//! so that when a photograph is dithered its error cannot travel into the
+//! element beside it. See [`crate::halftone`].
 
 use crate::canvas::Canvas as Surface;
 use crate::document::{Element, Ink, Label, LineEl, RectDots, RectEl, Rot};
 use crate::error::RenderError;
 use crate::greymap::GreyMap;
 use crate::target::Target;
+
+/// Zone ids are a byte and 0 is the page. Elements beyond the 254th share the
+/// last id - on a label a few hundred dots long that is not a realistic count,
+/// and sharing only matters where one of the sharers is a photograph.
+const LAST_ZONE: u8 = 254;
 
 /// What happened while drawing, beyond the pixels.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -28,8 +37,12 @@ pub struct RenderReport {
 }
 
 impl RenderReport {
+    /// Nothing was skipped, clipped or approximated.
     pub fn is_clean(&self) -> bool {
-        self.unimplemented.is_empty() && self.unrecognised.is_empty() && self.off_canvas.is_empty()
+        self.unimplemented.is_empty()
+            && self.unrecognised.is_empty()
+            && self.off_canvas.is_empty()
+            && self.rotation_approximated.is_empty()
     }
 }
 
@@ -46,6 +59,7 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
         report.unrecognised.push(kind.to_string());
     }
 
+    let mut next_zone: u8 = 1;
     for el in label.drawable() {
         let c = el.common();
         if !fits(&c.frame, &label.canvas) {
@@ -54,9 +68,11 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
         if !c.rot.is_exact() {
             report.rotation_approximated.push(c.id);
         }
+        let zone = next_zone;
+        next_zone = next_zone.saturating_add(1).min(LAST_ZONE);
         match el {
-            Element::Rect(e) => draw_rect(&mut surface, target, e),
-            Element::Line(e) => draw_line(&mut surface, target, e),
+            Element::Rect(e) => draw_rect(&mut surface, target, e, zone),
+            Element::Line(e) => draw_line(&mut surface, target, e, zone),
             other => report.unimplemented.push(other.kind()),
         }
     }
@@ -85,50 +101,77 @@ fn fits(f: &RectDots, canvas: &crate::document::Canvas) -> bool {
         && head + hl <= i64::from(canvas.head)
 }
 
-/// Lay down one rectangle given in document coordinates.
+/// Lay down one rectangle given in document coordinates, and claim it for a
+/// zone.
 ///
 /// Every placement goes through [`Target::place`] and [`Target::extent`], which
 /// is what keeps a `Top`-direction printer from coming out transposed.
-fn blit(s: &mut Surface, t: &Target, feed: i32, head: i32, fl: i32, hl: i32, ink: Ink) {
-    let (x, y) = t.place(feed, head);
-    let (w, h) = t.extent(fl, hl);
+fn blit(s: &mut Surface, t: &Target, r: RectDots, ink: Ink, zone: u8) {
+    let (x, y) = t.place(r.feed, r.head);
+    let (w, h) = t.extent(r.feed_len, r.head_len);
     s.fill_rect_dots(x, y, w, h, ink);
+    s.paint_zone(x, y, w, h, zone);
 }
 
-fn draw_rect(s: &mut Surface, t: &Target, e: &RectEl) {
+fn rect(feed: i32, head: i32, feed_len: i32, head_len: i32) -> RectDots {
+    RectDots {
+        feed,
+        head,
+        feed_len,
+        head_len,
+    }
+}
+
+fn draw_rect(s: &mut Surface, t: &Target, e: &RectEl, zone: u8) {
     let f = rotated(&e.common.frame, e.common.rot);
     let ink = e.common.ink;
     if e.stroke_dots == 0 {
-        blit(s, t, f.feed, f.head, f.feed_len, f.head_len, ink);
+        blit(s, t, f, ink, zone);
         return;
     }
     // An outline is four rectangles rather than a stroked path: a stroke is
     // centred on its coordinate, so a one-dot outline would straddle two rows
     // and light neither fully - a grey line where a black one was asked for.
     let w = i32::from(e.stroke_dots).min(f.feed_len.min(f.head_len));
-    blit(s, t, f.feed, f.head, f.feed_len, w, ink);
-    blit(s, t, f.feed, f.head + f.head_len - w, f.feed_len, w, ink);
-    blit(s, t, f.feed, f.head, w, f.head_len, ink);
-    blit(s, t, f.feed + f.feed_len - w, f.head, w, f.head_len, ink);
+    blit(s, t, rect(f.feed, f.head, f.feed_len, w), ink, zone);
+    blit(
+        s,
+        t,
+        rect(f.feed, f.head + f.head_len - w, f.feed_len, w),
+        ink,
+        zone,
+    );
+    blit(s, t, rect(f.feed, f.head, w, f.head_len), ink, zone);
+    blit(
+        s,
+        t,
+        rect(f.feed + f.feed_len - w, f.head, w, f.head_len),
+        ink,
+        zone,
+    );
 }
 
-fn draw_line(s: &mut Surface, t: &Target, e: &LineEl) {
+fn draw_line(s: &mut Surface, t: &Target, e: &LineEl, zone: u8) {
     let f = rotated(&e.common.frame, e.common.rot);
     let w = i32::from(e.thickness_dots).max(1);
     // Only axis-aligned rules in this step. Which axis is decided by the
     // longer side, so a frame describes the line without a separate direction.
-    if f.feed_len >= f.head_len {
-        blit(s, t, f.feed, f.head, f.feed_len, w, e.common.ink);
+    let r = if f.feed_len >= f.head_len {
+        rect(f.feed, f.head, f.feed_len, w)
     } else {
-        blit(s, t, f.feed, f.head, w, f.head_len, e.common.ink);
-    }
+        rect(f.feed, f.head, w, f.head_len)
+    };
+    blit(s, t, r, e.common.ink, zone);
 }
 
 /// Swap the frame's axes for a quarter turn.
 ///
 /// Only the extent is rotated here, not the content: a rotated *rectangle* is
 /// still a rectangle. Elements with internal orientation - text, barcodes -
-/// rotate their own content when they arrive.
+/// rotate their own content when they arrive. The origin stays where it was
+/// rather than the element turning about its centre: a renderer has to pick
+/// one, and the editor is the right place to keep an element visually in
+/// place while it turns.
 fn rotated(f: &RectDots, rot: Rot) -> RectDots {
     // An angle this renderer cannot draw is approximated to the nearest quarter
     // turn *here*, at the point of drawing. The document keeps what the user
