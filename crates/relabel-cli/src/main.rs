@@ -89,7 +89,12 @@ enum Cmd {
         /// Defaults to the model's own default.
         #[arg(long)]
         density: Option<u8>,
-        #[arg(long, value_enum, default_value = "atkinson")]
+        /// Floyd-Steinberg by default: it reproduces tone across the whole
+        /// range. Atkinson prints nothing at all for greys of about 224 and
+        /// lighter, so a photograph's pale background would vanish.
+        // The P3 print test in docs/RENDER-PLAN.md is what settles the
+        // default for good; this is the measured choice until it runs.
+        #[arg(long, value_enum, default_value = "floyd")]
         dither: bitmap::Dither,
         #[arg(long, default_value = "128")]
         threshold: u8,

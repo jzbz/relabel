@@ -162,7 +162,7 @@ cargo run -p relabel-cli -- info
 Print something:
 
 ```bash
-cargo run -p relabel-cli -- print --copies 1 --dither atkinson label.png
+cargo run -p relabel-cli -- print --copies 1 label.png
 ```
 
 Useful flags while something is going wrong:

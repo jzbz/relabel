@@ -20,7 +20,7 @@ pub enum Dither {
     /// Hard cut at the threshold. Right for line art, text and barcodes, where
     /// a half-lit module is a scan failure.
     Threshold,
-    /// Floyd-Steinberg. The usual choice for photographs.
+    /// Floyd-Steinberg. The usual choice for photographs, and the default.
     Floyd,
     /// Atkinson. Diffuses only six eighths of the error and almost never fires
     /// an isolated dot, which tends to suit thermal paper.
