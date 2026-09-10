@@ -9,8 +9,9 @@
 //! so that when a photograph is dithered its error cannot travel into the
 //! element beside it. See [`crate::halftone`].
 
+use crate::barcode::{self, BarcodeError, MIN_MODULE_DOTS, Symbology};
 use crate::canvas::Canvas as Surface;
-use crate::document::{Element, Ink, Label, LineEl, RectDots, RectEl, Rot};
+use crate::document::{BarcodeEl, Element, Ink, Label, LineEl, RectDots, RectEl, Rot};
 use crate::error::RenderError;
 use crate::greymap::GreyMap;
 use crate::target::Target;
@@ -34,6 +35,11 @@ pub struct RenderReport {
     /// because that is all this renderer can do. The document keeps the angle
     /// the user asked for.
     pub rotation_approximated: Vec<u32>,
+    /// Elements that could not be drawn at all, by id, with the reason.
+    ///
+    /// Refusal is deliberate for symbologies: a barcode that does not fit is
+    /// not clipped, because a clipped Code 128 scans as a different value.
+    pub failed: Vec<(u32, String)>,
 }
 
 impl RenderReport {
@@ -43,6 +49,7 @@ impl RenderReport {
             && self.unrecognised.is_empty()
             && self.off_canvas.is_empty()
             && self.rotation_approximated.is_empty()
+            && self.failed.is_empty()
     }
 }
 
@@ -73,6 +80,11 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
         match el {
             Element::Rect(e) => draw_rect(&mut surface, target, e, zone),
             Element::Line(e) => draw_line(&mut surface, target, e, zone),
+            Element::Barcode(e) => {
+                if let Err(err) = draw_barcode(&mut surface, target, e, zone) {
+                    report.failed.push((c.id, err.to_string()));
+                }
+            }
             other => report.unimplemented.push(other.kind()),
         }
     }
@@ -193,4 +205,74 @@ pub fn rasterise_plane(
 ) -> Result<relabel_proto::BitPlane, RenderError> {
     let (grey, _) = rasterise(label, target)?;
     Ok(grey.threshold(128))
+}
+
+/// Lay a linear barcode into its frame.
+///
+/// Every bar is placed at an exact integer multiple of the module width: the
+/// rasteriser never scales a symbol. The whole footprint, quiet zones included,
+/// is knocked back to paper first, because a symbol without clear quiet zones
+/// may not scan - so a barcode placed over a border cuts the border, which is
+/// the right outcome.
+///
+/// For a quarter turn the symbol runs along the head axis instead of the feed,
+/// and the half turns lay the modules in reverse, which scanners read either
+/// way.
+fn draw_barcode(s: &mut Surface, t: &Target, e: &BarcodeEl, zone: u8) -> Result<(), BarcodeError> {
+    let sym = Symbology::from_name(&e.symbology)
+        .ok_or_else(|| BarcodeError::UnknownSymbology(e.symbology.clone()))?;
+    if e.module_dots == 0 {
+        return Err(BarcodeError::ZeroModule);
+    }
+    if e.module_dots < MIN_MODULE_DOTS && !e.out_of_spec {
+        return Err(BarcodeError::TooNarrow(e.module_dots));
+    }
+    let modules = barcode::encode(sym, &e.data)?;
+
+    let b = rotated(&e.common.frame, e.common.rot);
+    let turn = e.common.rot.quantised();
+    let along_head = matches!(turn, Rot::D90 | Rot::D270);
+    let reversed = matches!(turn, Rot::D180 | Rot::D270);
+
+    let depth = if e.bar_dots > 0 {
+        i32::from(e.bar_dots)
+    } else if along_head {
+        b.feed_len
+    } else {
+        b.head_len
+    };
+    // Compliance before length, so a retail symbol on a small label is refused
+    // for the reason that holds at every size rather than whichever trips first.
+    if !e.out_of_spec {
+        barcode::check_retail(sym, e.module_dots, depth.max(0) as u32, t.dpmm())?;
+    }
+    let available = if along_head { b.head_len } else { b.feed_len };
+    let length = modules.width_dots(e.module_dots);
+    if i64::from(length) > i64::from(available) {
+        return Err(BarcodeError::TooWide {
+            needed: length,
+            available: available.max(0) as u32,
+        });
+    }
+
+    let length = length as i32;
+    let x = i32::from(e.module_dots);
+    let place = |off: i32, w: i32| {
+        if along_head {
+            rect(b.feed, b.head + off, depth, w)
+        } else {
+            rect(b.feed + off, b.head, w, depth)
+        }
+    };
+    let paper = match e.common.ink {
+        Ink::Black => Ink::White,
+        Ink::White => Ink::Black,
+    };
+    blit(s, t, place(0, length), paper, zone);
+    for &(start, width) in &modules.bars {
+        let (off, w) = (start as i32 * x, width as i32 * x);
+        let off = if reversed { length - off - w } else { off };
+        blit(s, t, place(off, w), e.common.ink, zone);
+    }
+    Ok(())
 }

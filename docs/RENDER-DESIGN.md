@@ -923,7 +923,7 @@ Naive code-value dithering is far too light, and **dot gain is what rescues it**
 | Code 128 (auto A/B/C) | `code128` 0.2.1 | The default and the right answer for 90 % of label content |
 | Code 39 | `barcoders` 2.0 | 2:1 only |
 | ITF / Interleaved 2 of 5 | `barcoders` 2.0 | `TF::interleaved` |
-| Codabar | `barcoders` 2.0 | with **relabel's own** start/stop validation |
+| Codabar | **relabel's own**, from the standard's table | `barcoders` gets B, C and `+` wrong, see §5.3 |
 | EAN-13 / EAN-8 | `barcoders` 2.0 | refused on small media, see §6.3 |
 | UPC-A | `barcoders` 2.0 | through **relabel's own** wrapper, see below |
 | QR (Normal 1–40) | `qrcode` 0.14.1 | Micro QR **not offered**, see §8 |
@@ -963,15 +963,15 @@ for BarCoordinate { x, width } in code.bar_coordinates() {
 let total_dots = code.len() as u32 * x_dots;
 ```
 
-Its default `Encoder::Mixed` matched a provably-optimal dynamic-programming encoder on **0 of 30 000** printable-ASCII samples, so no tuning is needed. It has no FNC1, so no GS1-128 (§8).
+Its default `Encoder::Mixed` produced a longer symbol than a provably-optimal dynamic-programming encoder on **0 of 30 000** printable-ASCII samples, so no tuning is needed. It has no FNC1, so no GS1-128 (§8).
 
-### 5.3 `barcoders`, with three defects handled
+### 5.3 `barcoders`, and what is fenced off
 
 `barcoders = { version = "2.0", default-features = false, features = ["std"] }`. Defaults off drops the ascii/json/svg generators and the optional `image` dependency; `cargo tree -p barcoders` then prints one line. **Keep `std`** or `Error` loses its `std::error::Error` impl (`src/error.rs:34`) and `#[from]` in a `thiserror` enum stops working.
 
 Every symbology is `T::new<S: AsRef<str>>(data: S) -> Result<T, Error>` then `encode(&self) -> Vec<u8>`, one `u8` per module, 1 = bar, no quiet zone, no height — exactly what a device-dot blitter wants. **With one exception: `TF` has no `new`.** It is `TF::interleaved` / `TF::standard` (`tf.rs:45`, `:65`). So do not write a `trait Barcode { fn new(..) }` blanket abstraction over the crate — it cannot express `TF`. Use a per-symbology `match` in relabel's own enum.
 
-Three defects, all verified in the shipped source:
+Four defects. The first three were found by reading the shipped source; the fourth only by reading rendered symbols back through a decoder, which is the argument for doing that to every symbology.
 
 **1. Code 93 emits a wrong check character on ~4.3 % of inputs — so Code 93 does not ship.** `src/sym/code93.rs` declares `('[', …)` at *both* index 45 and index 46 (lines 64 and 65 of the table; confirmed by reading the file). `char_encoding` does a linear `find`, so index 46 is unreachable and whenever a modulo-47 checksum lands there the index-45 pattern is emitted instead. Measured: 8538 / 200 000 numeric inputs, 4.27 %. Worse than a single wrong symbol — when the C checksum lands on 46, `k_checksum_char` pushes that wrong `'['` onto the data and recomputes, so the K symbol is wrong too. And a third consequence: `valid_chars()` unzips the same table, so `Code93::new("]")` returns `Err(Character)` and the library can express only 46 of Code 93's 47 values.
 
@@ -980,6 +980,10 @@ Upstream fixed it in commit `7f8df633` (2024-12-10) and has not released since 2
 **2. `UPCA` is a type alias that silently encodes a different number.** `pub type UPCA = EAN13;` (`ean13.rs:96`) with `valid_len() = 12..13` and a `Parse` implementation that treats the range end as inclusive (`sym.rs:42`). So it wants **the 12 EAN-13 digits before the check digit**, i.e. `"0"` plus the 11 UPC data digits. Handing it a real 12-digit UPC-A produces a valid but *different* EAN-13, with no error at all: `UPCA::new("003600029145")` and `UPCA::new("036000291452")` both return `Ok` and encode differently. `DESIGN.md` §6.3 flags this as "UPC-A wants 12 characters, not 11" — the reality is worse, because it is silent. **relabel never exposes the alias.** It takes 11 digits, or 12 with the check digit validated, and calls `EAN13::new("0" + first_11)` itself.
 
 **3. Codabar accepts data with no start/stop character.** `Codabar::new("12345")` returns `Ok` and encodes 49 modules of unscannable output; the A–D guard requirement appears only in a doc comment at `codabar.rs:7`. relabel validates: first and last characters in A–D, none elsewhere.
+
+**4. Codabar's table is wrong for three of its twenty characters — so relabel encodes Codabar itself.** Its B and C patterns are swapped: `A40156B` scans as `A40156C`. And its `+` is twelve modules with five wide elements, where the standard's has three; zbar does not decode a symbol containing it at all. Every other character, and all of Code 39, ITF, EAN-13, EAN-8 and the UPC-A wrapper, reads back correctly. Codabar is twenty characters of seven elements each, so relabel carries the standard's table itself (2:1, one narrow space between characters) rather than a fence around the crate's.
+
+Also fenced, though it is documented behaviour rather than a defect: `TF::interleaved` appends a mod-10 check digit to odd-length input (`tf.rs:51-56`), so the value scanned is not the value typed. relabel refuses odd lengths and says to add a leading zero.
 
 Also worth knowing: `Code128::new` checks `data.len() < 2` in *bytes* (`code128.rs:279`), and `'À'` is two UTF-8 bytes, so `Code128::new("À")` returns `Ok` and encodes a data-free symbol. Irrelevant once `code128` owns that symbology, but it is a good indication of the crate's validation depth. Every reachable `panic!`/`expect` in `encode()` (`code39.rs:104`/`:111`, `code93.rs:124-127`, `code11.rs:95`, `codabar.rs:101`, `ean13.rs:109`) is guarded by `Parse::parse` having already validated the character set — each was checked individually — but the guard is the public constructor, so relabel must never construct these types by any other route.
 
@@ -1312,14 +1316,15 @@ resvg = { version = "0.47", default-features = false, features = ["text", "raste
 # coordinate space, so the blitter needs no quiet-zone arithmetic.
 code128 = "0.2"
 
-# EAN-13/8, Code 39, ITF/STF, Codabar. Defaults off drops the ascii/json/svg
+# EAN-13/8, Code 39, ITF. Defaults off drops the ascii/json/svg
 # renderers and the optional `image` dependency, leaving ZERO transitive
 # crates; `std` must stay or Error loses its std::error::Error impl
 # (src/error.rs:34) and #[from] stops working. Code 93 is NOT exposed (a
 # duplicate table key produces a wrong check character on 4.3% of inputs,
 # fixed upstream, unreleased since 2024-04) and neither is the UPCA type alias
 # (`pub type UPCA = EAN13` at ean13.rs:96 silently encodes a DIFFERENT number
-# when handed a real 12-digit UPC-A).
+# when handed a real 12-digit UPC-A). Its Codabar is not used either: the
+# table swaps B and C and encodes `+` unreadably.
 barcoders = { version = "2.0", default-features = false, features = ["std"] }
 
 # QR. Zero transitive dependencies with defaults off; its defaults pull image,

@@ -9,6 +9,7 @@
 //! Nothing in this crate is async and nothing does I/O beyond reading bytes a
 //! caller hands it.
 
+pub mod barcode;
 pub mod calibration;
 pub mod canvas;
 pub mod document;
@@ -18,6 +19,7 @@ pub mod halftone;
 pub mod rasterise;
 pub mod target;
 
+pub use barcode::{BarcodeError, Symbology};
 pub use canvas::Canvas;
 pub use document::{Element, ElementOrRaw, Ink, Label, LoadError};
 pub use error::RenderError;

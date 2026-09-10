@@ -20,6 +20,8 @@ serde.workspace = true
 # what carries fields and element types written by a future version through a
 # round-trip instead of silently deleting them.
 serde_json.workspace = true
+code128.workspace = true
+barcoders.workspace = true
 
 [dev-dependencies]
 # Golden files are PBM P4, whose bit layout is byte-identical to BitPlane's own

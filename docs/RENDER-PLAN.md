@@ -113,10 +113,12 @@ Add a `cargo-fuzz` target over `serde_json::from_str::<Label>` here — cheap, a
 
 **Delivers.** `BarcodeEl { symbology, data, module_dots: u16, ratio, bar_height, quiet_zone, hri, checksum }` — **`module_dots`, never millimetres**, and every bar an exact integer multiple of it. Code 128 through `code128` 0.2.1 (`Code128::encode(&[u8])`, `bar_coordinates() -> impl Iterator<Item = BarCoordinate { x, width }>`, `len()`, with both 10X quiet zones already in the coordinate space); everything else through `barcoders` 2.0. A pure `width_dots(sym, data, module_dots) -> Result<u32, BarcodeError>` computed from the encoder's own module count, so the inspector can show remaining capacity live.
 
-Three defects in `barcoders` that must be handled here and not discovered later:
+Defects in `barcoders` that must be handled here and not discovered later:
 - **Code 93** emits a wrong check character on ~4.3% of inputs (`code93.rs:65` declares `('[', …)` twice, so table index 46 is unreachable through the linear `find`). Either vendor the one-character fix (`(']', [1,0,0,1,1,0,0,1,0])`) with a comment naming upstream commit `7f8df633`, or do not ship Code 93. Do not ship it unpatched.
 - **`pub type UPCA = EAN13`** with `valid_len() = 12..13` wants the 12 EAN digits *before* the check digit. A real 12-digit UPC-A encodes silently as a different, valid, wrong barcode. Write our own wrapper; never expose the alias.
 - **Codabar** accepts data with no A–D start/stop and returns 49 modules of unscannable output. Validate ourselves.
+- **Codabar's table** swaps B and C, and encodes `+` as a pattern zbar will not decode. Found only by reading rendered output back through a decoder. Encode Codabar from the standard's table instead of fencing the crate's.
+- **`TF::interleaved`** appends a mod-10 check digit to odd-length input without saying so, so the value scanned is not the value typed. Refuse odd lengths and say to add a leading zero.
 
 Also: `Code128::new` in barcoders needs a hand-embedded `À`/`Ɓ`/`Ć` selector, which is exactly why Code 128 goes through `code128` instead — and why the document stores the user's plain data, never the selector characters.
 
@@ -124,7 +126,7 @@ Overflow default for barcodes is **`Fail`**, not clip. A clipped Code 128 scans 
 
 **Depends on.** Steps 1–3 (hard paints, zone map, document model).
 
-**Tested by.** Golden `.pbm` per symbology at a fixed module width. Round-trip Code 128 output through `code128`'s own ISO/IEC 15417 decoder (it ships one) for a corpus of payloads — that is a real independent check, not a self-consistency check. Assert bar run-lengths are exactly `n × module_dots` for every bar in a rendered symbol. Assert `width_dots` matches the rendered extent exactly. Assert EAN-13/UPC-A/EAN-8/UPC-E are **refused** on a 12 mm label with a message, since no EAN/UPC symbol is compliant on 40 × 12 mm at any magnification (nominal bar height 22.85 mm against a 12 mm label; even at the 80% floor it is 18.28 mm).
+**Tested by.** Golden `.pbm` per symbology at a fixed module width. Round-trip Code 128 output through `code128`'s own ISO/IEC 15417 decoder (it ships one) for a corpus of payloads — that is a real independent check, not a self-consistency check. Assert bar run-lengths are exactly `n × module_dots` for every bar in a rendered symbol. Assert `width_dots` matches the rendered extent exactly. Read every golden, and a symbol containing every character of every table, back through an independent decoder (zbar) before committing — that is how the Codabar table was caught, and no in-tree test could have caught it. Assert EAN-13/UPC-A/EAN-8/UPC-E are **refused** on a 12 mm label with a message, since no EAN/UPC symbol is compliant on 40 × 12 mm at any magnification (nominal bar height 22.85 mm against a 12 mm label; even at the 80% floor it is 18.28 mm).
 
 **Size.** ~600 lines plus a vendored patch. Two to three days.
 

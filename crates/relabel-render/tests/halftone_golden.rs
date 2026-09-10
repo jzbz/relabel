@@ -20,7 +20,6 @@
 
 use relabel_proto::BitPlane;
 use relabel_render::{BinariseOpts, GreyMap, Halftone, Zone, binarise};
-use std::path::PathBuf;
 
 const W: u16 = 320;
 const H: u16 = 96;
@@ -62,36 +61,8 @@ fn bowl() -> GreyMap {
     g
 }
 
-fn pbm(p: &BitPlane) -> Vec<u8> {
-    let mut out = format!("P4\n{} {}\n", p.width(), p.height()).into_bytes();
-    out.extend_from_slice(p.bits());
-    out
-}
-
-fn golden_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
-        .join(format!("{name}.pbm"))
-}
-
-fn check(name: &str, plane: &BitPlane) {
-    let path = golden_path(name);
-    let got = pbm(plane);
-    if std::env::var_os("RELABEL_BLESS").is_some() {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, &got).unwrap();
-        return;
-    }
-    let want = std::fs::read(&path).unwrap_or_else(|_| {
-        panic!(
-            "no golden at {}. Generate it with RELABEL_BLESS=1 and look at it before committing.",
-            path.display()
-        )
-    });
-    // Compared as bytes, not as a similarity score. These are deterministic
-    // integer algorithms; any difference at all is a change in behaviour.
-    assert!(want == got, "{name} no longer matches its golden image");
-}
+mod common;
+use common::{check, pbm};
 
 #[test]
 fn every_kernel_matches_its_golden() {

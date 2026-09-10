@@ -53,6 +53,21 @@ async-trait = "0.1"
 # otherwise pull for its own tests; `image` handles files.
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 
+# Code 128 with the character-set switching done for us, and done well: its
+# encoder matched a provably optimal one on all of 30 000 sampled printable-ASCII
+# payloads, and choosing the switches badly costs a quarter more label on a
+# device whose whole label is 320 dots. It also ships an ISO/IEC 15417 decoder,
+# which is what lets the tests read a rendered symbol back instead of trusting
+# it. MIT OR Apache-2.0; its one dependency is `thiserror`, already here.
+# Default features off drops only a Unicode block-art renderer.
+code128 = { version = "0.2.1", default-features = false, features = ["std"] }
+# Code 39, ITF, EAN-13 and EAN-8. Default features off drops its ASCII, JSON
+# and SVG generators and an optional `image` dependency; `std` stays on or its
+# error type loses its `std::error::Error` impl. Two of its behaviours are
+# fenced off in `relabel-render`'s barcode module, and neither its Codabar nor
+# its Code 93 is used: both have wrong entries in their tables.
+barcoders = { version = "2.0", default-features = false, features = ["std"] }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

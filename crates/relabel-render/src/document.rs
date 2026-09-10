@@ -396,7 +396,20 @@ pub struct BarcodeEl {
     /// millimetres rounds inconsistently across one symbol, and a scanner
     /// cannot recover the narrow-element width from that.
     pub module_dots: u16,
+    /// Bar height in dots. Zero means the full depth of the element's frame.
     pub bar_dots: u16,
+    /// Print below the standards' floors: a module narrower than two dots, or a
+    /// retail symbol at a size its specification does not allow.
+    ///
+    /// Off by default, because the output may not scan. It exists so the
+    /// module-width print test can be run at all, and so a label read only by
+    /// one known scanner can be made smaller than the standards would like.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub out_of_spec: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
