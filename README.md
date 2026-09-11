@@ -6,12 +6,16 @@ label, and prints it. Linux, macOS and Windows, one codebase.
 
 Rust throughout, Slint for the GUI. No webview, no Qt, no C++, no vendor SDK.
 
-**Status: early. Nothing has been printed yet.** The protocol layer, the
-transport abstraction with a BLE implementation, the session and the job engine
-are written and tested against an in-memory printer. None of it has met real
-hardware, so treat every claim about a physical printer as untested. The
-renderer and the GUI do not exist yet. See
-[Milestones](docs/DESIGN.md#7-milestones) for the order things land in.
+**Status: early.** The protocol layer, the BLE transport, the session and the
+job engine are written and tested against an in-memory printer, and
+`relabel-cli` has printed on real hardware: a D110_M, over Bluetooth, on
+40 × 12 mm labels. That is one printer. Every other model in the registry is
+untested, so treat any claim about one as unverified. `relabel-render` has the
+label document format and draws rectangles, lines, linear barcodes, QR codes
+and DataMatrix symbols, with halftoning for photographs; text and placed images
+come next. The GUI does not exist yet. See
+[Milestones](docs/DESIGN.md#7-milestones) and
+[the renderer's plan](docs/RENDER-PLAN.md) for the order things land in.
 
 Not affiliated with, endorsed by, or connected to NIIMBOT or Gengcon. "NIIMBOT"
 is their trademark and is used here only to say which printers this talks to.
@@ -30,10 +34,10 @@ Bluetooth-first and MIT at once.
 | --- | --- |
 | `crates/relabel-proto` | Frame codec, command set, payload builders and parsers, image encoder, print-flow selection, model registry. Bytes in, bytes out — no I/O, no async, no GUI types, one dependency. |
 | `crates/relabel-core` | Transports (BLE, and an in-memory printer), the session that owns reassembly and request/response matching, and the print-job engine. |
+| `crates/relabel-render` | The label document format, and the rasteriser that turns it into dots: whole-dot geometry, halftoning with per-element zones, linear barcodes, QR and DataMatrix, and a calibration ruler. No device, no async, no GUI types. |
 | `crates/relabel-cli` | Headless driver for hardware bring-up. Not a shipped binary. |
 
-The rest of the workspace — `relabel-render` and `relabel-gui` — is designed but
-not yet written.
+The GUI, `relabel-gui`, is designed but not yet written.
 
 The split is deliberate. `relabel-proto` is pure and synchronous, so the fuzz
 target builds in a second and the protocol tests need neither a Bluetooth stack
