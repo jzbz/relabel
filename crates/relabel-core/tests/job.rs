@@ -3,7 +3,7 @@
 //! These are the tests that would have caught the D101 mis-mapping: they assert
 //! on the exact command sequence and payload widths that go out, per flow.
 
-use relabel_core::job::{PrintOptions, print};
+use relabel_core::job::{PrintOptions, Timeouts, print};
 use relabel_core::session::Session;
 use relabel_core::transport::mock::{MockHandle, MockTransport};
 use relabel_core::{JobError, SessionError};
@@ -56,6 +56,59 @@ fn counting_printer() -> (MockTransport, MockHandle) {
                     vec![Frame::new(0xB3, [b[0], b[1], 100, 100])]
                 } else {
                     vec![Frame::new(r.0, [0x01])]
+                }
+            }
+        }
+    }))
+}
+
+/// A printer that answers the job-level commands with a bare `0x00` the first
+/// `n` times it sees each, and behaves like a real one after that.
+///
+/// This is a D110_M being asked to start a second label while the first is
+/// still feeding out: it refuses the settings and `PrintStart`, and answers
+/// normally a few hundred milliseconds later.
+fn printer_refusing_first(n: usize) -> (MockTransport, MockHandle) {
+    let pages = Arc::new(Mutex::new(0u16));
+    let copies = Arc::new(Mutex::new(1u16));
+    let seen: Arc<Mutex<std::collections::HashMap<u8, usize>>> =
+        Arc::new(Mutex::new(Default::default()));
+    MockTransport::new(Box::new(move |req: &relabel_proto::Frame| {
+        use relabel_proto::{Expect, Frame, RequestId};
+        let refusing = matches!(req.id, 0x01 | 0x21 | 0x23) && {
+            let mut s = seen.lock().unwrap();
+            let c = s.entry(req.id).or_insert(0);
+            *c += 1;
+            *c <= n
+        };
+        match req.id {
+            0x13 if req.data.len() >= 6 => {
+                *copies.lock().unwrap() = u16::from_be_bytes([req.data[4], req.data[5]]).max(1);
+            }
+            0x15 if req.data.len() >= 2 => {
+                *copies.lock().unwrap() = u16::from_be_bytes([req.data[0], req.data[1]]).max(1);
+            }
+            0xE3 => {
+                let n = *copies.lock().unwrap();
+                *pages.lock().unwrap() += n;
+            }
+            _ => {}
+        }
+        let answer = if refusing { 0x00 } else { 0x01 };
+        match RequestId(req.id).expect() {
+            Expect::Nothing => vec![],
+            Expect::InfoSubtype => {
+                let sub = req.data.first().copied().unwrap_or(0);
+                vec![Frame::new(0x40u8.wrapping_add(sub), [0x01])]
+            }
+            Expect::Any(set) => vec![Frame::new(set[0].0, [answer])],
+            Expect::One(r) => {
+                if r.0 == 0xB3 {
+                    let p = *pages.lock().unwrap();
+                    let b = p.to_be_bytes();
+                    vec![Frame::new(0xB3, [b[0], b[1], 100, 100])]
+                } else {
+                    vec![Frame::new(r.0, [answer])]
                 }
             }
         }
@@ -415,5 +468,69 @@ async fn v5_flow_matches_what_a_d110_m_wants() {
         *ids.last().unwrap(),
         0xDC,
         "and a heartbeat trails PrintEnd"
+    );
+}
+
+/// A refused step is sent again. On a D110_M the second label of a run is
+/// refused for a moment while the first is still feeding out, and a job that
+/// took the byte at face value printed one label of two and then waited out
+/// its deadline.
+#[tokio::test(start_paused = true)]
+async fn a_refused_step_is_sent_again() {
+    let (t, handle) = printer_refusing_first(2);
+    let s = Session::start(Box::new(t));
+    let pages = one_page(96, 40, 96);
+    print(&s, PrintFlow::V5, &pages, &PrintOptions::default(), |_| {})
+        .await
+        .unwrap();
+    let ids = handle.received_ids();
+    let count = |id: u8| ids.iter().filter(|i| **i == id).count();
+    assert_eq!(
+        count(0x01),
+        3,
+        "PrintStart: two refusals, then the one that took"
+    );
+    assert_eq!(count(0x23), 3, "and the settings the same way");
+    assert_eq!(count(0x21), 3);
+    assert_eq!(
+        &ids[ids.len() - 2..],
+        &[0xF3, 0xDC],
+        "PrintEnd, then the discarded heartbeat this flow ends on"
+    );
+}
+
+/// A printer that means its refusal stops the job, naming the step. The old
+/// behaviour was to stream a page into a printer with no job open and then
+/// wait out 25 seconds for a page counter that could never move.
+#[tokio::test(start_paused = true)]
+async fn a_printer_that_keeps_refusing_stops_the_job() {
+    let (t, handle) = printer_refusing_first(usize::MAX);
+    let s = Session::start(Box::new(t));
+    let pages = one_page(96, 40, 96);
+    let opts = PrintOptions {
+        timeouts: Timeouts {
+            refusals: 4,
+            ..Timeouts::default()
+        },
+        ..PrintOptions::default()
+    };
+    let e = print(&s, PrintFlow::V5, &pages, &opts, |_| {})
+        .await
+        .unwrap_err();
+    assert!(matches!(e, JobError::Refused { .. }), "{e:?}");
+    let ids = handle.received_ids();
+    assert_eq!(
+        ids.iter().filter(|i| **i == 0x23).count(),
+        4,
+        "tried the agreed number of times"
+    );
+    assert!(
+        !ids.iter().any(|i| matches!(i, 0x84 | 0x85)),
+        "no page data reaches a printer that refused the job"
+    );
+    assert_eq!(
+        &ids[ids.len() - 2..],
+        &[0xF3, 0xDC],
+        "PrintEnd, then the discarded heartbeat this flow ends on"
     );
 }

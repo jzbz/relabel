@@ -241,6 +241,44 @@ request after `PrintStart` and the discarded heartbeat after `PrintEnd` are both
 visible in the log, and the job completed cleanly with them in place. That does
 not prove they are *needed* on this model - only that they are harmless.
 
+## 3b. Observed printing a run of more than one label
+
+A three-label run on the same unit printed the first label and then stopped:
+the second job's page counter never left 0, the 25 s deadline expired, and
+nothing came out of the printer.
+
+**The job-level commands of a second job are refused, for a moment.** Job 2's
+`SetLabelType`, `SetDensity` and `PrintStart` each answered a bare `0x00` -
+`5555 33 01 00 32`, `5555 31 01 00 30`, `5555 02 01 00 03` - which are byte for
+byte the vendor SDK's refuse constants `v`, `p` and `N0`, against their accept
+twins `u`, `o` and `M0` ending `01 33`, `01 31` and `01 02`. The page-level
+commands of the same job were accepted in the same breath, so the firmware was
+discriminating rather than deaf. relabel checked that byte only on
+`PrintClear`, `PageStart` and `PageEnd`, and the V5 flow sends neither of the
+first two - so it streamed a whole page into a printer with no job open, and
+then waited out its deadline for a counter that could never move.
+
+**It means "not yet", not "no".** Sending the refused command again, a fifth of
+a second later, prints the label. The vendor does exactly this:
+`DataSend.printRepeatRequestAndTimeoutWithRefuseProcessing` resends up to
+`sRepeatRequestCounts`, which is 10. relabel now resends the settings and
+`PrintStart` on a bare `0x00`, and fails with the step named if the refusals
+never stop. What the printer is busy with is presumably the previous label
+still feeding out, but that is an inference: the only fact is the byte.
+
+**`data[7]` of a print status appears to track whether a job is open.** It read
+`01` through every poll of a real print and `00` through all 157 polls of the
+stalled job. This firmware sends an eight-byte status, so the byte is inside
+what arrives; relabel does not read it, and one trace is not enough to act on
+it.
+
+**A third reading of `data[4..6]`, agreeing with 3a.** It ramped 8878 to 8998
+while label 1 printed, then sat flat on 8877 for the 23.5 s in which the
+printer did nothing at all. An idle figure below the working one is the
+signature of something settling, not of something being counted - though the
+vendor's own logging names a field in this region `sparePacket`, so the two
+readings are still unreconciled. relabel acts on neither.
+
 ## 4. Still open after this pass
 
 The SDK shows what the vendor *sends*. It cannot show what the firmware

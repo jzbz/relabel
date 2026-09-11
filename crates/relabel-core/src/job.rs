@@ -43,8 +43,12 @@ pub struct Timeouts {
     pub print_end: Duration,
     pub status: Duration,
     pub poll_interval: Duration,
-    /// Overall ceiling for one job.
+    /// Overall ceiling for one page of one job.
     pub job: Duration,
+    /// How many times a refused step is sent again before the job gives up,
+    /// and how long to wait in between. See [`accepted_step`].
+    pub refusals: u8,
+    pub refusal_gap: Duration,
 }
 
 impl Default for Timeouts {
@@ -59,6 +63,11 @@ impl Default for Timeouts {
             status: Duration::from_millis(900),
             poll_interval: Duration::from_millis(150),
             job: Duration::from_millis(25_000),
+            // Ten is the vendor's own figure (`sRepeatRequestCounts`). A
+            // D110_M answered the second job of a run within a few hundred
+            // milliseconds.
+            refusals: 10,
+            refusal_gap: Duration::from_millis(200),
         }
     }
 }
@@ -141,12 +150,14 @@ pub async fn print(
                 ..*opts
             };
             let base = done * pages.len() as u16;
+            // Its own clock: one deadline across every job of a split run
+            // would fail the later ones for the time the earlier ones took.
             one_job(
                 session,
                 flow,
                 pages,
                 &batch_opts,
-                started,
+                Instant::now(),
                 &mut |p: Progress| {
                     on_progress(Progress {
                         page: base + p.page,
@@ -162,6 +173,41 @@ pub async fn print(
     }
 
     one_job(session, flow, pages, opts, started, &mut on_progress).await
+}
+
+/// Send a step that is answered accepted-or-refused, sending it again while
+/// the answer is a refusal.
+///
+/// `0x00` does not only mean "no": the firmware also answers it for "not yet",
+/// while the previous label is still feeding out. Ignoring that byte is what
+/// made the second label of a run silently never print on a D110_M - the
+/// settings and `PrintStart` were all refused, a whole page was streamed into
+/// a printer with no job open, and the job then waited out its deadline for a
+/// page counter that could never move. The vendor's own sender resends on the
+/// same byte, ten times, which is where the default comes from.
+///
+/// Only a bare `0x00` counts. A longer reply belongs to some other flow's
+/// answer for this command and is passed back untouched, so a printer this has
+/// never run against cannot be blocked by a byte that means something else to
+/// it.
+async fn accepted_step(
+    session: &Session,
+    frame: relabel_proto::Frame,
+    wait: Duration,
+    step: &'static str,
+    t: &Timeouts,
+) -> Result<relabel_proto::Frame, JobError> {
+    let attempts = t.refusals.max(1);
+    for attempt in 1..=attempts {
+        let reply = session.request(frame.clone(), wait).await?;
+        if reply.data != [0x00] {
+            return Ok(reply);
+        }
+        if attempt < attempts {
+            tokio::time::sleep(t.refusal_gap).await;
+        }
+    }
+    Err(JobError::Refused { step })
 }
 
 /// One complete start-to-`PrintEnd` cycle.
@@ -205,15 +251,15 @@ async fn run(
     let density = payload::set_density(opts.density);
     let label_type = payload::set_label_type(opts.label_type);
     let ordered = if flow.label_type_before_density() {
-        [label_type, density]
+        [(label_type, "SetLabelType"), (density, "SetDensity")]
     } else {
-        [density, label_type]
+        [(density, "SetDensity"), (label_type, "SetLabelType")]
     };
-    for f in ordered {
-        match session.request(f, t.settings).await {
+    for (f, step) in ordered {
+        match accepted_step(session, f, t.settings, step, t).await {
             Ok(_) => {}
-            Err(e) if e.is_unsupported() => {}
-            Err(e) => return Err(e.into()),
+            Err(JobError::Session(e)) if e.is_unsupported() => {}
+            Err(e) => return Err(e),
         }
     }
 
@@ -223,7 +269,7 @@ async fn run(
         PrintFlow::V4 => payload::print_start::b1(total, opts.color),
         PrintFlow::V5 => payload::print_start::v4(total, opts.color, 0, 0),
     };
-    session.request(start, t.print_start).await?;
+    accepted_step(session, start, t.print_start, "PrintStart", t).await?;
 
     // This flow's printers eat the first packet after PrintStart. Give them
     // something disposable so the one that gets eaten is not a real command.
@@ -232,8 +278,9 @@ async fn run(
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
 
+    let budget = budget(t, pages.len());
     for page in pages {
-        check_deadline(started, t.job)?;
+        check_deadline(started, budget)?;
 
         if flow.uses_print_clear() {
             let r = session.request(payload::print_clear(), t.default).await?;
@@ -268,7 +315,7 @@ async fn run(
         refused(&r, "PageEnd")?;
     }
 
-    wait_for_pages(session, total, started, opts, on_progress).await
+    wait_for_pages(session, total, started, budget, opts, on_progress).await
 }
 
 /// The second discarded packet, sent after `PrintEnd`.
@@ -285,6 +332,14 @@ pub(crate) async fn after_print_end(session: &Session, flow: PrintFlow) {
     }
 }
 
+/// What a job is allowed, in total: the per-page ceiling times the pages it
+/// carries. One ceiling for a whole job would fail a long run part way
+/// through, and the run is the thing worth protecting.
+fn budget(t: &Timeouts, pages: usize) -> Duration {
+    t.job
+        .saturating_mul(u32::try_from(pages.max(1)).unwrap_or(u32::MAX))
+}
+
 /// Wait until the printer's page counter reaches `total`.
 ///
 /// Two sources agree on this number and either is enough: the counter the
@@ -295,6 +350,7 @@ async fn wait_for_pages(
     session: &Session,
     total: u16,
     started: Instant,
+    budget: Duration,
     opts: &PrintOptions,
     on_progress: &mut impl FnMut(Progress),
 ) -> Result<(), JobError> {
@@ -303,7 +359,7 @@ async fn wait_for_pages(
     let mut last_page = 0u16;
 
     loop {
-        check_deadline(started, t.job)?;
+        check_deadline(started, budget)?;
 
         // Anything the printer volunteered since the last poll.
         loop {
