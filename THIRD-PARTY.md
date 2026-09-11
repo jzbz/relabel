@@ -151,7 +151,9 @@ registry, taken from the NIIMBOT Android app, version 6.6.7
 `relabel-proto`'s build script compiles it into the model table, so it is in
 every binary. No licence accompanies it.
 
-It is treated as interoperability facts - model ids, resolutions, print widths,
-density ranges - which `docs/DESIGN.md` section 9 places in the tier anyone may
-use. Whether a collection of such facts attracts the EU's sui generis database
-right is a separate question, and it is open, not settled.
+It is interoperability facts - model ids, resolutions, print widths, density
+ranges - which `docs/DESIGN.md` section 9 places in the tier anyone may use. The
+EU's sui generis database right does not apply to it. That right protects only
+databases whose makers are established in the EU, and this one's maker is
+NIIMBOT, a Chinese company; and it rewards investment in gathering data that
+already exists, where this file records NIIMBOT's own products.
