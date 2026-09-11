@@ -11,10 +11,12 @@
 
 use crate::barcode::{self, BarcodeError, MIN_MODULE_DOTS, Symbology};
 use crate::canvas::Canvas as Surface;
-use crate::document::{BarcodeEl, Element, Ink, Label, LineEl, RectDots, RectEl, Rot};
+use crate::code2d::{self, CodeError, ModuleGrid};
+use crate::document::{BarcodeEl, Common, Element, Ink, Label, LineEl, RectDots, RectEl, Rot};
 use crate::error::RenderError;
 use crate::greymap::GreyMap;
 use crate::target::Target;
+use relabel_proto::PrintDirection;
 
 /// Zone ids are a byte and 0 is the page. Elements beyond the 254th share the
 /// last id - on a label a few hundred dots long that is not a realistic count,
@@ -69,7 +71,10 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
     let mut next_zone: u8 = 1;
     for el in label.drawable() {
         let c = el.common();
-        if !fits(&c.frame, &label.canvas) {
+        // The frame as drawn: a quarter turn swaps its sides, and checking the
+        // stored frame instead let a turned symbol run off the canvas with a
+        // clean report.
+        if !fits(&rotated(&c.frame, c.rot), &label.canvas) {
             report.off_canvas.push(c.id);
         }
         if !c.rot.is_exact() {
@@ -82,6 +87,27 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
             Element::Line(e) => draw_line(&mut surface, target, e, zone),
             Element::Barcode(e) => {
                 if let Err(err) = draw_barcode(&mut surface, target, e, zone) {
+                    report.failed.push((c.id, err.to_string()));
+                }
+            }
+            Element::Qr(e) => {
+                let r = code2d::check_module(e.module_dots, e.out_of_spec)
+                    .and_then(|()| code2d::qr(&e.data, e.ec, e.version))
+                    .and_then(|(g, _)| draw_grid(&mut surface, target, c, &g, e.module_dots, zone));
+                if let Err(err) = r {
+                    report.failed.push((c.id, err.to_string()));
+                }
+            }
+            Element::DataMatrix(e) => {
+                // The same test draw_grid makes, so the size chosen is one it
+                // will accept.
+                let f = rotated(&c.frame, c.rot);
+                let fits =
+                    |g: &ModuleGrid| grid_fits(&oriented(g, c.rot, target), &f, e.module_dots);
+                let r = code2d::check_module(e.module_dots, e.out_of_spec)
+                    .and_then(|()| code2d::data_matrix(&e.data, &e.size, fits))
+                    .and_then(|(g, _)| draw_grid(&mut surface, target, c, &g, e.module_dots, zone));
+                if let Err(err) = r {
                     report.failed.push((c.id, err.to_string()));
                 }
             }
@@ -123,6 +149,15 @@ fn blit(s: &mut Surface, t: &Target, r: RectDots, ink: Ink, zone: u8) {
     let (w, h) = t.extent(r.feed_len, r.head_len);
     s.fill_rect_dots(x, y, w, h, ink);
     s.paint_zone(x, y, w, h, zone);
+}
+
+/// The ink a symbol's quiet zone is knocked back to: paper under black ink,
+/// and black under a reversed symbol.
+fn paper_under(ink: Ink) -> Ink {
+    match ink {
+        Ink::Black => Ink::White,
+        Ink::White => Ink::Black,
+    }
 }
 
 fn rect(feed: i32, head: i32, feed_len: i32, head_len: i32) -> RectDots {
@@ -257,22 +292,98 @@ fn draw_barcode(s: &mut Surface, t: &Target, e: &BarcodeEl, zone: u8) -> Result<
 
     let length = length as i32;
     let x = i32::from(e.module_dots);
+    // Saturating, because the frame's position is a number from a file: a bar
+    // offset added to a frame near `i32::MAX` would otherwise overflow. A
+    // saturated position is far off the canvas, which is already reported.
     let place = |off: i32, w: i32| {
         if along_head {
-            rect(b.feed, b.head + off, depth, w)
+            rect(b.feed, b.head.saturating_add(off), depth, w)
         } else {
-            rect(b.feed + off, b.head, w, depth)
+            rect(b.feed.saturating_add(off), b.head, w, depth)
         }
     };
-    let paper = match e.common.ink {
-        Ink::Black => Ink::White,
-        Ink::White => Ink::Black,
-    };
-    blit(s, t, place(0, length), paper, zone);
+    blit(s, t, place(0, length), paper_under(e.common.ink), zone);
     for &(start, width) in &modules.bars {
         let (off, w) = (start as i32 * x, width as i32 * x);
         let off = if reversed { length - off - w } else { off };
         blit(s, t, place(off, w), e.common.ink, zone);
+    }
+    Ok(())
+}
+
+/// A 2D symbol's grid as it must be laid out in document coordinates to read
+/// correctly on this target.
+///
+/// Turned by the element's rotation, then transposed on a `Top` target.
+/// [`Target::place`] swaps the axes for `Top` - the feed runs down the canvas
+/// and the head across it - and a swap is a reflection: a symbol laid out along
+/// the document's axes would print mirrored, which a linear barcode survives
+/// and a 2D symbol does not. Transposing first cancels it, and turning before
+/// transposing keeps a quarter turn clockwise on the canvas.
+fn oriented(grid: &ModuleGrid, rot: Rot, t: &Target) -> ModuleGrid {
+    let g = grid.turned(rot);
+    match t.direction {
+        PrintDirection::Top => g.transposed(),
+        PrintDirection::Left => g,
+    }
+}
+
+/// Whether an oriented grid and its quiet zone fit a frame, as drawn, at a
+/// module size. The one test both the DataMatrix size choice and the drawing
+/// make, so they cannot disagree.
+fn grid_fits(g: &ModuleGrid, f: &RectDots, module_dots: u16) -> bool {
+    let (w, h) = g.footprint(module_dots);
+    i64::from(w) <= i64::from(f.feed_len) && i64::from(h) <= i64::from(f.head_len)
+}
+
+/// Lay a 2D symbol into the top-left corner of its frame.
+///
+/// The same rules as a linear barcode: every module an exact square of whole
+/// dots, the quiet zone knocked back to paper, and a symbol that does not fit
+/// refused rather than clipped or shrunk. The frame and the grid are both
+/// turned by the element's rotation, so a quarter-turned QR code is the same
+/// symbol on its side; see [`oriented`] for the rest.
+fn draw_grid(
+    s: &mut Surface,
+    t: &Target,
+    c: &Common,
+    grid: &ModuleGrid,
+    module_dots: u16,
+    zone: u8,
+) -> Result<(), CodeError> {
+    let f = rotated(&c.frame, c.rot);
+    let g = oriented(grid, c.rot, t);
+    let (w, h) = g.footprint(module_dots);
+    if !grid_fits(&g, &f, module_dots) {
+        return Err(CodeError::TooLarge {
+            needed: (w, h),
+            available: (f.feed_len.max(0) as u32, f.head_len.max(0) as u32),
+        });
+    }
+    // The footprint fits a frame whose sides are `i32`, so these do too.
+    let (w, h, m, q) = (w as i32, h as i32, i32::from(module_dots), g.quiet as i32);
+    blit(s, t, rect(f.feed, f.head, w, h), paper_under(c.ink), zone);
+    // One rectangle per run of dark modules rather than one per module: a
+    // version 5 QR code is 1,369 modules and a few hundred runs.
+    for y in 0..g.h {
+        let mut x = 0;
+        while x < g.w {
+            if !g.is_dark(x, y) {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < g.w && g.is_dark(x, y) {
+                x += 1;
+            }
+            let r = rect(
+                f.feed.saturating_add((q + start as i32) * m),
+                f.head.saturating_add((q + y as i32) * m),
+                (x - start) as i32 * m,
+                m,
+            );
+            blit(s, t, r, c.ink, zone);
+        }
     }
     Ok(())
 }

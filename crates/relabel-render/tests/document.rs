@@ -378,3 +378,92 @@ fn the_known_kind_list_matches_the_element_enum() {
     assert!(KNOWN_KINDS.contains(&rect.kind()));
     assert_eq!(KNOWN_KINDS.len(), 7);
 }
+
+/// A DataMatrix size is written back exactly as it was read, including one this
+/// build cannot parse and a non-canonical spelling of one it can.
+#[test]
+fn a_datamatrix_size_round_trips_as_written() {
+    for (s, want) in [
+        ("square", DmSize::Square),
+        ("rectangle", DmSize::Rectangle),
+        ("any", DmSize::Any),
+        ("16x48", DmSize::Fixed { rows: 16, cols: 48 }),
+        ("016x48", DmSize::Unknown("016x48".into())),
+        ("hexagon", DmSize::Unknown("hexagon".into())),
+    ] {
+        let v: DmSize = serde_json::from_value(serde_json::json!(s)).unwrap();
+        assert_eq!(v, want, "{s}");
+        assert_eq!(
+            serde_json::to_value(&v).unwrap(),
+            serde_json::json!(s),
+            "{s}"
+        );
+    }
+}
+
+/// Error correction decides a QR code's size, so it is written out even at its
+/// default: a later build choosing a different default must not change what an
+/// existing label prints. An unpinned version is simply absent.
+#[test]
+fn qr_error_correction_is_always_written() {
+    let json = r#"{ "type": "qr", "id": 1, "data": "x", "module_dots": 3,
+                   "frame": { "feed": 0, "head": 0, "feed_len": 96, "head_len": 96 } }"#;
+    let el: Element = serde_json::from_str(json).unwrap();
+    let Element::Qr(q) = &el else {
+        panic!("not a QR element")
+    };
+    assert_eq!((q.ec, q.version, q.out_of_spec), (QrEc::M, None, false));
+    let back = serde_json::to_string(&el).unwrap();
+    assert!(back.contains(r#""ec":"m""#), "{back}");
+    assert!(!back.contains("version"), "{back}");
+    assert!(!back.contains("out_of_spec"), "{back}");
+}
+
+/// The settings a batch depends on - a pinned QR version, a pinned DataMatrix
+/// size - and the out-of-spec override survive a real save. Checked in the
+/// saved text, because comparing two values would pass if both lost them.
+#[test]
+fn pinned_code_settings_survive_a_save() {
+    let frame = RectDots {
+        feed: 0,
+        head: 0,
+        feed_len: 96,
+        head_len: 96,
+    };
+    let mut l = Label::new(320, 96, relabel_render::Dpmm::DPI_203);
+    l.elements.push(ElementOrRaw::Known(Element::Qr(QrEl {
+        common: Common::new(1, frame),
+        data: "RELABEL".into(),
+        module_dots: 3,
+        ec: QrEc::H,
+        version: Some(3),
+        out_of_spec: true,
+    })));
+    l.elements
+        .push(ElementOrRaw::Known(Element::DataMatrix(DataMatrixEl {
+            common: Common::new(2, frame),
+            data: "RELABEL".into(),
+            module_dots: 4,
+            size: DmSize::Fixed { rows: 16, cols: 48 },
+            out_of_spec: true,
+        })));
+    l.elements
+        .push(ElementOrRaw::Known(Element::DataMatrix(DataMatrixEl {
+            common: Common::new(3, frame),
+            data: "RELABEL".into(),
+            module_dots: 4,
+            size: DmSize::default(),
+            out_of_spec: false,
+        })));
+    let saved = l.to_json().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    let els = &v["elements"];
+    assert_eq!(els[0]["ec"], "h");
+    assert_eq!(els[0]["version"], 3);
+    assert_eq!(els[0]["out_of_spec"], true);
+    assert_eq!(els[1]["size"], "16x48");
+    assert_eq!(els[1]["out_of_spec"], true);
+    assert_eq!(els[2]["size"], "square", "the default is written too");
+    assert!(els[2].get("out_of_spec").is_none());
+    assert_eq!(Label::from_json(&saved).unwrap(), l);
+}

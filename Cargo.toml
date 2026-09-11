@@ -67,6 +67,26 @@ code128 = { version = "0.2.1", default-features = false, features = ["std"] }
 # fenced off in `relabel-render`'s barcode module, and neither its Codabar nor
 # its Code 93 is used: both have wrong entries in their tables.
 barcoders = { version = "2.0", default-features = false, features = ["std"] }
+# QR. With default features off it has no dependencies at all; the defaults
+# pull `image` and two vector renderers relabel does not use. Micro QR is never
+# requested: in 0.14.1 a Micro version can underflow and panic, in release
+# builds too, and `relabel-render` has a test that keeps its code from naming
+# one.
+qrcode = { version = "0.14.1", default-features = false }
+# DataMatrix, including the DMRE rectangles, which suit a long, narrow label.
+# no_std + alloc; brings `arrayvec` and `flagset`, the latter Apache-2.0 only
+# (see THIRD-PARTY.md). Three of its behaviours are fenced off in
+# `relabel-render`'s code2d module.
+datamatrix = "0.3.3"
+
+# Test-only decoders, so a rendered symbol is read back by code that shares
+# nothing with the encoder that made it. rqrr is a port of quirc. rxing is a
+# port of ZXing: the only pure-Rust DataMatrix decoder found that shares no
+# code with the encoder, and a second QR reader - one that, unlike rqrr, reads
+# a Kanji-mode segment as the Shift JIS the standard says it is. Neither ships
+# in a binary.
+rqrr = { version = "0.11", default-features = false }
+rxing = { version = "0.9", default-features = false, features = ["decoders", "datamatrix", "qrcode", "encoding_rs"] }
 
 [profile.release]
 opt-level = 3

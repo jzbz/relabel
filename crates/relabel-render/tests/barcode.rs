@@ -377,3 +377,28 @@ fn every_symbology_matches_its_golden() {
         common::check(&format!("barcode-{sym}"), &p);
     }
 }
+
+/// Frame positions come straight out of a file. A barcode placed near the end
+/// of the `i32` range must be reported as off the canvas, not overflow while
+/// its bars are being laid out.
+#[test]
+fn a_barcode_at_the_edge_of_the_coordinate_range_does_not_overflow() {
+    for (feed, head) in [(i32::MAX - 5, 8), (8, i32::MAX - 5), (i32::MIN, i32::MIN)] {
+        let mut e = el("code128", "1234", 2, 40);
+        e.common.frame.feed = feed;
+        e.common.frame.head = head;
+        // A frame is stored unrotated, so the same frame serves the turned
+        // symbol; only the placement arithmetic differs.
+        let mut turned = e.clone();
+        turned.common.rot = Rot::D90;
+        for e in [e, turned] {
+            let (p, report) = render(e);
+            assert_eq!(report.off_canvas, vec![1], "({feed}, {head})");
+            assert!(report.failed.is_empty(), "({feed}, {head}): {report:?}");
+            assert!(
+                (0..p.height()).all(|y| (0..p.width()).all(|x| !p.get(x, y))),
+                "nothing lands on the canvas"
+            );
+        }
+    }
+}

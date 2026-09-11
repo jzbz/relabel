@@ -12,10 +12,11 @@ Two tools, two jobs.
 
 **`cargo deny check licenses` is the gate.** `deny.toml` allows MIT and the
 three licences today's graph cannot do without - BSD-2-Clause, BSD-3-Clause
-and Unicode-3.0 - on the six desktop targets, leaving out test-only crates.
-Anything else fails the check, and the failure names the crate and the path
-that brought it in, so admitting a licence is an edit to that file, reviewed
-like any other. It is not run in CI yet.
+and Unicode-3.0 - plus Apache-2.0 for `flagset` alone, by name, on the six
+desktop targets, leaving out test-only crates. Anything else fails the check,
+and the failure names the crate and the path that brought it in, so admitting
+a licence is an edit to that file, reviewed like any other. It is not run in
+CI yet.
 
 **`packaging/third-party-notices.sh OUTPUT` writes the notice file.** It runs
 cargo-about 0.9.2 with `about.toml` and the plain-text template `about.hbs`:
@@ -72,6 +73,7 @@ as one branch of an OR.
 | `arrayref` 0.3 | BSD-2-Clause | The notice and disclaimer, reproduced: "Copyright (c) 2015 David Roundy". |
 | `btleplug` 0.13 | BSD-3-Clause, with MIT and Apache-2.0 parts | Its whole `LICENSE.md`. The metadata says `MIT/Apache-2.0/BSD-3-Clause`, which reads like a choice and is not one: btleplug itself is BSD-3-Clause ("Copyright (c) 2020-2021, Nonpolynomial"), and it carries code from Rumble under MIT or Apache-2.0 and from Blurmac under BSD-3-Clause. |
 | `moxcms` 0.8, `pxfm` 0.1 | BSD-3-Clause OR Apache-2.0 | BSD-3-Clause is the branch taken: "Copyright (c) Radzivon Bartoshyk". |
+| `flagset` 0.4, via `datamatrix` | Apache-2.0 only | Its licence text, under section 4(a). There is no `NOTICE` file, and no copyright line to reproduce: the licence appendix is the unfilled template, and the only attribution is its author, Nathaniel McCallum. The first Apache-2.0-only dependency, and the only crate admitted by name in `deny.toml`: it has no MIT or BSD branch, and Apache-2.0 is not on the allowlist. |
 
 Seven crates ship no licence file in their packages. For `bluez-async` and
 `bluez-generated`, on Linux, the text is fetched from upstream when the notices
@@ -91,12 +93,6 @@ Two licences appear in `Cargo.lock` and still ask nothing of a binary:
 
 ## Arriving with work in progress
 
-- **`flagset` 0.4.7 - Apache-2.0 only**, via `datamatrix`, for DataMatrix
-  symbols. The first dependency with no MIT branch. Apache-2.0 section 4(a)
-  requires its text to ship with the binary. It has no `NOTICE` file, and no
-  copyright line: its licence appendix is the unfilled template, and the only
-  attribution is its author, Nathaniel McCallum. Its arrival needs a
-  crate-scoped exception in `deny.toml`.
 - **Slint, for the GUI.** Offered as `GPL-3.0-only OR
   LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0`. relabel
   takes the royalty-free licence, whose section 2 requires either Slint's

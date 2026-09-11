@@ -136,17 +136,19 @@ Overflow default for barcodes is **`Fail`**, not clip. A clipped Code 128 scans 
 
 ## 5. 2D symbologies
 
-**Delivers.** `QrEl { data, ec, module_dots, quiet_zone_modules, version: Option<Version> }` via `qrcode` 0.14.1 (`into_colors()`, `width()`), and DataMatrix via `datamatrix` 0.3.3. `ModuleGrid { w, h, quiet, dark: Vec<bool> }` plus `footprint(module_dots)` and `fit(max_w, max_h) -> Option<u16>`, which is the whole UI story — show the chosen version, the module size in dots and mm, refuse below 2.
+**Delivers.** `QrEl { data, module_dots, ec, version: Option<u8>, out_of_spec }` via `qrcode` 0.14.1, built from its parts (`Parser`, `Optimizer`, `Bits`, `QrCode::with_bits`) so Kanji mode never carries UTF-8 and an automatic version is always pinnable, and `DataMatrixEl { data, module_dots, size: DmSize, out_of_spec }` via `datamatrix` 0.3.3, where `DmSize` is `square`, `rectangle`, `any` or a pinned `RxC`. Quiet zones are the specifications' own, four modules and one, and not a document field. On a `Top` target a symbol is transposed before placing, because that target's axis swap is a reflection. `ModuleGrid { w, h, quiet, dark: Vec<bool> }` plus `footprint(module_dots)` and `fit(max_w, max_h) -> Option<u16>`, which is the whole UI story — show the chosen version, the module size in dots and mm, refuse below 2.
 
 **One hard rule:** never call `QrCode::with_version` with `Version::Micro(_)`. `bits.rs:739` is `data_bytes_length - self.data.len()` where `data_bytes_length = data_length / 8`; M1 (20 bits) and M3 (84/68) have a 4-bit final codeword, so that division truncates and the subtraction underflows — a subtract-overflow panic in debug, a `capacity overflow` in release. Upstream kennytm/qrcode-rust#89, open since 2025-11-01. The auto path (`new`, `with_error_correction_level`) is provably safe: `encode_auto` never selects a Micro version and all 40 Normal `DATA_LENGTHS` rows are multiples of 8.
 
 Pin the version in the document rather than letting the encoder choose per row — otherwise a CSV batch silently changes QR size between rows and shifts the layout.
 
+Three `datamatrix` behaviours to fence, not discover: macro headers are on by default and mangle or panic on envelope-looking data (build with `with_macros(false)`); a list of several sizes reports `SymbolListEmpty` far below capacity (try sizes one at a time, pinned); `encode_str` adds a UTF-8 ECI for a tab or newline (encode Latin-1 text as bytes).
+
 DataMatrix earns its place on this hardware: quiet zone is 1 module, not 4, so `Rect16x48` holds 72 alphanumeric characters at 5 dots/module (0.63 mm, comfortably above every published floor) in 250 × 90 dots, against 25 characters at 3 dots for the best QR that fits.
 
 **Depends on.** Steps 1–4.
 
-**Tested by.** Golden `.pbm` for known payloads at fixed module sizes. A regression test asserting `with_version(_, Version::Micro(3), EcLevel::L)` is unreachable from our public API (a `#[test]` over the sizing enum, plus a grep-style test that the string `Version::Micro` appears nowhere outside a comment). `fit()` monotonicity. Module-grid blits land on exact integer dot boundaries and survive `BitPlane::rotate_cw` losslessly — round-trip a symbol through `oriented(Left)` and back and assert equality.
+**Tested by.** Rendered symbols read back by decoders that share no code with their encoders, as dev-dependencies: `rqrr` and `rxing` for QR, `rxing` for DataMatrix. The exception is DataMatrix text beyond Latin-1, which `rxing` mis-decodes after a UTF-8 ECI; that symbol's ECI is checked against ISO/IEC 16022's arithmetic and read back through the crate's own decoder (RENDER-DESIGN §5.5). Symbols on a `Top` target are compared module by module with the encoder's own, because a decoder may accept a mirror image. Golden `.pbm` for known payloads at fixed module sizes. A regression test asserting `with_version(_, Version::Micro(3), EcLevel::L)` is unreachable from our public API (a `#[test]` over the sizing enum, plus a grep-style test that the string `Version::Micro` appears nowhere outside a comment). `fit()` monotonicity. Module-grid blits land on exact integer dot boundaries and survive `BitPlane::rotate_cw` losslessly — round-trip a symbol through `oriented(Left)` and back and assert equality.
 
 **Size.** ~400 lines. One to two days.
 

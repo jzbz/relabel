@@ -12,6 +12,7 @@
 pub mod barcode;
 pub mod calibration;
 pub mod canvas;
+pub mod code2d;
 pub mod document;
 pub mod error;
 pub mod greymap;

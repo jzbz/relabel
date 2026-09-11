@@ -412,12 +412,123 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+/// QR error correction: the share of the symbol that can be lost and still
+/// read, roughly 7, 15, 25 and 30 percent.
+///
+/// Always written out, never skipped as a default. A label's meaning must not
+/// change if a later build picks a different default, and for a QR code the
+/// level decides the size.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum QrEc {
+    L,
+    /// The common default. Direct thermal scuffs, so the extra recovery over L
+    /// is worth the capacity.
+    #[default]
+    M,
+    Q,
+    H,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct CodeEl {
+pub struct QrEl {
     #[serde(flatten)]
     pub common: Common,
     pub data: String,
+    /// Dots per module, and every module is exactly this many dots square.
     pub module_dots: u16,
+    #[serde(default)]
+    pub ec: QrEc,
+    /// A pinned version, 1 to 40. Absent means the smallest that holds the
+    /// data - fine for a one-off label, wrong for a batch, where the symbol
+    /// would change size from row to row and shift the layout, so the editor
+    /// pins it.
+    ///
+    /// There is no way to ask for Micro QR, deliberately; see the
+    /// [`code2d`](crate::code2d) module.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u8>,
+    /// Permit a one-dot module. Off by default, because it will not scan.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub out_of_spec: bool,
+}
+
+/// Which DataMatrix symbol to use.
+///
+/// For the three automatic choices, the symbol drawn is the first in the
+/// encoder's own order - fewest data codewords, then the shorter diagonal -
+/// that holds the data and fits the element's frame at its module size. When
+/// none fits the frame, the smallest that holds the data is chosen, and drawing
+/// it reports the shortfall.
+///
+/// Stored as a string so that a value this build does not know - or a size it
+/// has no table entry for - survives a round trip rather than failing the load.
+/// The rasteriser reports it instead.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(from = "String", into = "String")]
+pub enum DmSize {
+    /// Squares only: `"square"`.
+    #[default]
+    Square,
+    /// Rectangles only, DMRE included: `"rectangle"`. Usually the right answer
+    /// on a long, narrow label.
+    Rectangle,
+    /// Either: `"any"`.
+    Any,
+    /// Exactly this size, rows by columns: `"16x48"`. What the editor pins, for
+    /// the same reason as a QR version.
+    Fixed {
+        rows: u8,
+        cols: u8,
+    },
+    Unknown(String),
+}
+
+impl From<String> for DmSize {
+    fn from(s: String) -> DmSize {
+        match s.as_str() {
+            "square" => return DmSize::Square,
+            "rectangle" => return DmSize::Rectangle,
+            "any" => return DmSize::Any,
+            _ => {}
+        }
+        // Only the canonical spelling parses, so "016x48" is preserved as
+        // written rather than rewritten on the next save.
+        if let Some((r, c)) = s.split_once('x')
+            && let (Ok(rows), Ok(cols)) = (r.parse::<u8>(), c.parse::<u8>())
+            && format!("{rows}x{cols}") == s
+        {
+            return DmSize::Fixed { rows, cols };
+        }
+        DmSize::Unknown(s)
+    }
+}
+
+impl From<DmSize> for String {
+    fn from(s: DmSize) -> String {
+        match s {
+            DmSize::Square => "square".into(),
+            DmSize::Rectangle => "rectangle".into(),
+            DmSize::Any => "any".into(),
+            DmSize::Fixed { rows, cols } => format!("{rows}x{cols}"),
+            DmSize::Unknown(s) => s,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct DataMatrixEl {
+    #[serde(flatten)]
+    pub common: Common,
+    pub data: String,
+    /// Dots per module, and every module is exactly this many dots square.
+    pub module_dots: u16,
+    /// Always written out, for the same reason as [`QrEl::ec`].
+    #[serde(default)]
+    pub size: DmSize,
+    /// Permit a one-dot module. Off by default, because it will not scan.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub out_of_spec: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -434,8 +545,8 @@ pub struct ImageEl {
 pub enum Element {
     Text(TextEl),
     Barcode(BarcodeEl),
-    Qr(CodeEl),
-    DataMatrix(CodeEl),
+    Qr(QrEl),
+    DataMatrix(DataMatrixEl),
     Image(ImageEl),
     Rect(RectEl),
     Line(LineEl),
@@ -446,7 +557,8 @@ impl Element {
         match self {
             Element::Text(e) => &e.common,
             Element::Barcode(e) => &e.common,
-            Element::Qr(e) | Element::DataMatrix(e) => &e.common,
+            Element::Qr(e) => &e.common,
+            Element::DataMatrix(e) => &e.common,
             Element::Image(e) => &e.common,
             Element::Rect(e) => &e.common,
             Element::Line(e) => &e.common,
