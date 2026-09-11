@@ -266,11 +266,21 @@ a second later, prints the label. The vendor does exactly this:
 never stop. What the printer is busy with is presumably the previous label
 still feeding out, but that is an inference: the only fact is the byte.
 
+Measured, with the fix in place, on a two-label run: job 1's three job-level
+commands were all accepted; job 2's `SetLabelType`, sent 14 ms after the
+`PrintEnd` acknowledgement, was refused; sent again 215 ms later it was
+accepted, and every command after it was accepted first time. **One resend
+sufficed**, so ten attempts a fifth of a second apart is generous rather than
+marginal. Both jobs ended on a status of `0001 64 64 2326 0001` - page counter
+at 1, both percentages at 100 - against the stalled job's `0000 ... 0000`, so
+the printer counted both pages.
+
 **`data[7]` of a print status appears to track whether a job is open.** It read
 `01` through every poll of a real print and `00` through all 157 polls of the
 stalled job. This firmware sends an eight-byte status, so the byte is inside
-what arrives; relabel does not read it, and one trace is not enough to act on
-it.
+what arrives, and the two-label run above agreed: `01` in the final status of
+both jobs that printed. relabel does not read it, and two traces are still not
+enough to act on it.
 
 **A third reading of `data[4..6]`, agreeing with 3a.** It ramped 8878 to 8998
 while label 1 printed, then sat flat on 8877 for the 23.5 s in which the
