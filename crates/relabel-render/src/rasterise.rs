@@ -34,6 +34,21 @@ const LAST_ZONE: u8 = 254;
 /// the stored size, and the size drawn.
 pub type ImageResampled = (u32, (u32, u32), (u32, u32));
 
+/// Why an element could not be drawn. The error itself, not its message, so
+/// the numbers it carries - how long a symbol is against its frame, which
+/// module size was refused - reach preflight intact.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Failure {
+    #[error(transparent)]
+    Barcode(#[from] BarcodeError),
+    #[error(transparent)]
+    Code(#[from] CodeError),
+    #[error(transparent)]
+    Text(#[from] TextError),
+    #[error(transparent)]
+    Artwork(#[from] ArtworkError),
+}
+
 /// What happened while drawing, beyond the pixels.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RenderReport {
@@ -52,7 +67,7 @@ pub struct RenderReport {
     ///
     /// Refusal is deliberate for symbologies: a barcode that does not fit is
     /// not clipped, because a clipped Code 128 scans as a different value.
-    pub failed: Vec<(u32, String)>,
+    pub failed: Vec<(u32, Failure)>,
     /// Text drawn, but not all of it: cut by its own frame. Drawn but not as
     /// asked, the same kind of entry as `rotation_approximated`.
     pub text_clipped: Vec<(u32, TextClip)>,
@@ -117,7 +132,7 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
             Element::Line(e) => draw_line(&mut surface, target, e, zone),
             Element::Barcode(e) => {
                 if let Err(err) = draw_barcode(&mut surface, target, e, zone) {
-                    report.failed.push((c.id, err.to_string()));
+                    report.failed.push((c.id, err.into()));
                 }
             }
             Element::Qr(e) => {
@@ -125,7 +140,7 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
                     .and_then(|()| code2d::qr(&e.data, e.ec, e.version))
                     .and_then(|(g, _)| draw_grid(&mut surface, target, c, &g, e.module_dots, zone));
                 if let Err(err) = r {
-                    report.failed.push((c.id, err.to_string()));
+                    report.failed.push((c.id, err.into()));
                 }
             }
             Element::DataMatrix(e) => {
@@ -138,17 +153,17 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
                     .and_then(|()| code2d::data_matrix(&e.data, &e.size, fits))
                     .and_then(|(g, _)| draw_grid(&mut surface, target, c, &g, e.module_dots, zone));
                 if let Err(err) = r {
-                    report.failed.push((c.id, err.to_string()));
+                    report.failed.push((c.id, err.into()));
                 }
             }
             Element::Text(e) => match draw_text(&mut surface, target, e, zone, &mut engine) {
                 Ok(clip) if clip.is_clipped() => report.text_clipped.push((c.id, clip)),
                 Ok(_) => {}
-                Err(err) => report.failed.push((c.id, err.to_string())),
+                Err(err) => report.failed.push((c.id, err.into())),
             },
             Element::Image(e) => {
                 if let Err(err) = draw_image(&mut surface, target, e, zone, &mut report) {
-                    report.failed.push((c.id, err.to_string()));
+                    report.failed.push((c.id, err.into()));
                 }
             }
         }

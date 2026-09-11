@@ -122,8 +122,12 @@ fn an_image_without_artwork_is_reported_not_unimplemented() {
     let l = Label::from_json(&text).unwrap();
     let (_, r) = rasterise(&l, &Target::new(320, 96, 203).unwrap()).unwrap();
     let seven = r.failed.iter().find(|f| f.0 == 7).expect("element 7 fails");
-    assert!(seven.1.contains("no embedded artwork"), "{}", seven.1);
-    assert!(seven.1.contains("logo.png"), "{}", seven.1);
+    assert!(
+        seven.1.to_string().contains("no embedded artwork"),
+        "{}",
+        seven.1
+    );
+    assert!(seven.1.to_string().contains("logo.png"), "{}", seven.1);
 }
 
 /// Artwork sized for its frame is copied dot for dot: grey levels exact, and
@@ -436,7 +440,12 @@ fn unknown_values_fail_only_their_element() {
     let failed: Vec<(u32, bool)> = r
         .failed
         .iter()
-        .map(|(id, why)| (*id, why.contains("tile") || why.contains("blue_noise")))
+        .map(|(id, why)| {
+            (
+                *id,
+                why.to_string().contains("tile") || why.to_string().contains("blue_noise"),
+            )
+        })
         .collect();
     assert_eq!(failed, vec![(1, true), (2, true)], "{r:?}");
     assert_eq!(g.at(24, 4), 0, "the third is drawn");
@@ -474,11 +483,11 @@ fn damaged_artwork_fails_only_its_element() {
     let ids: Vec<u32> = r.failed.iter().map(|f| f.0).collect();
     assert_eq!(ids, vec![1, 2, 3, 5], "{r:?}");
     assert!(
-        r.failed[3].1.contains("9000x1"),
+        r.failed[3].1.to_string().contains("9000x1"),
         "the refusal names the size: {r:?}"
     );
-    assert!(r.failed[0].1.contains("base64"), "{r:?}");
-    assert!(r.failed[1].1.contains("not a PNG"), "{r:?}");
+    assert!(r.failed[0].1.to_string().contains("base64"), "{r:?}");
+    assert!(r.failed[1].1.to_string().contains("not a PNG"), "{r:?}");
     assert_eq!(g.at(34, 4), 0);
     let l = label_on(320, 96, els);
     assert_eq!(Label::from_json(&l.to_json().unwrap()).unwrap(), l);
@@ -607,7 +616,7 @@ fn a_frame_too_large_to_draw_fails_only_its_element() {
     let failed: Vec<(u32, bool)> = r
         .failed
         .iter()
-        .map(|(id, why)| (*id, why.contains("too large")))
+        .map(|(id, why)| (*id, why.to_string().contains("too large")))
         .collect();
     assert_eq!(failed, vec![(1, true), (2, true)], "{r:?}");
 }

@@ -78,6 +78,7 @@ fn the_corpus_survives_a_save_and_reload() {
         "from-the-future.relabel",
         "hostile-numbers.relabel",
         "images.relabel",
+        "variables.relabel",
     ] {
         let l = Label::from_json(&corpus(name)).unwrap();
         let back = Label::from_json(&l.to_json().unwrap())
@@ -98,13 +99,35 @@ fn the_image_corpus_draws_as_it_did() {
     let failed: Vec<u32> = r.failed.iter().map(|f| f.0).collect();
     assert_eq!(failed, vec![3, 4, 5], "{r:?}");
     for (i, why) in [(0, "tile"), (1, "blue_noise"), (2, "no embedded artwork")] {
-        assert!(r.failed[i].1.contains(why), "{:?}", r.failed[i]);
+        assert!(r.failed[i].1.to_string().contains(why), "{:?}", r.failed[i]);
     }
-    assert!(r.failed[2].1.contains("logo.png"), "{:?}", r.failed[2]);
+    assert!(
+        r.failed[2].1.to_string().contains("logo.png"),
+        "{:?}",
+        r.failed[2]
+    );
     assert!(r.image_resampled.is_empty(), "{r:?}");
     let back = l.to_json().unwrap();
     for needle in ["\"tile\"", "\"blue_noise\"", "\"logo.png\""] {
         assert!(back.contains(needle), "{needle} was lost on save");
     }
     common::check("image-corpus", &rasterise_plane(&l, &t).unwrap());
+}
+
+/// The variable-data corpus: its binding loads as a CSV file beside it, and
+/// its placeholders are stored as written.
+#[test]
+fn the_variable_corpus_keeps_its_binding() {
+    let l = Label::from_json(&corpus("variables.relabel")).unwrap();
+    match &l.data {
+        Some(DataBinding::Known(KnownBinding::CsvFile(f))) => {
+            assert_eq!(
+                (f.path.as_str(), f.delimiter, f.has_header),
+                ("variables.csv", ',', true)
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    let back = l.to_json().unwrap();
+    assert!(back.contains("{sku}") && back.contains("{dt|YYYY-MM-DD}"));
 }

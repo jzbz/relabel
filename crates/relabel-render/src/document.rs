@@ -785,6 +785,10 @@ pub struct Label {
     pub elements: Vec<ElementOrRaw>,
     #[serde(default)]
     pub repeat: Repeat,
+    /// Where the rows for a batch come from. Stored for the editor and the
+    /// command line: the renderer never reads it, since reading it is I/O.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<DataBinding>,
     /// Everything a later version wrote that this build does not know about.
     /// Never `deny_unknown_fields`: silently deleting a stranger's data is
     /// worse than not understanding it.
@@ -835,13 +839,67 @@ pub enum LoadError {
         id: ElementId,
         value: f32,
     },
+    /// A `data` binding of a kind this build knows, which failed to parse.
+    /// Reported, as a malformed element is, rather than kept as a stranger's
+    /// data - which a re-save would then preserve, dead, for good.
+    #[error("the data binding is malformed: {reason}")]
+    MalformedBinding { reason: String },
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
 
+/// Where a label's rows come from.
+///
+/// Top level, so an older build that does not know it keeps it through
+/// `Label::unknown`; nested in `meta` it would be dropped. An open set, like
+/// [`MediaShape`]: a kind a later build adds survives a save as written.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum DataBinding {
+    Known(KnownBinding),
+    Unknown(Value),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum KnownBinding {
+    /// A CSV file, read by whoever prints the label.
+    CsvFile(CsvFile),
+}
+
+/// Binding kinds this build knows, to tell a stranger's from a damaged one.
+const KNOWN_BINDING_KINDS: &[&str] = &["csv_file"];
+
+/// The keys a CSV binding writes, and so cannot hold as unknown fields.
+const CSV_FILE_KEYS: &[&str] = &["kind", "path", "delimiter", "has_header"];
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct CsvFile {
+    /// Relative to the label's own directory, with `/` between parts, so the
+    /// label and its data move together.
+    pub path: String,
+    /// One character. A longer string is not a delimiter this build can read,
+    /// and the binding is refused when the label loads.
+    #[serde(default = "comma")]
+    pub delimiter: char,
+    #[serde(default = "yes")]
+    pub has_header: bool,
+    /// Fields a later version added.
+    #[serde(flatten)]
+    pub unknown: Map<String, Value>,
+}
+
+fn comma() -> char {
+    ','
+}
+
+fn yes() -> bool {
+    true
+}
+
 /// Keys that already mean something at the top level of a label.
 const RESERVED_LABEL_KEYS: &[&str] = &[
-    "format", "version", "meta", "media", "canvas", "elements", "repeat",
+    "format", "version", "meta", "media", "canvas", "elements", "repeat", "data",
 ];
 
 /// Keys that already mean something on an element.
@@ -862,6 +920,25 @@ fn migrate(version: u32, raw: Value) -> Result<Value, LoadError> {
             found: other,
             supported: FORMAT_VERSION,
         }),
+    }
+}
+
+/// Why a binding of a kind this build does not know cannot be carried along
+/// unread, if it cannot: it is a stranger's to keep only if it is an object
+/// naming a kind this build has never heard of. Checked on the way in and on
+/// the way out, because a label that saves and then will not load is worse
+/// than one that was never written.
+fn damaged_binding(v: &Value) -> Option<String> {
+    match v.get("kind").and_then(Value::as_str) {
+        None if !v.is_object() => Some("it is not an object".to_string()),
+        None => Some("it has no kind".to_string()),
+        Some(k) if KNOWN_BINDING_KINDS.contains(&k) => {
+            Some(match serde_json::from_value::<KnownBinding>(v.clone()) {
+                Ok(_) => "it parses alone but not in place".to_string(),
+                Err(e) => e.to_string(),
+            })
+        }
+        Some(_) => None,
     }
 }
 
@@ -887,6 +964,7 @@ impl Label {
             },
             elements: Vec::new(),
             repeat: Repeat::None,
+            data: None,
             unknown: Map::new(),
         }
     }
@@ -956,6 +1034,13 @@ impl Label {
                 reason,
             });
         }
+        // The same trap for the data binding: the untagged enum would absorb
+        // a damaged binding of a known kind as a stranger's.
+        if let Some(DataBinding::Unknown(v)) = &label.data
+            && let Some(reason) = damaged_binding(v)
+        {
+            return Err(LoadError::MalformedBinding { reason });
+        }
         // Ids are the handle everything else uses - the report names elements
         // by id, and an editor selects by it. Duplicates are silent chaos.
         let mut seen = std::collections::BTreeSet::new();
@@ -988,6 +1073,18 @@ impl Label {
         for k in self.unknown.keys() {
             if RESERVED_LABEL_KEYS.contains(&k.as_str()) {
                 return Err(LoadError::ReservedKey(k.clone()));
+            }
+        }
+        if let Some(DataBinding::Unknown(v)) = &self.data
+            && let Some(reason) = damaged_binding(v)
+        {
+            return Err(LoadError::MalformedBinding { reason });
+        }
+        if let Some(DataBinding::Known(KnownBinding::CsvFile(f))) = &self.data {
+            for k in f.unknown.keys() {
+                if CSV_FILE_KEYS.contains(&k.as_str()) {
+                    return Err(LoadError::ReservedKey(k.clone()));
+                }
             }
         }
         for el in self.elements.iter().filter_map(ElementOrRaw::known) {

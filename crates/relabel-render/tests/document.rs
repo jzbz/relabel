@@ -238,7 +238,7 @@ fn every_known_kind_is_drawn() {
         let failed = report
             .failed
             .iter()
-            .any(|(id, why)| *id == el.common().id && !why.is_empty());
+            .any(|(id, why)| *id == el.common().id && !why.to_string().is_empty());
         assert!(
             inked != failed,
             "{}: inked {inked}, failed {failed}: {report:?}",
@@ -732,4 +732,134 @@ fn image_value_names_are_the_format() {
     ] {
         assert_eq!(serde_json::to_value(&h).unwrap(), name);
     }
+}
+
+fn with_data(data: serde_json::Value) -> String {
+    serde_json::json!({
+        "format": "relabel-label", "version": 1,
+        "media": { "feed_tenths_mm": 400, "head_tenths_mm": 120 },
+        "canvas": { "feed": 320, "head": 96, "dpmm": { "num": 8, "den": 1 } },
+        "elements": [], "data": data
+    })
+    .to_string()
+}
+
+/// A CSV binding survives a save, a field a later version added included.
+#[test]
+fn a_csv_binding_round_trips_with_a_later_field() {
+    let l = Label::from_json(&with_data(serde_json::json!({
+        "kind": "csv_file", "path": "rows.csv", "delimiter": ";", "has_header": false,
+        "encoding": "latin1"
+    })))
+    .unwrap();
+    match &l.data {
+        Some(DataBinding::Known(KnownBinding::CsvFile(f))) => {
+            assert_eq!(
+                (f.path.as_str(), f.delimiter, f.has_header),
+                ("rows.csv", ';', false)
+            );
+            assert!(f.unknown.contains_key("encoding"));
+        }
+        other => panic!("{other:?}"),
+    }
+    let saved = l.to_json().unwrap();
+    assert!(saved.contains("latin1"));
+    assert_eq!(Label::from_json(&saved).unwrap(), l);
+    assert!(
+        !label().to_json().unwrap().contains("\"data\""),
+        "a label with no binding writes none"
+    );
+}
+
+/// A kind of binding a later build adds is kept exactly as it was written.
+#[test]
+fn a_later_binding_kind_survives() {
+    let v = serde_json::json!({ "kind": "inline", "columns": ["a"], "rows": [["1"]] });
+    let l = Label::from_json(&with_data(v.clone())).unwrap();
+    assert_eq!(l.data, Some(DataBinding::Unknown(v.clone())));
+    let saved: serde_json::Value = serde_json::from_str(&l.to_json().unwrap()).unwrap();
+    assert_eq!(saved["data"], v);
+}
+
+/// A binding of a kind this build knows, damaged, is an error - not a
+/// stranger's data to carry along unread.
+#[test]
+fn a_damaged_binding_is_refused() {
+    for bad in [
+        serde_json::json!({ "kind": "csv_file", "path": 5 }),
+        serde_json::json!({ "kind": "csv_file", "path": "a", "delimiter": "ab" }),
+        serde_json::json!({ "path": "rows.csv" }),
+        serde_json::json!("rows.csv"),
+    ] {
+        assert!(
+            matches!(
+                Label::from_json(&with_data(bad.clone())),
+                Err(LoadError::MalformedBinding { .. })
+            ),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn a_binding_takes_its_defaults() {
+    let l = Label::from_json(&with_data(serde_json::json!({
+        "kind": "csv_file", "path": "rows.csv"
+    })))
+    .unwrap();
+    match l.data {
+        Some(DataBinding::Known(KnownBinding::CsvFile(f))) => {
+            assert_eq!((f.delimiter, f.has_header), (',', true));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn data_is_a_reserved_key() {
+    let mut l = label();
+    l.unknown.insert("data".into(), serde_json::json!(1));
+    assert!(matches!(l.to_json(), Err(LoadError::ReservedKey(k)) if k == "data"));
+}
+
+/// A binding holding one of its own keys among its unknown fields would write
+/// that key twice, and reload as a different binding.
+#[test]
+fn a_binding_cannot_hold_its_own_keys_as_unknown_fields() {
+    let mut f = CsvFile {
+        path: "rows.csv".into(),
+        delimiter: ',',
+        has_header: true,
+        unknown: Default::default(),
+    };
+    f.unknown
+        .insert("path".into(), serde_json::json!("other.csv"));
+    let mut l = label();
+    l.data = Some(DataBinding::Known(KnownBinding::CsvFile(f)));
+    assert!(matches!(l.to_json(), Err(LoadError::ReservedKey(k)) if k == "path"));
+}
+
+/// What loading refuses, saving refuses too: a label that saves and then will
+/// not load again is worse than one that was never written.
+#[test]
+fn a_damaged_binding_cannot_be_written_either() {
+    for bad in [
+        serde_json::json!("rows.csv"),
+        serde_json::json!({}),
+        serde_json::json!({ "kind": "csv_file", "path": 5 }),
+        serde_json::Value::Null,
+    ] {
+        let mut l = label();
+        l.data = Some(DataBinding::Unknown(bad.clone()));
+        assert!(
+            matches!(l.to_json(), Err(LoadError::MalformedBinding { .. })),
+            "{bad}"
+        );
+    }
+    let mut l = label();
+    l.data = Some(DataBinding::Unknown(
+        serde_json::json!({ "kind": "inline", "rows": [] }),
+    ));
+    let saved = l.to_json().unwrap();
+    assert_eq!(Label::from_json(&saved).unwrap(), l);
 }

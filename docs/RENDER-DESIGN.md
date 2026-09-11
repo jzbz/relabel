@@ -10,7 +10,7 @@ Status: specification. Written against `DESIGN.md` §3.2, §4, §5 and §6.3, wh
 
 `relabel-render` owns three things and nothing else:
 
-1. **The label document** — its Rust types, its `.relabel` JSON serialisation, its migration chain, and the variable-data binding that turns one document plus one CSV row into one page.
+1. **The label document** — its Rust types, its `.relabel` JSON serialisation, its migration chain, and the variable-data binding that turns one document plus one CSV row into one page, printed as many times as the row's `$times` asks.
 2. **The rasteriser** — document → 8-bit ink coverage → 1-bit `BitPlane`, at a stated dot size, with per-element control over anti-aliasing and halftoning.
 3. **Preflight** — measuring every element of every bound row *before* a single frame is sent, and reporting what will not fit.
 
@@ -181,6 +181,8 @@ pub enum Repeat {
 `shape`, `tail` and `fold` are **editing guides and layout constraints, not marks**. This is taken from niimblue, where `_renderBackground()` draws them behind a `customBackground` flag while `getLabelBounds()` genuinely subtracts `tailLength` from the usable canvas — so the tail is real paper that must be kept clear, and the shape is a rounded or circular die-cut the content must stay inside. They cost about thirty lines of guide drawing and they describe cable-flag and fold-over stock, which is a large part of why these printers get bought.
 
 `mirror` is the one property of niimblue's that changes output, and relabel models it differently on purpose. niimblue's `createMirroredObjects()` clones each canvas object across the fold and rotates it (its own comment restricts flip to a half split). relabel's `Repeat` is a transform of the **rendered region**, applied after rasterisation: undo-safe, composes correctly with dithering, and gets flipped text right for free without a second code path.
+
+**`data` names the label's rows.** It is written only when set, so a label without data saves byte for byte as before, and `"data"` is a reserved key. A binding of a kind this build does not know - `inline`, say - is kept exactly as written; one of a kind it does know that does not parse, one with no `kind`, or a bare string is a load error, never carried along unread. A binding cannot hold one of its own keys among its unknown fields, or it would write that key twice. §2.6 has the types.
 
 **`printDirection` is deliberately absent from the document.** `encode_page` already begins `let plane = plane.oriented(head.direction)` using the model registry's own constant. A document that carried a print direction would be asserting a fact about a printer it may never meet.
 
@@ -381,56 +383,75 @@ The evolution rules, in order of how much damage breaking them does:
 
 ### 2.6 Variable data
 
-The placeholder grammar is niimblue's, verbatim, from `src/utils/canvas_preprocess.ts`:
+The placeholder grammar is niimblue's, from `src/utils/canvas_preprocess.ts`:
 
 ```
 /{\s*(\$?\w+)\s*(?:\|\s*(.*?)\s*)?}/g
 ```
 
-so `{sku}`, `{ sku }`, `{dt}`, `{dt|YYYY-MM-DD}`. Two behaviours are inherited deliberately: an **unresolved key is left as written**, not blanked, and substitution applies to text, barcode and QR data alike. `$times` is reserved as the row-repeat column and surfaced in the UI as a Copies column. Matching the grammar exactly is what makes an imported niimblue template keep working.
+so `{sku}`, `{ sku }`, `{dt}`, `{dt|YYYY-MM-DD}`, with JavaScript's meaning for every class: `\s` is JavaScript's white space and line terminators, which include U+FEFF and not U+0085; `\w` is ASCII only; and `.` stops at LF, CR, U+2028 and U+2029, so a filter never spans lines. A placeholder ends at the first `}` that can close it. relabel matches the grammar with a hand-written scanner in one pass (`template.rs`), because the regex backtracks quadratically on a run of `{a|`, and tests the scanner against a transliteration of the regex on generated input.
 
-`{{column}}` as written in `DESIGN.md` §6.3 is **superseded** by the single-brace form above, for interop.
+A placeholder resolves in niimblue's order: a column of that name - its cell as it is, any filter ignored, an empty cell blanking the placeholder - then `dt`, the job's clock formatted by a port of dayjs's tokens (`YYYY-MM-DD HH:mm:ss` by default), and otherwise it is **left exactly as written**. A column called `dt` therefore wins over the clock. Substitution applies to text and to barcode, QR and DataMatrix data, and to nothing else. `$times` is the row-repeat column, surfaced in the UI as a Copies column. Matching the grammar is what makes an imported niimblue template keep working.
+
+Three niimblue behaviours are not copied, because each prints a wrong label without a word. Only the table's own column names resolve: niimblue's lookup walks the JavaScript prototype chain, so `{constructor}` printed a function's source. A row must have exactly as many fields as the header: niimblue pads a short row and drops extra fields, and an extra field usually means a comma that should have been quoted. And `$times` is a whole number from 0 to 10 000, or empty for 1: niimblue's `parseInt` printed three labels for `3abc`, sixteen for `0x10` and none for `abc`. niimblue's `\n` cell escape is not applied; the niimblue importer converts it.
+
+`DESIGN.md` §6.3 uses the same single-brace form.
 
 ```rust
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(untagged)]
 pub enum DataBinding {
-    Inline { columns: Vec<String>, rows: Vec<Vec<String>> },
-    /// Path and dialect only. relabel-render does not parse CSV — see §8.
-    CsvFile { path: PathBuf, delimiter: u8, has_header: bool },
-    Counter { name: String, start: i64, step: i64, count: u32, pad: u8 },
+    Known(KnownBinding),
+    /// A kind a later build added, kept exactly as written.
+    Unknown(serde_json::Value),
 }
 
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum KnownBinding {
+    /// Path and dialect only. relabel-render reads no file and parses no CSV.
+    CsvFile(CsvFile),                     // "csv_file"
+}
+
+pub struct CsvFile {
+    pub path: String,                     // beside the label, as written
+    pub delimiter: char,                  // default ','
+    pub has_header: bool,                 // default true
+    #[serde(flatten)] pub unknown: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Rows under a header, as the editor or the command line read them.
+pub struct Table { pub columns: Vec<String>, pub rows: Vec<Vec<String>> }
+
 pub struct Bindings<'a> {
-    pub row: Option<&'a [String]>,
     pub columns: &'a [String],
-    pub page: u32,
-    pub total: u32,
-    pub now: Timestamp,
+    pub row: &'a [String],
+    /// Read once per job, so a preview matches the print. The crate reads no clock.
+    pub now: CivilTime,
 }
 
 /// Pure. Returns a NEW document with every template resolved, so the editor's
 /// document stays immutable and "preview row 37" is one call.
 pub fn bind(label: &Label, b: &Bindings<'_>) -> Result<Label, BindError>;
+
+pub enum BindError {
+    RowLength { cells: usize, columns: usize },
+    AmbiguousColumn(String),              // a name used twice, and asked for
+    FieldTooLong { element: ElementId, limit: usize },   // 64 KiB once bound
+}
 ```
 
 Direct field binding needs no second mechanism: a barcode whose entire `data` is `{sku}` *is* a bound field.
 
-**Overflow policy is where this earns its keep.**
+**Overflow is where this earns its keep.** Barcodes, QR and DataMatrix fail hard, and that is not negotiable: a clipped Code 128 scans as a different, valid value, and a module shrunk below two dots scans as nothing. Overflow is the *common* case here, not the edge case: twenty characters of Code 128 at the two-dot minimum are 510 dots before the quiet zones and 550 with them, against a whole label of 320.
+
+Text that overflows its frame is clipped and reported with its numbers (`TextClipped`, a warning). Shrink-to-fit, niimblue's `setAndShrinkText`, is deferred:
 
 ```rust
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
-pub enum TextFit {
-    Clip,
-    Shrink { min: f32 },      // then clip
-    Fail,
-}
-impl Default for TextFit { fn default() -> Self { TextFit::Shrink { min: 8.0 } } }
+pub enum TextFit { Clip, Shrink { min: f32 }, Fail }
 ```
 
-Text defaults to shrink-then-clip, which is what niimblue's `setAndShrinkText` does. **Barcodes, QR and DataMatrix default to hard failure and that default is not negotiable.** A clipped Code 128 scans as a different, valid value; a module width shrunk below two dots scans as nothing. And overflow is the *common* case here, not the edge case: twenty characters of Code 128 at the two-dot minimum is 510 dots, wider than a whole 320-dot label.
+When it lands, a missing key must mean `Clip`, because that is how every existing label prints, and `min: 8.0` sits below the x-height floor of §6.6.
 
-Which is why `preflight` (§5.4) exists and is called before a single frame is sent. A 500-label run that fails at label 300 has burned 300 labels of thermal stock.
+Which is why `preflight` (§9) exists and is called before a single frame is sent. A 500-label run that fails at label 300 has burned 300 labels of thermal stock.
 
 ---
 
@@ -515,7 +536,7 @@ That one function removes four separate hazards that a researcher measured on re
 
 ```
 Label (document)
-  │  bind()                       templates → resolved strings, one row → one page
+  │  bind()                       templates → resolved strings, one row → one page ($times copies)
   ▼
 Label (bound)
   │  layout()                     parley 0.10 → line boxes, glyph runs, measured extents
@@ -1405,7 +1426,7 @@ One more thing to watch on the first GUI build: `png` reaches `flate2`, which de
 - **`pdf417` 0.2.1** — does not compile on stable at all: `#![feature(const_mut_refs)]` at `src/lib.rs:69`, `error[E0554]`. Last release 2023-10.
 - **`scanning` 2.1.0** — a published snapshot of `barcoders` master with both defects fixed and a real `upca.rs`. Useful only as proof the fixes are small; it is a hard fork republished under a new name by a third party, its declared repository 404s, both versions were published within one minute in May 2025, and it has under 1000 downloads.
 - **`dither` 1.3.10** — last published 2021, 462 recent downloads, palette-oriented rather than 1-bit, and it cannot express the zone mask. The kernels are eighty lines.
-- **`csv` 1.3** — see §9.
+- **`csv` 1.4** — see §10: the reader is hand-written, in relabel-core.
 
 ---
 
@@ -1413,67 +1434,92 @@ One more thing to watch on the first GUI build: `png` reaches `flate2`, which de
 
 ```rust
 // ─── document ────────────────────────────────────────────────────────────────
-pub fn load(bytes: &[u8]) -> Result<(Label, Vec<LoadWarning>), LoadError>;
-pub fn save(label: &Label) -> Result<Vec<u8>, SaveError>;      // pretty JSON, LF, trailing \n
+impl Label {
+    pub fn from_json(s: &str) -> Result<Label, LoadError>;
+    /// Refuses what would not reload as the same label.
+    pub fn to_json(&self) -> Result<String, LoadError>;
+}
 pub fn bind(label: &Label, b: &Bindings<'_>) -> Result<Label, BindError>;
 
 // ─── rasterise ───────────────────────────────────────────────────────────────
-pub struct Renderer { text: TextEngine, /* glyph and layout caches */ }
+/// Draw a BOUND label at the target's dot size: ink coverage with its zone
+/// plane, so the caller can preview grey before choosing a halftone, and a
+/// report of everything not drawn as asked. An element that fails is left out
+/// and reported, and the rest are drawn. Never anti-aliases a hard-edged mark;
+/// never scales a barcode.
+pub fn rasterise(label: &Label, t: &Target) -> Result<(GreyMap, RenderReport), RenderError>;
 
-impl Renderer {
-    pub fn new(fonts: &FontSet) -> Result<Renderer, RenderError>;
+pub struct RenderReport {
+    pub failed: Vec<(ElementId, Failure)>,
+    pub off_canvas: Vec<ElementId>,
+    pub rotation_approximated: Vec<ElementId>,
+    pub text_clipped: Vec<(ElementId, TextClip)>,
+    pub image_resampled: Vec<(ElementId, (u32, u32), (u32, u32))>,
+    pub image_clipped: Vec<ElementId>,
+    pub zone_shared: Vec<ElementId>,
+    pub unimplemented: Vec<&'static str>,
+    pub unrecognised: Vec<String>,
+}
 
-    /// Draw a BOUND label at the target's dot size. Returns the ink map plus
-    /// the zone plane, so the caller can preview greyscale before choosing a
-    /// halftone. Never anti-aliases a hard-edged mark; never scales a barcode.
-    pub fn rasterise(&mut self, label: &Label, t: &Target)
-        -> Result<InkMap, RenderError>;
-
-    /// Measure without drawing. This is what preflight and the Designer's
-    /// live capacity readout use, and it must be cheap enough to call on
-    /// every keystroke.
-    pub fn measure(&mut self, label: &Label, t: &Target)
-        -> Result<Vec<ElementExtent>, RenderError>;
+/// Why an element was not drawn, keeping the encoder's own numbers.
+pub enum Failure {
+    Barcode(BarcodeError),     // TooWide { needed, available }, ...
+    Code(CodeError),           // TooLarge { needed, available }, ...
+    Text(TextError),
+    Artwork(ArtworkError),
 }
 
 /// Ink coverage to one bit per dot. `BitPlane` is relabel-proto's, so this is
 /// the crate's exit point.
-pub fn binarise(ink: &InkMap, o: &BinariseOpts<'_>) -> BitPlane;
-
-/// Identity by default. ImageMagick sense: gamma > 1 lightens.
-pub fn tone_gamma(gamma: f32) -> [u8; 256];
-pub const TONE_IDENTITY: [u8; 256];
+pub fn binarise(g: &GreyMap, o: &BinariseOpts<'_>) -> BitPlane;
 
 // ─── the one-call path, which is what relabel-cli and the print button use ───
-pub fn render_page(r: &mut Renderer, label: &Label, t: &Target,
-                   b: &BinariseOpts<'_>) -> Result<BitPlane, RenderError>;
+pub fn rasterise_plane(label: &Label, t: &Target) -> Result<BitPlane, RenderError>;
 
 // ─── preflight ───────────────────────────────────────────────────────────────
-/// Render and measure EVERY bound row before a single frame is sent.
+/// Bind and draw EVERY row before a single frame is sent.
 /// A 500-label run that fails at label 300 has burned 300 labels of stock.
-pub fn preflight(r: &mut Renderer, label: &Label, rows: &[Vec<String>], t: &Target)
-    -> Preflight;
+pub fn preflight(label: &Label, data: Option<&Table>, t: &Target, now: CivilTime)
+    -> Result<Preflight, RenderError>;
 
-pub struct Preflight { pub pages: u32, pub issues: Vec<Issue> }
+pub struct Preflight {
+    pub times: Vec<u32>,       // labels per row, from `$times`; [1] with no data
+    pub issues: Vec<Issue>,    // row-wide first, then by row, in document order
+}
 pub struct Issue {
-    pub row: Option<u32>,
-    pub element: ElementId,
+    pub row: Option<usize>,    // None: the same on every row, reported once
+    pub element: Option<ElementId>,
     pub name: String,          // the element's user-facing name, not its id
     pub kind: IssueKind,
-    pub severity: Severity,    // Refuse | Warn | Note
+    pub severity: Severity,    // Note < Warn < Refuse
 }
 pub enum IssueKind {
-    OverflowsCanvas { by_dots: i32 },
-    BarcodeTooWide { needs_dots: u32, have_dots: u32 },
-    ModuleTooSmall { dots: u16, floor: u16 },
-    SymbologyNeedsLargerMedia { symbology: Symbology, min_mm: (u16, u16) },
-    QrVersionTooSmall { needs: u8, pinned: u8 },
-    TextClipped { lines_lost: u8 },
-    TextBelowLegibility { x_height_dots: u16 },
-    EncoderRejected(String),
-    ImageResampled { from: (u32, u32), to: (u32, u32) },
+    TargetMismatch { canvas: (i32, i32), target: (u16, u16) },
+    DuplicateId,
+    NoRows,
+    UnreachableColumn { column: String },
+    UnresolvedKey { key: String, near: Option<String> },
+    FilterIgnored { key: String, filter: String },
+    ClockShadowed,
+    SizeUnpinned,
+    Bind(BindError),
+    BadTimes(TimesError),
+    Skipped,
+    Failed(Failure),
+    TextClipped(TextClip),
+    OffCanvas,
+    RotationApproximated,
+    ImageResampled { stored: (u32, u32), drawn: (u32, u32) },
+    ImageClipped,
+    ZoneShared,
+    Unimplemented(&'static str),
+    Unrecognised(String),
 }
+```
 
+**What preflight refuses** is anything that would print a wrong or missing mark: a symbol that does not fit its frame, a symbol off the canvas (the canvas would clip its bars), a placeholder no column answers in symbol data (it would scan as the literal `{sku}`), a row that cannot be bound or whose `$times` is not a whole number, and a label drawn for another head. Clipped text, an approximated rotation and an unresolved key in text are warnings: they print, visibly not as drawn. The cost is one render of the whole label bound only to the clock, for everything no row can change, and then one render per printing row of only the elements that name a column. Copies from `$times` are identical, so a row is drawn once however many times it prints.
+
+```rust
 // ─── capacity, for the Designer's live readouts ──────────────────────────────
 pub fn barcode_width_dots(sym: Symbology, data: &str, module_dots: u16)
     -> Result<u32, BarcodeError>;
@@ -1497,7 +1543,7 @@ let feed = relabel_proto::models::mm_to_px(label_len_mm, spec.dpi);
 let target = Target { head_px: head, feed_px: feed, dpi: spec.dpi };
 ```
 
-**One consequence of the encoder's rotation that the renderer must handle, not the encoder.** For a `PrintDirection::Left` model, `encode_page` rotates first and then computes `cols = ceil(document_head_axis / 8) * 8`, erroring with `PageTooWide` if that exceeds the head. So a canvas whose head axis is 100 dots on a 96-dot head is rejected outright — correct. But a canvas of 92 dots is *accepted*, padded to 96, and `rotate_cw`'s `dst(c, r) = src(r, h-1-c)` puts the four pad columns at high x, so the label prints hard against head column 0 rather than centred. The vendor record's own `printMethodName` is 居中 ("centred") for both D11 and B1. **relabel-render therefore pads the canvas to exactly `head_px` itself, and centres the content inside it, rather than letting the encoder's byte padding decide.** `Canvas::head` should always equal `Target::head_px`; preflight raises a `Note` when it does not.
+**One consequence of the encoder's rotation that the renderer must handle, not the encoder.** For a `PrintDirection::Left` model, `encode_page` rotates first and then computes `cols = ceil(document_head_axis / 8) * 8`, erroring with `PageTooWide` if that exceeds the head. So a canvas whose head axis is 100 dots on a 96-dot head is rejected outright — correct. But a canvas of 92 dots is *accepted*, padded to 96, and `rotate_cw`'s `dst(c, r) = src(r, h-1-c)` puts the four pad columns at high x, so the label prints hard against head column 0 rather than centred. The vendor record's own `printMethodName` is 居中 ("centred") for both D11 and B1. **relabel-render therefore pads the canvas to exactly `head_px` itself, and centres the content inside it, rather than letting the encoder's byte padding decide.** `Canvas::head` must equal the target's head axis; preflight refuses a label when it does not (`TargetMismatch`).
 
 ---
 
@@ -1521,7 +1567,9 @@ let target = Target { head_px: head, feed_px: feed, dpi: spec.dpi };
 
 **Embedded bitmap strikes.** `skrifa::bitmap::BitmapStrikes` exists and is exactly right in principle — `BitmapStrikes::new(&font)`, `glyph_for_size(Size, GlyphId) -> Option<BitmapGlyph>`, `BitmapData::Mask(MaskData { bpp: 1|2|4|8, is_packed, data })` with `decode_to_slice` (`skrifa-0.42.1/src/bitmap.rs:101`, `:353-400`). A 1-bpp strike at 12 or 14 px is a type designer's answer to the question hinting only approximates, and Cozette (MIT), Terminus (OFL 1.1) and Spleen (BSD-2-Clause) all ship `.otb`. Two risks are unverified and must be checked before committing: an `.otb` has no `glyf` or `CFF `, so `OutlineGlyphCollection::get()` returns `None` for every glyph and this is a wholly separate code path; and whether fontique's `FontInfo::from_source` (which needs a valid cmap) and harfrust will accept and shape a bitmap-only face at all is untested.
 
-**CSV parsing.** Stays out of this crate. The document stores the binding — path, delimiter, whether there is a header — and the GUI supplies rows as `Vec<Vec<String>>`. The crate's whole justification in `DESIGN.md` §3 is that it has a heavy but self-contained rasterisation tail; a file-format parser is not part of rasterising. If a parser is wanted it is `csv` 1.3 (MIT OR Unlicense, pure Rust: `csv-core`, `bstr`, `memchr`, `itoa`, `ryu`), not currently in the lock. For v1, accept UTF-8 with BOM stripping and **error clearly** on anything else rather than pulling `encoding_rs`' megabyte of tables for the Excel CP-1252 case. Whether that is the right call depends on how common a non-UTF-8 export is for this audience, which could not be settled from the sources read; if it turns out to be the norm, the error message becomes a support burden and `encoding_rs` earns its place.
+**CSV parsing.** Stays out of this crate. The document stores the binding — path, delimiter, whether there is a header — and the editor or the command line supplies a `Table`. The crate's whole justification in `DESIGN.md` §3 is that it has a heavy but self-contained rasterisation tail; a file-format parser is not part of rasterising. The reader is relabel-core's `read_csv`, hand-written with no dependency, because the rules that matter are the ones readers disagree on: a quote is special only at the start of a field, a stray or unclosed quote is an error with its line rather than a quietly different field, and a blank line is skipped rather than printed as a blank label. If a full parser is wanted later it is `csv` 1.4 (MIT OR Unlicense, pure Rust: `csv-core`, `itoa`, `ryu`, `serde_core`), which the lock already carries - `rxing`, a dev-dependency of relabel-render, reaches it through `codepage-437`'s build script - so taking it would add nothing that is not already built for the tests. For v1 the reader accepts UTF-8 with or without a BOM, refuses UTF-16 by name, and **errors clearly** on anything else rather than pulling `encoding_rs`' megabyte of tables for the Excel CP-1252 case. Whether that is the right call depends on how common a non-UTF-8 export is for this audience, which could not be settled from the sources read; if it turns out to be the norm, the error message becomes a support burden and `encoding_rs` earns its place.
+
+**Variable data beyond one CSV file.** `$page`, `$total` and a counter; an `inline` binding, which the niimblue importer needs; niimblue's `\n` cell escape; text shrink-to-fit (§2.6); a clock per label rather than per job; and local time zones, which is why the command line asks for `--now` rather than guess UTC. relabel-core's job engine also keeps one deadline across a whole job and does unchecked `u16` arithmetic on copies, so the command line prints one job per label until both are fixed.
 
 **niimblue import.** Worth doing, behind a `niimblue-import` feature, one-way and best-effort, returning `(Label, Vec<ImportWarning>)`. Read `canvas.objects` as `serde_json::Value`, whitelist `type` ∈ {textbox, i-text, text, rect, line, circle, image, QRCode, Barcode}, compute effective bounds as `left + width * scaleX`, snap `angle` to the nearest 90°, drop `skewX`/`skewY`/`styles`/`path` with a warning, and map `Barcode.encoding` (`"EAN13" | "CODE128B"`) plus its `printText`/`scaleFactor`/`fontSize`/`fontFamily` onto relabel's fields. About five hundred lines and a day or two.
 

@@ -8,10 +8,12 @@ pub mod error;
 pub mod job;
 pub mod printer;
 pub mod session;
+pub mod table;
 pub mod transport;
 
 pub use error::{JobError, SessionError, TransportError};
 pub use job::{PrintOptions, Progress, Timeouts, print};
 pub use printer::{Identity, handshake};
 pub use session::{PrinterEvent, Session, TraceEntry};
+pub use table::{CsvError, CsvTable, read_csv};
 pub use transport::{Transport, TransportKind};

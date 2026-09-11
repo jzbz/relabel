@@ -10,6 +10,7 @@
 //! thing to attach to a bug report.
 
 mod bitmap;
+mod label;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -141,6 +142,42 @@ enum Cmd {
         #[arg(long)]
         preview: bool,
     },
+    /// Print a .relabel file, once for each row of its data.
+    ///
+    /// Every row is bound, drawn and checked before anything connects, and a
+    /// row that would print a wrong or missing mark stops the run there.
+    Label {
+        file: PathBuf,
+        /// Rows to print, instead of the CSV file the label names.
+        #[arg(long)]
+        csv: Option<PathBuf>,
+        /// The time `{dt}` prints, in RFC 3339 with its offset. Required when
+        /// the label prints the time: `--now "$(date -Iseconds)"`.
+        #[arg(long)]
+        now: Option<String>,
+        /// Copies of every label, on top of each row's `$times`.
+        #[arg(long, default_value = "1")]
+        copies: u16,
+        /// Check every row, then stop without connecting.
+        #[arg(long)]
+        check: bool,
+        /// Check, draw and encode every row, without connecting.
+        #[arg(long)]
+        dry_run: bool,
+        /// Check against this head width, in dots, instead of the label's own.
+        /// A real print checks against the printer's.
+        #[arg(long)]
+        head: Option<u16>,
+        /// Which axis lies across the head, for --check and --dry-run.
+        #[arg(long, value_enum, default_value = "left")]
+        direction: Dir,
+        /// Defaults to the model's own default.
+        #[arg(long)]
+        density: Option<u8>,
+        /// Print a text preview of the first label.
+        #[arg(long)]
+        preview: bool,
+    },
     /// Send a frame by hand: command byte, then payload, as hex.
     Raw {
         /// Command byte first, then the payload. For example `40 08` asks for
@@ -206,6 +243,37 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // A label is checked in full before anything connects.
+    let prepared = match &cli.cmd {
+        Cmd::Label {
+            file,
+            csv,
+            now,
+            copies,
+            check,
+            dry_run,
+            head,
+            direction,
+            density,
+            preview,
+        } => match label::prepare(&label::Opts {
+            file,
+            csv: csv.as_deref(),
+            now: now.as_deref(),
+            copies: *copies,
+            check: *check,
+            dry_run: *dry_run,
+            head: *head,
+            direction: (*direction).into(),
+            density: *density,
+            preview: *preview,
+        })? {
+            None => return Ok(()),
+            prepared => prepared,
+        },
+        _ => None,
+    };
+
     let adapter = ble::adapter().await?;
 
     if let Cmd::Scan { all } = cli.cmd {
@@ -265,7 +333,10 @@ async fn main() -> Result<()> {
     let id = handshake(&session, &t).await?;
     report_identity(&id, mtu);
 
-    let result = run(&cli, &session, &id, &t).await;
+    let result = match prepared {
+        Some(p) => p.print(&session, &id).await,
+        None => run(&cli, &session, &id, &t).await,
+    };
 
     if cli.trace {
         println!("\n--- protocol log ---");
@@ -280,7 +351,10 @@ async fn main() -> Result<()> {
 
 async fn run(cli: &Cli, session: &Session, id: &Identity, t: &Timeouts) -> Result<()> {
     match &cli.cmd {
-        Cmd::Scan { .. } | Cmd::Print { dry_run: true, .. } | Cmd::Ruler { dry_run: true, .. } => {
+        Cmd::Scan { .. }
+        | Cmd::Label { .. }
+        | Cmd::Print { dry_run: true, .. }
+        | Cmd::Ruler { dry_run: true, .. } => {
             unreachable!("handled earlier")
         }
 

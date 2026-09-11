@@ -163,7 +163,7 @@ fn a_symbol_too_big_for_its_frame_is_refused_not_shrunk() {
     let (p, report) = render(Element::Qr(qr("RELABEL", 4, frame(0, 0, 320, 96))));
     assert_eq!(report.failed.len(), 1, "{report:?}");
     assert!(
-        report.failed[0].1.contains("refused"),
+        report.failed[0].1.to_string().contains("refused"),
         "{}",
         report.failed[0].1
     );
@@ -174,7 +174,10 @@ fn a_symbol_too_big_for_its_frame_is_refused_not_shrunk() {
 fn the_module_floor_holds_unless_overridden() {
     let f = frame(0, 0, 320, 96);
     let (_, report) = render(Element::Qr(qr("RELABEL", 1, f)));
-    assert!(report.failed[0].1.contains("2-dot floor"), "{report:?}");
+    assert!(
+        report.failed[0].1.to_string().contains("2-dot floor"),
+        "{report:?}"
+    );
     let mut e = qr("RELABEL", 1, f);
     e.out_of_spec = true;
     assert!(render(Element::Qr(e)).1.is_clean());
@@ -235,7 +238,10 @@ fn fit_matches_what_the_rasteriser_accepts() {
     let (_, ok) = render(Element::Qr(qr("RELABEL", m, frame(0, 0, 87, 96))));
     assert!(ok.is_clean(), "{ok:?}");
     let (p, short) = render(Element::Qr(qr("RELABEL", m, frame(0, 0, 86, 96))));
-    assert!(short.failed[0].1.contains("refused"), "{short:?}");
+    assert!(
+        short.failed[0].1.to_string().contains("refused"),
+        "{short:?}"
+    );
     assert!(ink_box(&p).is_none(), "and nothing drawn");
 }
 
@@ -422,7 +428,7 @@ fn rendered_qr_codes_decode_back_to_their_data() {
                     // Too big for this module size on a 96-dot label, which
                     // is a refusal, never a clipped symbol.
                     assert!(
-                        report.failed[0].1.contains("refused"),
+                        report.failed[0].1.to_string().contains("refused"),
                         "{data} {ec:?} {m}: {report:?}"
                     );
                     assert!(read_qr(&p).is_empty());
@@ -454,7 +460,10 @@ fn a_pinned_qr_version_is_the_version_printed() {
     let mut e = qr(&"A".repeat(30), 2, frame(0, 0, 320, 96));
     e.version = Some(1);
     let (_, report) = render(Element::Qr(e));
-    assert!(report.failed[0].1.contains("version 1"), "{report:?}");
+    assert!(
+        report.failed[0].1.to_string().contains("version 1"),
+        "{report:?}"
+    );
 }
 
 /// UTF-8 the QR crate's own segmenter would send in Kanji mode, where a
@@ -597,18 +606,21 @@ fn datamatrix_size_problems_are_reported() {
         DmSize::Unknown("hexagon".into()),
         f,
     )));
-    assert!(r.failed[0].1.contains("hexagon"), "{r:?}");
+    assert!(r.failed[0].1.to_string().contains("hexagon"), "{r:?}");
     let (_, r) = render(Element::DataMatrix(dm(
         &"9".repeat(99),
         4,
         DmSize::Fixed { rows: 16, cols: 48 },
         f,
     )));
-    assert!(r.failed[0].1.contains("16x48"), "{r:?}");
+    assert!(r.failed[0].1.to_string().contains("16x48"), "{r:?}");
     let (_, r) = render(Element::DataMatrix(dm("x", 4, DmSize::Square, f)));
     assert!(r.is_clean());
     let (_, r) = render(Element::DataMatrix(dm("", 4, DmSize::Square, f)));
-    assert!(r.failed[0].1.contains("needs some data"), "{r:?}");
+    assert!(
+        r.failed[0].1.to_string().contains("needs some data"),
+        "{r:?}"
+    );
     // When nothing fits the frame, the smallest symbol that holds the data is
     // the one reported: 14x14 and its quiet zone is 64 dots at 4 a module.
     let (p, r) = render(Element::DataMatrix(dm(
@@ -618,7 +630,7 @@ fn datamatrix_size_problems_are_reported() {
         frame(0, 0, 40, 40),
     )));
     assert!(
-        r.failed[0].1.contains("64x64") && r.failed[0].1.contains("40x40"),
+        r.failed[0].1.to_string().contains("64x64") && r.failed[0].1.to_string().contains("40x40"),
         "{r:?}"
     );
     assert!(ink_box(&p).is_none());

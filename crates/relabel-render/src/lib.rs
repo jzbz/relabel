@@ -11,25 +11,31 @@
 
 pub mod artwork;
 pub mod barcode;
+pub mod bind;
 pub mod calibration;
 pub mod canvas;
 pub mod code2d;
 pub mod coverage;
+pub mod datetime;
 pub mod document;
 pub mod error;
 pub mod greymap;
 pub mod halftone;
+pub mod preflight;
 pub mod rasterise;
 pub mod srgb;
 mod svg;
 pub mod target;
+pub mod template;
 pub mod text;
 
 pub use barcode::{BarcodeError, Symbology};
+pub use bind::{BindError, Bindings, Table, bind, uses_clock};
 pub use canvas::Canvas;
 pub use document::{Element, ElementOrRaw, Ink, Label, LoadError};
 pub use error::RenderError;
 pub use greymap::GreyMap;
 pub use halftone::{BinariseOpts, Halftone, Zone, binarise};
-pub use rasterise::{RenderReport, local_size, rasterise, rasterise_plane, zone_table};
+pub use preflight::{Issue, IssueKind, Preflight, Severity, preflight};
+pub use rasterise::{Failure, RenderReport, local_size, rasterise, rasterise_plane, zone_table};
 pub use target::{Dpmm, Target};

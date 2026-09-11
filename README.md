@@ -11,9 +11,10 @@ job engine are written and tested against an in-memory printer, and
 `relabel-cli` has printed on real hardware: a D110_M, over Bluetooth, on
 40 × 12 mm labels. That is one printer. Every other model in the registry is
 untested, so treat any claim about one as unverified. `relabel-render` has the
-label document format and draws rectangles, lines, linear barcodes, QR codes
-and DataMatrix symbols, with halftoning for photographs; text and placed images
-come next. The GUI does not exist yet. See
+label document format and draws text, rectangles, lines, linear barcodes, QR
+codes, DataMatrix symbols and placed images, with halftoning for photographs.
+It binds a label to rows of CSV data and checks every row before anything
+prints, and `relabel-cli label` prints the result. The GUI does not exist yet. See
 [Milestones](docs/DESIGN.md#7-milestones) and
 [the renderer's plan](docs/RENDER-PLAN.md) for the order things land in.
 
@@ -33,8 +34,8 @@ Bluetooth-first and MIT at once.
 | Crate | Contents |
 | --- | --- |
 | `crates/relabel-proto` | Frame codec, command set, payload builders and parsers, image encoder, print-flow selection, model registry. Bytes in, bytes out — no I/O, no async, no GUI types, one dependency. |
-| `crates/relabel-core` | Transports (BLE, and an in-memory printer), the session that owns reassembly and request/response matching, and the print-job engine. |
-| `crates/relabel-render` | The label document format, and the rasteriser that turns it into dots: whole-dot geometry, halftoning with per-element zones, linear barcodes, QR and DataMatrix, and a calibration ruler. No device, no async, no GUI types. |
+| `crates/relabel-core` | Transports (BLE, and an in-memory printer), the session that owns reassembly and request/response matching, the print-job engine, and the CSV reader for variable data. |
+| `crates/relabel-render` | The label document format, and the rasteriser that turns it into dots: whole-dot geometry, halftoning with per-element zones, text, images and SVG, linear barcodes, QR and DataMatrix, and a calibration ruler. Variable data, and the preflight that checks every row before a run. No device, no clock, no async, no GUI types. |
 | `crates/relabel-cli` | Headless driver for hardware bring-up. Not a shipped binary. |
 
 The GUI, `relabel-gui`, is designed but not yet written.
@@ -168,6 +169,19 @@ Print something:
 ```bash
 cargo run -p relabel-cli -- print --copies 1 label.png
 ```
+
+Print a `.relabel` file once for each row of the CSV file it names. Every row
+is bound, drawn and checked first, and a row that would print a wrong or
+missing mark stops the run before anything connects; `--check` stops there
+either way, and `--dry-run` also encodes every label. A label that prints the
+date needs the time zone spelled out, since nothing here can look one up:
+
+```bash
+cargo run -p relabel-cli -- label --check --now "$(date -Iseconds)" crates/relabel-render/tests/corpus/v1/variables.relabel
+```
+
+That one is refused on purpose: its third row's SKU is too long for the
+barcode, and the output names the row, its line in the CSV and the element.
 
 Useful flags while something is going wrong:
 

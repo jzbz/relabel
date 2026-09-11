@@ -134,6 +134,6 @@ fn hostile_headers_are_refused_without_allocating() {
     let t = Target::new(320, 96, 203).unwrap();
     let (r, used) = peak(|| rasterise(&l, &t).unwrap().1);
     assert_eq!(r.failed.len(), 1, "{r:?}");
-    assert!(r.failed[0].1.contains("8000x8000"), "{r:?}");
+    assert!(r.failed[0].1.to_string().contains("8000x8000"), "{r:?}");
     assert!(used < MIB, "drawing: {} KiB allocated", used / 1024);
 }

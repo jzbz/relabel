@@ -670,7 +670,7 @@ A canvas and an inspector. Deliberately modest: this is a label composer, not Il
 - **Canvas** — the full printhead width at 1:1 dots with a zoom, showing the media area and the padding beyond it as distinct tones so the user can see where the paper ends. Snap-to-dot, arrow-key nudge by one dot.
 - **Elements** — Text, Barcode, QR, Image, Rectangle, Line. Add from a toolbar, select on canvas, edit in the inspector.
 - **Inspector** — per type. Text: content, font, size, weight, alignment, rotation in 90° steps, line spacing. Barcode: symbology, data, module width in dots, quiet zone, human-readable text on/off, and a live validity indicator. Code128 needs explicit A/B/C set selection (`barcoders` does not auto-select), so relabel computes the optimal switching itself and shows which sets it chose; UPC-A wants 12 characters, not 11. QR: data, error-correction level, module size in dots. Image: file, fit mode, per-element dither override.
-- **Data** — a CSV/column binding for batch printing, `{{column}}` placeholders in text and barcode data, with a row-count readout. This is what turns the app from a toy into a tool and it belongs in the design from the start even if it ships in M4.
+- **Data** — a CSV/column binding for batch printing, `{column}` placeholders in text and barcode data, with a row-count readout. This is what turns the app from a toy into a tool and it belongs in the design from the start even if it ships in M4.
 
 ### 6.4 Preview and print
 

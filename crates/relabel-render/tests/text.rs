@@ -133,7 +133,7 @@ fn style(ppem: f32) -> TextStyle<'static> {
 }
 
 fn failed_with(r: &RenderReport, what: &str) -> bool {
-    r.failed.len() == 1 && r.failed[0].1.contains(what)
+    r.failed.len() == 1 && r.failed[0].1.to_string().contains(what)
 }
 
 /// The embedded faces are the upstream files `THIRD-PARTY.md` names: Noto

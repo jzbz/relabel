@@ -158,7 +158,7 @@ fn a_symbol_too_long_for_its_frame_is_refused_not_clipped() {
     let (p, report) = render(el("code128", data, 3, 40));
     assert_eq!(report.failed.len(), 1);
     assert!(
-        report.failed[0].1.contains("clipped"),
+        report.failed[0].1.to_string().contains("clipped"),
         "{}",
         report.failed[0].1
     );
@@ -178,7 +178,7 @@ fn retail_symbols_are_refused_on_a_twelve_millimetre_label() {
             let (_, report) = render(el(sym, data, module, 80));
             assert_eq!(report.failed.len(), 1, "{sym} at {module} dots");
             assert!(
-                report.failed[0].1.contains("Code 128"),
+                report.failed[0].1.to_string().contains("Code 128"),
                 "{}",
                 report.failed[0].1
             );
@@ -277,14 +277,14 @@ fn data_that_cannot_be_encoded_is_an_error() {
 fn an_unknown_symbology_is_reported() {
     let (_, report) = render(el("code93", "RELABEL", 2, 40));
     assert_eq!(report.failed.len(), 1);
-    assert!(report.failed[0].1.contains("code93"));
+    assert!(report.failed[0].1.to_string().contains("code93"));
 }
 
 #[test]
 fn the_module_floor_holds_unless_overridden() {
     assert_eq!(MIN_MODULE_DOTS, 2);
     let (_, report) = render(el("code128", "1234", 1, 40));
-    assert!(report.failed[0].1.contains("2-dot floor"));
+    assert!(report.failed[0].1.to_string().contains("2-dot floor"));
 
     let mut narrow = el("code128", "1234", 1, 40);
     narrow.out_of_spec = true;
