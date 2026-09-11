@@ -13,12 +13,14 @@ pub mod barcode;
 pub mod calibration;
 pub mod canvas;
 pub mod code2d;
+pub mod coverage;
 pub mod document;
 pub mod error;
 pub mod greymap;
 pub mod halftone;
 pub mod rasterise;
 pub mod target;
+pub mod text;
 
 pub use barcode::{BarcodeError, Symbology};
 pub use canvas::Canvas;

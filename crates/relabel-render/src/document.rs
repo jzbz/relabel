@@ -379,6 +379,60 @@ pub struct TextEl {
     pub size: f32,
     #[serde(default = "one_f32")]
     pub line_height: f32,
+    /// Where each line sits across the frame's reading width.
+    #[serde(default)]
+    pub align: TextAlign,
+    #[serde(default)]
+    pub weight: TextWeight,
+    /// How outlines become dots. Always written, like QR error correction: a
+    /// later build choosing a different default must not change what an
+    /// existing label prints.
+    #[serde(default)]
+    pub raster: GlyphRaster,
+}
+
+/// Where each line of a text element sits across its frame.
+///
+/// The three style value sets below are open, like [`Repeat`]: a value a
+/// later build adds survives a round trip here, and the element is reported
+/// as not drawn rather than the whole label refused.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TextAlign {
+    #[default]
+    Start,
+    Center,
+    End,
+    #[serde(untagged)]
+    Unknown(String),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TextWeight {
+    #[default]
+    Regular,
+    SemiBold,
+    #[serde(untagged)]
+    Unknown(String),
+}
+
+/// How glyph outlines become dots.
+///
+/// Which reads better on paper is the P6 print test's question; the default
+/// is the one that measured cleanest on the grid.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum GlyphRaster {
+    /// Grid-fitted by skrifa's autohinter for a monochrome target, and filled
+    /// with hard edges. Every stem of a glyph comes out the same whole number
+    /// of dots.
+    #[default]
+    Hinted,
+    /// Unhinted and anti-aliased, left to the binariser's threshold.
+    Smooth,
+    #[serde(untagged)]
+    Unknown(String),
 }
 
 fn one_f32() -> f32 {
@@ -562,6 +616,35 @@ impl Element {
             Element::Image(e) => &e.common,
             Element::Rect(e) => &e.common,
             Element::Line(e) => &e.common,
+        }
+    }
+
+    /// The keys an element of this kind writes besides the common ones. A key
+    /// with one of these names in the element's unknown-field map would be
+    /// written twice, and the reload would keep only one of them.
+    pub fn own_keys(&self) -> &'static [&'static str] {
+        match self {
+            Element::Text(_) => &[
+                "text",
+                "family",
+                "size",
+                "line_height",
+                "align",
+                "weight",
+                "raster",
+            ],
+            Element::Barcode(_) => &[
+                "symbology",
+                "data",
+                "module_dots",
+                "bar_dots",
+                "out_of_spec",
+            ],
+            Element::Qr(_) => &["data", "module_dots", "ec", "version", "out_of_spec"],
+            Element::DataMatrix(_) => &["data", "module_dots", "size", "out_of_spec"],
+            Element::Image(_) => &["path"],
+            Element::Rect(_) => &["stroke_dots", "radius_dots"],
+            Element::Line(_) => &["thickness_dots"],
         }
     }
 
@@ -832,7 +915,9 @@ impl Label {
         for el in self.elements.iter().filter_map(ElementOrRaw::known) {
             let c = el.common();
             for k in c.unknown.keys() {
-                if RESERVED_ELEMENT_KEYS.contains(&k.as_str()) {
+                if RESERVED_ELEMENT_KEYS.contains(&k.as_str())
+                    || el.own_keys().contains(&k.as_str())
+                {
                     return Err(LoadError::ReservedKey(k.clone()));
                 }
             }

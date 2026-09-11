@@ -14,10 +14,11 @@ accepted = [
     "BSD-3-Clause",
     "BSD-2-Clause",
     "Unicode-3.0",
-    # Unused by the current graph - every Apache-2.0 crate also offers MIT or
-    # BSD-3-Clause - and needed once datamatrix brings flagset, which is
-    # Apache-2.0 only.
+    # flagset, via datamatrix, is Apache-2.0 only.
     "Apache-2.0",
+    # foldhash, via hashbrown's default hasher for parley and fontique, is
+    # Zlib only.
+    "Zlib",
 ]
 
 # The desktop platforms a release is built for, kept identical to deny.toml's

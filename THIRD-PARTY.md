@@ -12,8 +12,8 @@ Two tools, two jobs.
 
 **`cargo deny check licenses` is the gate.** `deny.toml` allows MIT and the
 three licences today's graph cannot do without - BSD-2-Clause, BSD-3-Clause
-and Unicode-3.0 - plus Apache-2.0 for `flagset` alone, by name, on the six
-desktop targets, leaving out test-only crates. Anything else fails the check,
+and Unicode-3.0 - plus Apache-2.0 for `flagset` and Zlib for `foldhash`, each
+admitted by name, on the six desktop targets, leaving out test-only crates. Anything else fails the check,
 and the failure names the crate and the path that brought it in, so admitting
 a licence is an edit to that file, reviewed like any other. It is not run in
 CI yet.
@@ -50,6 +50,10 @@ workspace, which is a superset. Once the GUI crate exists, pass its
 `Cargo.toml` as the second argument, and the notices cover what that binary
 links and nothing else.
 
+The script appends the embedded fonts' licence, `crates/relabel-render/fonts/
+OFL.txt`, after the crates' notices; cargo-about knows only crates. See Fonts,
+below.
+
 What the notice file does not cover:
 
 - **The Rust standard library**, linked into every binary under MIT OR
@@ -58,8 +62,7 @@ What the notice file does not cover:
   the graph ships one; a crate that does needs its `NOTICE` added by hand.
 
 It also lists more than it must: compile-time-only crates - proc-macros and
-their dependencies - appear although they are not linked. That is harmless, and
-the only reason Unicode-3.0 is in the file.
+their dependencies - appear although they are not linked. That is harmless.
 
 ## Licences that need more than an MIT notice
 
@@ -73,7 +76,8 @@ as one branch of an OR.
 | `arrayref` 0.3 | BSD-2-Clause | The notice and disclaimer, reproduced: "Copyright (c) 2015 David Roundy". |
 | `btleplug` 0.13 | BSD-3-Clause, with MIT and Apache-2.0 parts | Its whole `LICENSE.md`. The metadata says `MIT/Apache-2.0/BSD-3-Clause`, which reads like a choice and is not one: btleplug itself is BSD-3-Clause ("Copyright (c) 2020-2021, Nonpolynomial"), and it carries code from Rumble under MIT or Apache-2.0 and from Blurmac under BSD-3-Clause. |
 | `moxcms` 0.8, `pxfm` 0.1 | BSD-3-Clause OR Apache-2.0 | BSD-3-Clause is the branch taken: "Copyright (c) Radzivon Bartoshyk". |
-| `flagset` 0.4, via `datamatrix` | Apache-2.0 only | Its licence text, under section 4(a). There is no `NOTICE` file, and no copyright line to reproduce: the licence appendix is the unfilled template, and the only attribution is its author, Nathaniel McCallum. The first Apache-2.0-only dependency, and the only crate admitted by name in `deny.toml`: it has no MIT or BSD branch, and Apache-2.0 is not on the allowlist. |
+| ICU4X - `icu_*`, `zerovec`, `yoke`, `tinystr` and their kin - via `parley` | Unicode-3.0 | The Unicode licence's notice, with the binary or in its documentation. Line breaking and bidi run on ICU's data, so this is linked, not only compiled against. |
+| `flagset` 0.4, via `datamatrix` | Apache-2.0 only | Its licence text, under section 4(a). There is no `NOTICE` file, and no copyright line to reproduce: the licence appendix is the unfilled template, and the only attribution is its author, Nathaniel McCallum. The first Apache-2.0-only dependency, admitted by name in `deny.toml`: it has no MIT or BSD branch, and Apache-2.0 is not on the allowlist. |
 
 Seven crates ship no licence file in their packages. For `bluez-async` and
 `bluez-generated`, on Linux, the text is fetched from upstream when the notices
@@ -83,13 +87,14 @@ the standard MIT text, with no copyright line to reproduce.
 No crate in the graph ships an Apache-2.0 `NOTICE` file, so section 4(d) of
 that licence asks nothing today.
 
-Two licences appear in `Cargo.lock` and still ask nothing of a binary:
+Two Zlib crates ask nothing of a binary: Zlib requires its notice only in a
+source distribution.
 
-- **`zlib-rs` (Zlib)** is an optional dependency of `flate2` that no feature
-  enables. It is locked, never compiled. Zlib asks for no notice in a binary in
-  any case.
-- **`unicode-ident` (Unicode-3.0)** is reached only through `proc-macro2` and
-  `syn`, which run at compile time and are not linked.
+- **`foldhash`** is compiled in, as `hashbrown`'s default hasher, which parley
+  and fontique ask for. It is the only compiled crate that offers Zlib
+  alone, so `deny.toml` admits it by name.
+- **`zlib-rs`** is an optional dependency of `flate2` that no feature enables.
+  It is locked, never compiled.
 
 ## Arriving with work in progress
 
@@ -108,9 +113,41 @@ Two licences appear in `Cargo.lock` and still ask nothing of a binary:
   today - Apache-2.0-only ones, ISC, Zlib, BSL-1.0 and CC0-1.0, measured on a
   scratch copy of this workspace with the Slint features rpgp uses - so the
   allowlist grows then, deliberately.
-- **Bundled fonts**, under the SIL Open Font License 1.1, get an entry here
-  each, with whether the licence names a Reserved Font Name - a subset is a
-  derivative, and a Reserved Font Name would force a rename.
+
+## Fonts
+
+`relabel-render` embeds three faces, unmodified, from the Noto project's
+`latin-greek-cyrillic` family. They are under the SIL Open Font License 1.1,
+not relabel's MIT licence.
+
+| File | Version | Bytes | SHA-256 |
+| --- | --- | --- | --- |
+| `NotoSans-Condensed.ttf` | 2.015 | 617,784 | `806816f70ef268abf388acdacf6b2e169f58f70c9f063515eef16a1f256eace6` |
+| `NotoSans-CondensedSemiBold.ttf` | 2.015 | 620,208 | `55ebf2188d1b9ff6b09affe3783c7704f8bd627586bf0a097ea4f6a8842f8cce` |
+| `NotoSansMono-Condensed.ttf` | 2.014 | 596,712 | `d60154ae4ecc9f2e8a1333de367b5decff30715f50dd1eca0048cd68fd905fd6` |
+
+- **Source.** The hinted static builds published at
+  `notofonts/notofonts.github.io`, commit
+  `92d2ea744479d3379927f1fb5f8b0945dd0349b7`, under
+  `fonts/NotoSans/hinted/ttf/` and `fonts/NotoSansMono/hinted/ttf/`. The same
+  versions are released as `NotoSans-v2.015` and `NotoSansMono-v2.014` in
+  `notofonts/latin-greek-cyrillic`, and the same bytes ship in Fedora 44's
+  `google-noto-sans-fonts` and `google-noto-sans-mono-fonts` 20251201-2.
+- **Licence.** `crates/relabel-render/fonts/OFL.txt` is the one in
+  `notofonts/latin-greek-cyrillic` at the `NotoSans-v2.015` tag, commit
+  `c4a321e123e4d4ff315f57f4e0adf294fe3a95be`, and carries the fonts' copyright
+  line: "Copyright 2022 The Noto Project Authors". It declares no Reserved
+  Font Name, and the files are not modified in any case.
+- **What the licence asks.** The fonts may be bundled and redistributed with
+  the program, provided every copy carries the copyright notice and the
+  licence (section 2); the notice file does. They may not be sold by
+  themselves (section 1). Labels printed with them are documents, which the
+  licence does not reach (section 5). The name table's "Noto is a trademark
+  of Google LLC." is a trademark notice, separate from the licence.
+- **What they cover.** Latin, Greek and Cyrillic, with the currency signs, the
+  degree, micro and ohm signs, and general punctuation. Not CJK, Arabic,
+  Hebrew or Thai, and the proportional faces have no arrows. A character none
+  of the three has is refused by name rather than drawn as an empty box.
 
 ## Watch list: weak copyleft
 

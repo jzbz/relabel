@@ -24,6 +24,8 @@ code128.workspace = true
 barcoders.workspace = true
 qrcode.workspace = true
 datamatrix.workspace = true
+parley.workspace = true
+skrifa.workspace = true
 
 [dev-dependencies]
 rqrr.workspace = true

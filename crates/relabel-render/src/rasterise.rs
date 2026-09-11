@@ -16,6 +16,7 @@ use crate::document::{BarcodeEl, Common, Element, Ink, Label, LineEl, RectDots, 
 use crate::error::RenderError;
 use crate::greymap::GreyMap;
 use crate::target::Target;
+use crate::text::{self, TextClip, TextEngine, TextError, TextStyle};
 use relabel_proto::PrintDirection;
 
 /// Zone ids are a byte and 0 is the page. Elements beyond the 254th share the
@@ -42,6 +43,9 @@ pub struct RenderReport {
     /// Refusal is deliberate for symbologies: a barcode that does not fit is
     /// not clipped, because a clipped Code 128 scans as a different value.
     pub failed: Vec<(u32, String)>,
+    /// Text drawn, but not all of it: cut by its own frame. Drawn but not as
+    /// asked, the same kind of entry as `rotation_approximated`.
+    pub text_clipped: Vec<(u32, TextClip)>,
 }
 
 impl RenderReport {
@@ -52,6 +56,7 @@ impl RenderReport {
             && self.off_canvas.is_empty()
             && self.rotation_approximated.is_empty()
             && self.failed.is_empty()
+            && self.text_clipped.is_empty()
     }
 }
 
@@ -68,6 +73,9 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
         report.unrecognised.push(kind.to_string());
     }
 
+    // Built on the first text element, and only then: a few microseconds, and
+    // no state outlives the render.
+    let mut engine: Option<TextEngine> = None;
     let mut next_zone: u8 = 1;
     for el in label.drawable() {
         let c = el.common();
@@ -111,6 +119,11 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
                     report.failed.push((c.id, err.to_string()));
                 }
             }
+            Element::Text(e) => match draw_text(&mut surface, target, e, zone, &mut engine) {
+                Ok(clip) if clip.is_clipped() => report.text_clipped.push((c.id, clip)),
+                Ok(_) => {}
+                Err(err) => report.failed.push((c.id, err.to_string())),
+            },
             other => report.unimplemented.push(other.kind()),
         }
     }
@@ -386,4 +399,56 @@ fn draw_grid(
         }
     }
     Ok(())
+}
+
+/// Lay a text element out upright in its own frame, then turn it onto the
+/// canvas.
+///
+/// The local frame is the frame as drawn, measured on the canvas and turned
+/// back upright: its width is the reading width, whatever the rotation and
+/// whichever way the printer's head runs. The canvas is the label in reading
+/// orientation on every target, so the upright raster is turned by the
+/// element's rotation and placed at the frame's corner - on a `Top` target,
+/// the transpose its axis swap would otherwise need cancels against that same
+/// swap. See the text module.
+fn draw_text(
+    s: &mut Surface,
+    t: &Target,
+    e: &crate::document::TextEl,
+    zone: u8,
+    engine: &mut Option<TextEngine>,
+) -> Result<TextClip, TextError> {
+    let c = &e.common;
+    let f = rotated(&c.frame, c.rot);
+    let (cw, ch) = t.extent(f.feed_len, f.head_len);
+    if cw <= 0 || ch <= 0 {
+        // Nothing is lost when there is nothing to draw; otherwise the text
+        // would vanish with a clean report.
+        return if e.text.chars().all(char::is_whitespace) {
+            Ok(TextClip::default())
+        } else {
+            Err(TextError::BadParam("the text frame has no area"))
+        };
+    }
+    let quarter = matches!(c.rot.quantised(), Rot::D90 | Rot::D270);
+    let (w, h) = if quarter { (ch, cw) } else { (cw, ch) };
+    let eng = match engine {
+        Some(eng) => eng,
+        None => engine.insert(TextEngine::new()?),
+    };
+    let style = TextStyle {
+        family: &e.family,
+        ppem: e.size,
+        line_height: e.line_height,
+        weight: e.weight.clone(),
+        align: e.align.clone(),
+        raster: e.raster.clone(),
+    };
+    // A local raster may be as large as the canvas it lands on: a frame that
+    // fits the label is never refused.
+    let limit = (u64::from(t.width_px) * u64::from(t.height_px)).max(text::MAX_LOCAL_DOTS);
+    let local = eng.render_local(&e.text, &style, w as u32, h as u32, limit)?;
+    let (x, y) = t.place(f.feed, f.head);
+    s.blend_coverage(x, y, &local.cov.turned(c.rot), c.ink, zone);
+    Ok(local.clip)
 }

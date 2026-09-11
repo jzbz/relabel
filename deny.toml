@@ -42,4 +42,6 @@ allow = [
 exceptions = [
     # Via datamatrix, for DataMatrix symbols. No NOTICE file.
     { crate = "flagset", allow = ["Apache-2.0"] },
+    # Via hashbrown's default hasher, which parley and fontique ask for.
+    { crate = "foldhash", allow = ["Zlib"] },
 ]

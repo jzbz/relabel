@@ -225,15 +225,12 @@ fn hidden_elements_are_not_drawn() {
 fn unimplemented_elements_are_reported() {
     let t = Target::new(320, 96, 203).unwrap();
     let mut l = label();
-    l.elements.push(ElementOrRaw::Known(Element::Text(TextEl {
+    l.elements.push(ElementOrRaw::Known(Element::Image(ImageEl {
         common: Common::new(1, RectDots::default()),
-        text: "hello".into(),
-        family: String::new(),
-        size: 16.0,
-        line_height: 1.0,
+        path: "logo.png".into(),
     })));
     let (_, report) = rasterise(&l, &t).unwrap();
-    assert_eq!(report.unimplemented, vec!["text"]);
+    assert_eq!(report.unimplemented, vec!["image"]);
     assert!(!report.is_clean());
 }
 
@@ -248,6 +245,9 @@ fn a_placeholder_is_stored_not_resolved() {
         family: String::new(),
         size: 16.0,
         line_height: 1.0,
+        align: TextAlign::Start,
+        weight: TextWeight::Regular,
+        raster: GlyphRaster::Hinted,
     })));
     let back = Label::from_json(&l.to_json().unwrap()).unwrap();
     match back.drawable().next().unwrap() {
@@ -345,6 +345,9 @@ fn a_save_that_could_not_be_reloaded_is_refused() {
         family: String::new(),
         size: f32::NAN,
         line_height: 1.0,
+        align: TextAlign::Start,
+        weight: TextWeight::Regular,
+        raster: GlyphRaster::Hinted,
     })));
     assert!(matches!(
         l.to_json(),
@@ -466,4 +469,171 @@ fn pinned_code_settings_survive_a_save() {
     assert_eq!(els[2]["size"], "square", "the default is written too");
     assert!(els[2].get("out_of_spec").is_none());
     assert_eq!(Label::from_json(&saved).unwrap(), l);
+}
+
+/// A text element's style is always written, even at its defaults, for the
+/// same reason as a QR code's error correction: a later build choosing other
+/// defaults must not change what an existing label prints. Absent, it reads
+/// as the defaults; a value this build does not know survives a save.
+#[test]
+fn text_style_is_always_written_and_open_to_new_values() {
+    let frame = serde_json::json!({ "feed": 0, "head": 0, "feed_len": 96, "head_len": 24 });
+    let el: Element = serde_json::from_value(serde_json::json!({
+        "type": "text", "id": 1, "text": "x", "size": 16, "frame": frame
+    }))
+    .unwrap();
+    let Element::Text(t) = &el else {
+        panic!("not a text element")
+    };
+    assert_eq!(
+        (&t.align, &t.weight, &t.raster),
+        (
+            &TextAlign::Start,
+            &TextWeight::Regular,
+            &GlyphRaster::Hinted
+        )
+    );
+    let back = serde_json::to_string(&el).unwrap();
+    for field in [
+        r#""align":"start""#,
+        r#""weight":"regular""#,
+        r#""raster":"hinted""#,
+    ] {
+        assert!(back.contains(field), "{back}");
+    }
+
+    for (align, weight, raster, want) in [
+        (
+            "center",
+            "semibold",
+            "smooth",
+            (TextAlign::Center, TextWeight::SemiBold, GlyphRaster::Smooth),
+        ),
+        (
+            "end",
+            "regular",
+            "hinted",
+            (TextAlign::End, TextWeight::Regular, GlyphRaster::Hinted),
+        ),
+        (
+            "justify",
+            "black",
+            "dither",
+            (
+                TextAlign::Unknown("justify".into()),
+                TextWeight::Unknown("black".into()),
+                GlyphRaster::Unknown("dither".into()),
+            ),
+        ),
+    ] {
+        let el: Element = serde_json::from_value(serde_json::json!({
+            "type": "text", "id": 1, "text": "x", "size": 16, "frame": frame,
+            "align": align, "weight": weight, "raster": raster
+        }))
+        .unwrap();
+        let Element::Text(t) = &el else {
+            panic!("not a text element")
+        };
+        assert_eq!((t.align.clone(), t.weight.clone(), t.raster.clone()), want);
+        let back = serde_json::to_value(&el).unwrap();
+        assert_eq!(
+            (&back["align"], &back["weight"], &back["raster"]),
+            (
+                &serde_json::json!(align),
+                &serde_json::json!(weight),
+                &serde_json::json!(raster)
+            )
+        );
+    }
+}
+
+/// Each kind's own keys, as written, are exactly the list `to_json` checks an
+/// element's escape hatch against: a future field under one of those names
+/// would be written twice, and the reload would keep only one.
+#[test]
+fn each_element_kind_lists_the_keys_it_writes() {
+    let f = RectDots::default();
+    let els = [
+        Element::Text(TextEl {
+            common: Common::new(1, f),
+            text: "x".into(),
+            family: String::new(),
+            size: 16.0,
+            line_height: 1.0,
+            align: TextAlign::Start,
+            weight: TextWeight::Regular,
+            raster: GlyphRaster::Hinted,
+        }),
+        Element::Barcode(BarcodeEl {
+            common: Common::new(2, f),
+            symbology: "code128".into(),
+            data: "x".into(),
+            module_dots: 2,
+            bar_dots: 40,
+            out_of_spec: true,
+        }),
+        Element::Qr(QrEl {
+            common: Common::new(3, f),
+            data: "x".into(),
+            module_dots: 3,
+            ec: QrEc::M,
+            version: Some(2),
+            out_of_spec: true,
+        }),
+        Element::DataMatrix(DataMatrixEl {
+            common: Common::new(4, f),
+            data: "x".into(),
+            module_dots: 3,
+            size: DmSize::Square,
+            out_of_spec: true,
+        }),
+        Element::Image(ImageEl {
+            common: Common::new(5, f),
+            path: "a.png".into(),
+        }),
+        Element::Rect(RectEl {
+            common: Common::new(6, f),
+            stroke_dots: 1,
+            radius_dots: 1,
+        }),
+        Element::Line(LineEl {
+            common: Common::new(7, f),
+            thickness_dots: 1,
+        }),
+    ];
+    assert_eq!(els.len(), KNOWN_KINDS.len());
+    let common = [
+        "type", "id", "name", "frame", "rot", "ink", "hidden", "locked",
+    ];
+    for el in &els {
+        let v = serde_json::to_value(el).unwrap();
+        let mut written: Vec<&str> = v
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .filter(|k| !common.contains(k))
+            .collect();
+        let mut listed = el.own_keys().to_vec();
+        written.sort_unstable();
+        listed.sort_unstable();
+        assert_eq!(written, listed, "{}", el.kind());
+    }
+
+    let mut t = TextEl {
+        common: Common::new(1, f),
+        text: "x".into(),
+        family: String::new(),
+        size: 16.0,
+        line_height: 1.0,
+        align: TextAlign::Start,
+        weight: TextWeight::Regular,
+        raster: GlyphRaster::Hinted,
+    };
+    t.common
+        .unknown
+        .insert("raster".into(), serde_json::json!("smooth"));
+    let mut l = label();
+    l.elements.push(ElementOrRaw::Known(Element::Text(t)));
+    assert!(matches!(l.to_json(), Err(LoadError::ReservedKey(k)) if k == "raster"));
 }

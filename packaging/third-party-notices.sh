@@ -78,6 +78,18 @@ if [ -n "$problems$fallbacks" ]; then
     echo "the notices are incomplete; nothing was written to $out" >&2
     exit 1
 fi
+# The embedded fonts are not crates, so cargo-about does not know them.
+{
+    printf '\n%s\n' "================================================================================"
+    echo "SIL Open Font License 1.1 (OFL-1.1)"
+    echo "================================================================================"
+    echo "Used by the fonts embedded in relabel-render:"
+    echo "  - Noto Sans Condensed and Noto Sans Condensed SemiBold 2.015"
+    echo "  - Noto Sans Mono Condensed 2.014"
+    echo
+    cat "$root/crates/relabel-render/fonts/OFL.txt"
+} >>"$draft"
+
 # mktemp makes files readable by their owner alone; this one ships.
 chmod 644 "$draft"
 mv "$draft" "$out"

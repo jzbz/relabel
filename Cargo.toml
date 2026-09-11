@@ -14,9 +14,10 @@ version = "0.1.0"
 edition = "2024"
 # What cargo will actually enforce, not what the edition alone asks for. The
 # edition's own floor is 1.85, but slint 1.17 declares 1.92 throughout its tree
-# and cargo enforces the maximum over the whole graph. relabel-proto and
-# relabel-render carry no Slint dependency and still check on 1.85; the toolkit
-# is the whole of the difference, exactly as it is in rpgp.
+# and cargo enforces the maximum over the whole graph. relabel-proto carries no
+# Slint dependency and still checks on 1.85; relabel-render needs 1.88, the
+# floor fontique and ICU4X declare. The toolkit is the rest of the difference,
+# exactly as it is in rpgp.
 rust-version = "1.92"
 license = "MIT"
 repository = "https://github.com/jzbz/relabel"
@@ -78,6 +79,19 @@ qrcode = { version = "0.14.1", default-features = false }
 # (see THIRD-PARTY.md). Three of its behaviours are fenced off in
 # `relabel-render`'s code2d module.
 datamatrix = "0.3.3"
+
+# Text layout: shaping (harfrust), line breaking and bidi (ICU4X), and font
+# selection (fontique, reached as parley::fontique). Default features off
+# drops fontique's system-font backends - fontconfig, DirectWrite, CoreText -
+# so relabel-render never enumerates or links a system font and a label
+# rasterises the same everywhere. `complex-scripts` stays off too: it swaps in
+# ICU's dictionary and LSTM segmenters for Thai, Lao, Khmer, Myanmar and CJK,
+# which the embedded faces cannot draw, and adds 3.8 MB to a release binary.
+parley = { version = "0.10", default-features = false, features = ["std"] }
+# Glyph outlines and hinting: the autohinter here is the only hinting measured
+# to keep a one-to-two-dot stem the same width across a glyph. See
+# relabel-render's text module. The version parley 0.10 resolves to.
+skrifa = "0.42.1"
 
 # Test-only decoders, so a rendered symbol is read back by code that shares
 # nothing with the encoder that made it. rqrr is a port of quirc. rxing is a

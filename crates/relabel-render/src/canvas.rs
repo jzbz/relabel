@@ -26,6 +26,7 @@
 //!   usually made an arithmetic mistake, so this crate refuses fractions rather
 //!   than quietly flooring them.
 
+use crate::coverage::Coverage;
 use crate::document::Ink;
 use crate::error::RenderError;
 use crate::greymap::GreyMap;
@@ -174,6 +175,43 @@ impl Canvas {
         Ok(value as i32)
     }
 
+    /// Blend an 8-bit coverage buffer onto the canvas, and claim for `zone`
+    /// exactly the dots it touches.
+    ///
+    /// `cov` is already in canvas orientation, its top-left dot at `(x, y)`.
+    /// Clipped in `i64` for the same reason as
+    /// [`fill_rect_dots`](Self::fill_rect_dots). A dot with coverage 0 is left
+    /// alone - ink and zone both - so a text element's zone is its glyphs, not
+    /// its frame.
+    pub fn blend_coverage(&mut self, x: i32, y: i32, cov: &Coverage, ink: Ink, zone: u8) {
+        let (cw, ch) = (cov.w, cov.h);
+        if cw == 0 || ch == 0 || cov.data.len() < cw as usize * ch as usize {
+            return;
+        }
+        let (x0, y0) = (i64::from(x).max(0), i64::from(y).max(0));
+        let x1 = (i64::from(x) + i64::from(cw)).min(i64::from(self.w));
+        let y1 = (i64::from(y) + i64::from(ch)).min(i64::from(self.h));
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let stride = usize::from(self.w);
+        let data = self.pixmap.data_mut();
+        for cy in y0..y1 {
+            let sy = (cy - i64::from(y)) as usize;
+            for cx in x0..x1 {
+                let sx = (cx - i64::from(x)) as usize;
+                let c = cov.data[sy * cw as usize + sx];
+                if c == 0 {
+                    continue;
+                }
+                let i = cy as usize * stride + cx as usize;
+                let l = blend(data[i * 4], c, ink);
+                data[i * 4..i * 4 + 4].copy_from_slice(&[l, l, l, 255]);
+                self.zone[i] = zone;
+            }
+        }
+    }
+
     /// Take the ink coverage, 0 meaning fully inked and 255 meaning bare paper.
     ///
     /// The pixmap is opaque throughout, so every pixel has alpha 255 and the
@@ -194,6 +232,24 @@ impl Canvas {
             zone: self.zone,
         }
     }
+}
+
+/// One dot of luminance `l` under coverage `c` of `ink`.
+///
+/// tiny-skia's own arithmetic, not a fresh one: for an opaque solid paint it
+/// reduces source-over to source, and source with coverage is a lerp,
+/// `div255(d * (255 - c) + s * c)` with `div255(v) = (v + 255) >> 8`. So a
+/// blended buffer matches filling the outline straight into the canvas, dot
+/// for dot. `div255` is not a true division by 255 - it is off by one for
+/// about a quarter of all (L, c) pairs - and matching it anyway is the point.
+#[inline]
+pub fn blend(l: u8, c: u8, ink: Ink) -> u8 {
+    let t: u32 = match ink {
+        Ink::Black => 0,
+        Ink::White => 255,
+    };
+    let (l, c) = (u32::from(l), u32::from(c));
+    ((l * (255 - c) + t * c + 255) >> 8) as u8
 }
 
 #[cfg(test)]
@@ -297,6 +353,68 @@ mod tests {
         let g = c.finish();
         assert_eq!(g.at(0, 0), 0);
         assert_eq!(g.at(3, 3), 255, "knocked back out");
+    }
+
+    fn solid(w: u32, h: u32) -> Coverage {
+        Coverage {
+            w,
+            h,
+            data: vec![255; (w * h) as usize],
+        }
+    }
+
+    /// A coverage blit is clipped at every edge of the canvas - ink and zone
+    /// both - and never wraps into the next row.
+    #[test]
+    fn a_coverage_blit_clips_at_every_edge() {
+        for (x, y) in [(6, 2), (2, 6), (-3, 2), (2, -2), (6, 6), (-3, -2)] {
+            let mut c = canvas(8, 8);
+            c.blend_coverage(x, y, &solid(5, 3), Ink::Black, 7);
+            let g = c.finish();
+            for yy in 0..8u16 {
+                for xx in 0..8u16 {
+                    let inside =
+                        (x..x + 5).contains(&i32::from(xx)) && (y..y + 3).contains(&i32::from(yy));
+                    let i = usize::from(yy) * 8 + usize::from(xx);
+                    assert_eq!(
+                        g.px[i],
+                        if inside { 0 } else { 255 },
+                        "({x}, {y}) at ({xx}, {yy})"
+                    );
+                    assert_eq!(
+                        g.zone[i],
+                        if inside { 7 } else { 0 },
+                        "({x}, {y}) zone at ({xx}, {yy})"
+                    );
+                }
+            }
+        }
+        let mut c = canvas(8, 8);
+        c.blend_coverage(i32::MAX, i32::MIN, &solid(5, 3), Ink::Black, 7);
+        assert!(
+            c.finish().px.iter().all(|&p| p == 255),
+            "far off the canvas"
+        );
+    }
+
+    /// Partial coverage blends with what is already on the canvas, not with
+    /// bare paper; zero coverage leaves a dot alone entirely.
+    #[test]
+    fn partial_coverage_blends_with_the_ground_beneath() {
+        let mut c = canvas(4, 1);
+        c.fill_rect_dots(0, 0, 2, 1, Ink::Black);
+        let cov = Coverage {
+            w: 4,
+            h: 1,
+            data: vec![128, 0, 128, 0],
+        };
+        c.blend_coverage(0, 0, &cov, Ink::Black, 3);
+        let g = c.finish();
+        assert_eq!(g.px, vec![0, 0, 127, 255]);
+        assert_eq!(g.zone, vec![3, 0, 3, 0]);
+        assert_eq!(blend(0, 128, Ink::White), 128);
+        assert_eq!(blend(255, 255, Ink::Black), 0);
+        assert_eq!(blend(77, 0, Ink::White), 77);
     }
 
     #[test]
