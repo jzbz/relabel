@@ -181,4 +181,6 @@ open. See the bring-up checklist in
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The licences of the crates relabel is built from,
+and how the notice file that ships with each release is generated, are in
+[THIRD-PARTY.md](THIRD-PARTY.md).

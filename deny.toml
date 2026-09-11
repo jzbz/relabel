@@ -1,0 +1,41 @@
+# Licence policy, enforced by `cargo deny check licenses`.
+#
+# This is the gate, not the notice file. It fails the moment a dependency
+# arrives under a licence nobody has approved, so a new licence is a reviewed
+# change to this file rather than something discovered in a release. The
+# attribution that ships with a binary is generated separately; see
+# THIRD-PARTY.md.
+
+[graph]
+# The desktop platforms relabel is built for, kept identical to about.toml's
+# list. A crate reachable only from another target (Android's jni, WASI,
+# Redox) never ships and is not checked.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+# Only what ships. Test-only crates, such as the independent decoders the
+# renderer's tests read symbols back with, never reach a user.
+exclude-dev = true
+
+[licenses]
+# An OR expression passes when any one branch is allowed, so MIT alone covers
+# every "MIT OR Apache-2.0" crate. Each other entry is here because some
+# shipped crate offers no MIT branch, and each was confirmed necessary by
+# removing it and watching the check fail.
+allow = [
+    "MIT",
+    "BSD-2-Clause", # arrayref, via tiny-skia
+    # tiny-skia and tiny-skia-path; moxcms and pxfm offer it or Apache-2.0.
+    "BSD-3-Clause",
+    "Unicode-3.0",  # unicode-ident: (MIT OR Apache-2.0) AND Unicode-3.0
+]
+# Apache-2.0 is deliberately absent while no shipped crate needs it alone:
+# that is what makes an Apache-only arrival visible, and Apache-2.0 carries
+# NOTICE and patent terms MIT does not. Copyleft - MPL, LGPL, GPL - is absent
+# on purpose too; see THIRD-PARTY.md for what each would require.
+exceptions = []

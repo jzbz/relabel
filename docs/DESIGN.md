@@ -787,7 +787,7 @@ None of this ever blocked M1–M4.
 - **btleplug is unproven for this hardware.** No NIIMBOT project uses it in production; the one Rust attempt that does hardcodes characteristic UUIDs (`0000FF00`/`FF01`/`FF02`) that contradict every hardware-validated source and subscribes before opening the notification stream. M1 is deliberately a btleplug spike before anything else is built on it.
 - **D110_M has a documented pattern of spontaneous bricking.** relabel shows a warning on that model. This is not a relabel bug and must not become one.
 - **`serialport` is MPL-2.0.** File-level copyleft, fine to link from MIT, recorded in `THIRD-PARTY.md` rather than discovered later.
-- **Slint's royalty-free terms require attribution in an About box**, as in rpgp. Bundled fonts carry the SIL OFL text beside them.
+- **Slint's royalty-free terms require attribution**: its `AboutSlint` widget in an About screen reachable from the top level, or its attribution badge on the download page. The licence names the widget, so a line of text naming Slint is not enough; `THIRD-PARTY.md` has the detail. Bundled fonts carry the SIL OFL text beside them.
 - **No existing Rust crate is usable.** The one crate on crates.io (`niimprint-rs`, MIT, 24 downloads) does not compile at all on macOS or Windows — an ungated `bluer` import means the platform stub is unreachable dead code — and implements a single print flow that matches no niimbluelib task cleanly. The two GitHub-only attempts are GPL-3.0 and license-ambiguous respectively. `relabel-proto` is written from scratch against the facts, with small pieces optionally lifted from MIT sources under attribution.
 
 ---

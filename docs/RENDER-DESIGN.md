@@ -370,7 +370,7 @@ and that is a *default offered in the file dialog*, never a mandatory location. 
 
 Saves are atomic: temp file **in the destination directory**, then rename, so the rename stays on one filesystem. That promotes `tempfile` from a dev-dependency to a real one for the GUI. A label editor that corrupts a file on a crash mid-save is unforgivable and the fix is fifteen lines.
 
-For `THIRD-PARTY.md`: `dirs` 6 and `dirs-sys` 0.5 are MIT OR Apache-2.0, but `dirs-sys` depends on **`option-ext` 0.2.0, which is MPL-2.0** — file-level copyleft, fine to link from MIT, same class as the `serialport` note already recorded, and currently unrecorded.
+For `THIRD-PARTY.md`: `dirs` 6 and `dirs-sys` 0.5 are MIT OR Apache-2.0, but `dirs-sys` depends on **`option-ext` 0.2.0, which is MPL-2.0** — file-level copyleft, fine to link from MIT, and the same class as `serialport`. Both are listed in `THIRD-PARTY.md` against the day they enter the graph.
 
 ### 2.5 Serialisation and evolution
 
@@ -1028,7 +1028,7 @@ pub fn Bitmap::<B>::pixels(&self) -> impl Iterator<Item = (usize, usize)> + '_; 
 
 `datamatrix = "0.3.3"`, Apache-2.0 OR MIT, `no_std` + alloc, two dependencies (`arrayvec`, `flagset`). Quiet zone is **one module**, not four, which is most of why it wins on this hardware (§6.4).
 
-For `THIRD-PARTY.md`: **`flagset` 0.4.7 is Apache-2.0 only**, not dual-licensed. Permissive and MIT-compatible to distribute, but it carries an attribution/NOTICE obligation and a patent grant with a termination clause that relabel's own MIT text does not. The project already keeps this ledger for `serialport`'s MPL-2.0; this belongs in it.
+For `THIRD-PARTY.md`: **`flagset` 0.4.7 is Apache-2.0 only**, not dual-licensed. Permissive and MIT-compatible to distribute, but it carries an attribution/NOTICE obligation and a patent grant with a termination clause that relabel's own MIT text does not. Recorded in `THIRD-PARTY.md`.
 
 ---
 
@@ -1341,8 +1341,7 @@ datamatrix = "0.3"
 
 # Config, saved printers, recent labels, the learned roll catalogue. NOTE for
 # THIRD-PARTY.md: dirs-sys pulls option-ext 0.2.0, which is MPL-2.0 - the same
-# weak-copyleft class as the serialport note DESIGN.md section 4 already
-# records, and currently unrecorded.
+# weak-copyleft class as serialport, and listed there beside it.
 dirs = "6"
 
 # Atomic saves: temp file in the destination directory, then rename. Promoted

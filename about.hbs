@@ -1,0 +1,37 @@
+THIRD-PARTY SOFTWARE NOTICES
+============================
+
+relabel is distributed under the MIT licence. This program includes the
+Rust crates listed below, each used under the licence shown with it. Where a
+crate offers a choice of licences, the one named is the one it is used under
+here. Each licence text below follows the list of crates it covers, with
+their authors, and is reproduced in full as the crate ships it, including its
+copyright notices.
+
+Licences
+--------
+{{#each overview}}
+  {{{name}}} ({{{id}}})
+{{/each}}
+
+{{#each licenses}}
+================================================================================
+{{{name}}} ({{{id}}})
+================================================================================
+Used by:
+{{#each used_by}}
+  - {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} <{{{crate.repository}}}>{{/if}}
+{{#if crate.authors}}
+    Authors: {{#each crate.authors}}{{{this}}}{{#unless @last}}; {{/unless}}{{/each}}
+{{/if}}
+{{/each}}
+{{#unless source_path}}
+
+  These crates do not publish a licence text of their own, so the standard
+  {{{id}}} text is reproduced below. Copyright is held by the authors listed
+  above.
+{{/unless}}
+
+{{{text}}}
+
+{{/each}}
