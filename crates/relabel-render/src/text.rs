@@ -73,10 +73,11 @@ pub const MONO_REGULAR: &[u8] = include_bytes!("../fonts/NotoSansMono-Condensed.
 pub const SANS: &str = "Noto Sans";
 pub const MONO: &str = "Noto Sans Mono";
 
-/// The smallest cap on a local frame, in dots. The rasteriser raises it to the
-/// size of the canvas, so a frame that fits the label is never refused, while
-/// a frame billions of dots on a side - it came from a file - is refused
-/// rather than allocated.
+/// The smallest cap on a local frame's area, in dots. The rasteriser raises
+/// it to the size of the canvas, so a frame that fits the label is never
+/// refused for its area, while a frame billions of dots on a side - it came
+/// from a file - is refused rather than allocated. Sides are capped
+/// separately, at [`MAX_SIDE`].
 pub const MAX_LOCAL_DOTS: u64 = 1 << 22;
 /// The longest side of a local raster, in dots: a metre at 203 dpi. Past it
 /// tiny-skia fills a mask in tiles, clipping the path at every seam, and its

@@ -82,7 +82,8 @@ enum Cmd {
     Status,
     /// Encode an image and print it.
     Print {
-        /// The image to print: PNG, JPEG, BMP or GIF.
+        /// The image to print: PNG, JPEG, BMP, GIF, WebP or SVG. An SVG's
+        /// millimetres take the model's pitch; SVG text is refused.
         file: PathBuf,
         #[arg(long, default_value = "1")]
         copies: u16,
@@ -400,7 +401,8 @@ async fn run(cli: &Cli, session: &Session, id: &Identity, t: &Timeouts) -> Resul
             let model = id.model;
             let head = id.printhead_px();
             let direction = model.map(|m| m.direction).unwrap_or(PrintDirection::Top);
-            let plane = bitmap::load(file, head, direction, *dither, *threshold, *invert)?;
+            let dpmm = relabel_render::Dpmm::for_dpi(model.map(|m| m.dpi).unwrap_or(203));
+            let plane = bitmap::load(file, head, direction, dpmm, *dither, *threshold, *invert)?;
             if *preview {
                 println!("{}", bitmap::preview(&plane, 120));
             }
@@ -485,7 +487,16 @@ struct ImageOpts {
 }
 
 fn dry_run(file: &std::path::Path, o: &ImageOpts) -> Result<()> {
-    let plane = bitmap::load(file, o.head, o.direction, o.dither, o.threshold, o.invert)?;
+    // No model on a dry run: an SVG's millimetres are taken at 203 dpi.
+    let plane = bitmap::load(
+        file,
+        o.head,
+        o.direction,
+        relabel_render::Dpmm::DPI_203,
+        o.dither,
+        o.threshold,
+        o.invert,
+    )?;
     if o.preview {
         println!("{}", bitmap::preview(&plane, 120));
     }

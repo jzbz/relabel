@@ -23,11 +23,6 @@ anyhow.workspace = true
 # driven by hand while a printer is on the desk.
 clap = { version = "4", features = ["derive"] }
 
-# Loading whatever the user points at. Pure Rust for every format enabled here -
-# only the AVIF decoder pulls a C library, and it is off.
-image = { version = "0.25", default-features = false, features = [
-    "png",
-    "jpeg",
-    "bmp",
-    "gif",
-] }
+[dev-dependencies]
+# Test fixtures only: files are decoded by relabel-render's import.
+image.workspace = true

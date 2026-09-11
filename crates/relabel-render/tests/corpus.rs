@@ -9,8 +9,10 @@
 //! too, so both sides of the comparison agree and the test passes while the
 //! data is gone. These tests compare against the file's own text instead.
 
+mod common;
+
 use relabel_render::document::*;
-use relabel_render::{Target, rasterise};
+use relabel_render::{Target, rasterise, rasterise_plane};
 
 fn corpus(name: &str) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -75,10 +77,34 @@ fn the_corpus_survives_a_save_and_reload() {
         "kitchen-sink.relabel",
         "from-the-future.relabel",
         "hostile-numbers.relabel",
+        "images.relabel",
     ] {
         let l = Label::from_json(&corpus(name)).unwrap();
         let back = Label::from_json(&l.to_json().unwrap())
             .unwrap_or_else(|e| panic!("{name} did not reload after saving: {e}"));
         assert_eq!(l, back, "{name}");
     }
+}
+
+/// Embedded artwork as the first build to store it wrote it: an 8-bit grey
+/// PNG and a grey-and-alpha one draw, and a fit and a halftone this build does
+/// not know - and an image from before artwork was embedded - each fail their
+/// element alone, and all of it survives a save.
+#[test]
+fn the_image_corpus_draws_as_it_did() {
+    let l = Label::from_json(&corpus("images.relabel")).unwrap();
+    let t = Target::new(320, 96, 203).unwrap();
+    let (_, r) = rasterise(&l, &t).unwrap();
+    let failed: Vec<u32> = r.failed.iter().map(|f| f.0).collect();
+    assert_eq!(failed, vec![3, 4, 5], "{r:?}");
+    for (i, why) in [(0, "tile"), (1, "blue_noise"), (2, "no embedded artwork")] {
+        assert!(r.failed[i].1.contains(why), "{:?}", r.failed[i]);
+    }
+    assert!(r.failed[2].1.contains("logo.png"), "{:?}", r.failed[2]);
+    assert!(r.image_resampled.is_empty(), "{r:?}");
+    let back = l.to_json().unwrap();
+    for needle in ["\"tile\"", "\"blue_noise\"", "\"logo.png\""] {
+        assert!(back.contains(needle), "{needle} was lost on save");
+    }
+    common::check("image-corpus", &rasterise_plane(&l, &t).unwrap());
 }

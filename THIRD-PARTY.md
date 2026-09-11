@@ -84,6 +84,12 @@ Seven crates ship no licence file in their packages. For `bluez-async` and
 are generated. The five macOS `objc2` crates publish none anywhere, so theirs is
 the standard MIT text, with no copyright line to reproduce.
 
+`siphasher`, via usvg, ships only a `COPYING` note naming its copyright
+holders - "The Rust Project Developers" and Frank Denis - and its two licences.
+Neither licence text exists in its package or in its repository at the
+published commit, so that note, pinned by checksum in `about.toml`, is what the
+notice file reproduces for it.
+
 No crate in the graph ships an Apache-2.0 `NOTICE` file, so section 4(d) of
 that licence asks nothing today.
 
@@ -95,6 +101,22 @@ source distribution.
   alone, so `deny.toml` admits it by name.
 - **`zlib-rs`** is an optional dependency of `flate2` that no feature enables.
   It is locked, never compiled.
+
+## Artwork decoders
+
+`relabel-render` imports raster and SVG artwork, so it ships `image` 0.25.10
+with its PNG, JPEG, BMP, GIF and WebP codecs - `png`, `zune-jpeg`, `gif`,
+`image-webp` and their kin - and `resvg` and `usvg` 0.47 with `roxmltree`,
+`svgtypes`, `simplecss`, `kurbo` and `base64`. Every one is MIT or offers MIT,
+so none needs more than the notice, and `cargo deny` passes with `deny.toml`
+unchanged.
+
+What is left out matters as much: AVIF, whose decoder links a C library;
+resvg's `text`, which would bring a Zlib-only `slotmap` and a second shaping
+stack; and its `raster-images`. Two side effects are worth knowing. resvg asks
+for tiny-skia's default features, so tiny-skia's PNG codec is compiled in - the
+same `png` crate `image` brings. And `pico-args`, a command-line parser that
+resvg and usvg depend on for their own binaries, is compiled but never called.
 
 ## Arriving with work in progress
 

@@ -24,6 +24,7 @@
 //! `#[serde(other)]` cannot do the second job - it is only allowed on a unit
 //! variant, so it discards the payload it was supposed to preserve.
 
+use crate::halftone::Halftone;
 use crate::target::Dpmm;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -585,13 +586,90 @@ pub struct DataMatrixEl {
     pub out_of_spec: bool,
 }
 
+/// Artwork: a raster image or an SVG, turned into dots when it was imported.
+///
+/// The dots travel inside the label, as a PNG sized for the element's frame,
+/// so a label and its artwork cannot be separated and a file shared with
+/// someone else prints the same for them. Import decodes, resamples and
+/// renders SVG ([`crate::artwork`]); drawing only unpacks the PNG, so a label
+/// from someone else never reaches any decoder but PNG's, and never an SVG
+/// parser at all.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ImageEl {
     #[serde(flatten)]
     pub common: Common,
-    /// Relative to the document where possible, so a label and its artwork move
-    /// together.
+    /// Where the artwork was imported from: a breadcrumb for importing it
+    /// again, never opened when drawing. Always written, even empty, because a
+    /// build from before artwork was embedded requires it, and refuses the
+    /// whole label without it.
+    #[serde(default)]
     pub path: String,
+    /// The artwork, as standard padded base64 of a PNG: grey, composited over
+    /// white, 0 meaning ink, sized for the frame when it was imported.
+    ///
+    /// Kept as text and decoded only when drawn, so damaged data fails this
+    /// element rather than the label. The key's name is the format: a later
+    /// build that stores artwork some other way writes another key.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub png: String,
+    /// How the artwork sits in its frame. Always written, like [`QrEl::ec`].
+    #[serde(default)]
+    pub fit: ImageFit,
+    /// This element's halftone, overriding the page's. Absent means the
+    /// page's; import always writes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub halftone: Option<ImageHalftone>,
+    /// A dot at or below this grey is ink, overriding the page's threshold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<u8>,
+}
+
+/// How artwork sits in its frame. An open set, like [`TextAlign`].
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageFit {
+    /// All of it inside the frame, its shape kept, centred.
+    #[default]
+    Contain,
+    /// The frame filled, its shape kept, the overflow cropped evenly.
+    Cover,
+    /// The frame filled exactly, the shape changed to match.
+    Stretch,
+    /// One pixel to one dot, never resampled, centred, and cropped where it
+    /// overflows. For an SVG, its own size: physical units - mm, in, pt - at
+    /// the label's pitch, and unitless or px lengths one dot each.
+    Dots,
+    #[serde(untagged)]
+    Unknown(String),
+}
+
+/// The halftones a document can name, with their names in the file. Separate
+/// from [`Halftone`], which stays a plain `Copy` type for the binariser.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageHalftone {
+    Threshold,
+    FloydSteinberg,
+    Atkinson,
+    Sierra3,
+    Bayer8,
+    #[serde(untagged)]
+    Unknown(String),
+}
+
+impl ImageHalftone {
+    /// The binariser's halftone, or `None` for a value this build does not
+    /// know.
+    pub fn known(&self) -> Option<Halftone> {
+        Some(match self {
+            ImageHalftone::Threshold => Halftone::Threshold,
+            ImageHalftone::FloydSteinberg => Halftone::FloydSteinberg,
+            ImageHalftone::Atkinson => Halftone::Atkinson,
+            ImageHalftone::Sierra3 => Halftone::Sierra3,
+            ImageHalftone::Bayer8 => Halftone::Bayer8,
+            ImageHalftone::Unknown(_) => return None,
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -642,7 +720,7 @@ impl Element {
             ],
             Element::Qr(_) => &["data", "module_dots", "ec", "version", "out_of_spec"],
             Element::DataMatrix(_) => &["data", "module_dots", "size", "out_of_spec"],
-            Element::Image(_) => &["path"],
+            Element::Image(_) => &["path", "png", "fit", "halftone", "threshold"],
             Element::Rect(_) => &["stroke_dots", "radius_dots"],
             Element::Line(_) => &["thickness_dots"],
         }

@@ -9,6 +9,7 @@
 //! Nothing in this crate is async and nothing does I/O beyond reading bytes a
 //! caller hands it.
 
+pub mod artwork;
 pub mod barcode;
 pub mod calibration;
 pub mod canvas;
@@ -19,6 +20,8 @@ pub mod error;
 pub mod greymap;
 pub mod halftone;
 pub mod rasterise;
+pub mod srgb;
+mod svg;
 pub mod target;
 pub mod text;
 
@@ -28,5 +31,5 @@ pub use document::{Element, ElementOrRaw, Ink, Label, LoadError};
 pub use error::RenderError;
 pub use greymap::GreyMap;
 pub use halftone::{BinariseOpts, Halftone, Zone, binarise};
-pub use rasterise::{RenderReport, rasterise, rasterise_plane};
+pub use rasterise::{RenderReport, local_size, rasterise, rasterise_plane, zone_table};
 pub use target::{Dpmm, Target};

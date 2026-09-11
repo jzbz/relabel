@@ -184,8 +184,48 @@ impl Canvas {
     /// alone - ink and zone both - so a text element's zone is its glyphs, not
     /// its frame.
     pub fn blend_coverage(&mut self, x: i32, y: i32, cov: &Coverage, ink: Ink, zone: u8) {
+        self.blend(x, y, cov, None, ink, zone);
+    }
+
+    /// Blend artwork onto the canvas: [`blend_coverage`](Self::blend_coverage)'s
+    /// arithmetic, with the zone decided differently.
+    ///
+    /// `claim`, the same size as `cov`, marks the dots of the artwork's placed
+    /// box. An image's own halftone and threshold must reach all of them, white
+    /// included - otherwise a threshold of 255 leaves its paper white, and a
+    /// darkened Bayer matrix draws a contour round every pure-white area - so a
+    /// box dot joins the image's zone wherever no other element has claimed it.
+    /// Where one has, the image takes the dot only where it is visibly inked,
+    /// with more than [`NEAR_PAPER`] of coverage: the faint surround of a
+    /// scanned or JPEG logo must not re-threshold the anti-aliased text beneath
+    /// it.
+    pub fn blend_artwork(
+        &mut self,
+        x: i32,
+        y: i32,
+        cov: &Coverage,
+        claim: &Coverage,
+        ink: Ink,
+        zone: u8,
+    ) {
+        if (claim.w, claim.h) != (cov.w, cov.h) {
+            return;
+        }
+        self.blend(x, y, cov, Some(claim), ink, zone);
+    }
+
+    fn blend(
+        &mut self,
+        x: i32,
+        y: i32,
+        cov: &Coverage,
+        claim: Option<&Coverage>,
+        ink: Ink,
+        zone: u8,
+    ) {
         let (cw, ch) = (cov.w, cov.h);
-        if cw == 0 || ch == 0 || cov.data.len() < cw as usize * ch as usize {
+        let len = cw as usize * ch as usize;
+        if cw == 0 || ch == 0 || cov.data.len() < len || claim.is_some_and(|m| m.data.len() < len) {
             return;
         }
         let (x0, y0) = (i64::from(x).max(0), i64::from(y).max(0));
@@ -199,15 +239,21 @@ impl Canvas {
         for cy in y0..y1 {
             let sy = (cy - i64::from(y)) as usize;
             for cx in x0..x1 {
-                let sx = (cx - i64::from(x)) as usize;
-                let c = cov.data[sy * cw as usize + sx];
-                if c == 0 {
-                    continue;
-                }
+                let s = sy * cw as usize + (cx - i64::from(x)) as usize;
+                let c = cov.data[s];
                 let i = cy as usize * stride + cx as usize;
-                let l = blend(data[i * 4], c, ink);
-                data[i * 4..i * 4 + 4].copy_from_slice(&[l, l, l, 255]);
-                self.zone[i] = zone;
+                let claims = match claim {
+                    None => c > 0,
+                    Some(m) if m.data[s] == 0 => continue,
+                    Some(_) => self.zone[i] == 0 || c > NEAR_PAPER,
+                };
+                if c > 0 {
+                    let l = blend(data[i * 4], c, ink);
+                    data[i * 4..i * 4 + 4].copy_from_slice(&[l, l, l, 255]);
+                }
+                if claims {
+                    self.zone[i] = zone;
+                }
             }
         }
     }
@@ -233,6 +279,11 @@ impl Canvas {
         }
     }
 }
+
+/// Artwork coverage at or below this is paper as far as zones go: see
+/// [`Canvas::blend_artwork`]. Two levels of 255, which a JPEG's ringing or a
+/// scan's paper tone easily reaches and no eye sees.
+pub const NEAR_PAPER: u8 = 2;
 
 /// One dot of luminance `l` under coverage `c` of `ink`.
 ///

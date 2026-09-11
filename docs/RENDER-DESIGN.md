@@ -301,24 +301,18 @@ pub struct DmEl {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ImageEl {
     #[serde(flatten)] pub common: Common,
-    pub source: ImageSource,
-    #[serde(default)] pub fit: ImageFit,              // Dots | Contain | Cover | Stretch
-    /// Per-element override of the page halftone. An imported photo wants
-    /// Floyd–Steinberg; a logo wants a threshold.
-    #[serde(default)] pub halftone: Option<Halftone>,
-    #[serde(default)] pub threshold: Option<u8>,
-    #[serde(default)] pub invert: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ImageSource {
-    /// Resampled to at most the canvas dot grid at import (§4.6), so this is a
-    /// few KB of base64, not a 3 MP photo. That is what removes the only
-    /// argument for a zip container.
-    Embedded { format: ImageFormat, #[serde(with = "base64")] bytes: Vec<u8> },
-    /// A breadcrumb for "re-import at full resolution", never the load path.
-    Linked { origin: PathBuf },
+    /// A breadcrumb for re-import, never opened. Always written, even empty:
+    /// a build from before artwork was embedded requires it.
+    #[serde(default)] pub path: String,
+    /// Base64 of an 8-bit grey PNG, composited over white and sized for the
+    /// frame at import (§4.6): a few KB, not a 3 MP photo, which removes the
+    /// only argument for a zip container. The key's name is the format.
+    #[serde(default, skip_serializing_if = "String::is_empty")] pub png: String,
+    #[serde(default)] pub fit: ImageFit,              // Contain | Cover | Stretch | Dots, open
+    /// Per-element override of the page halftone, written by import: an
+    /// imported photo gets Floyd–Steinberg, a logo a threshold.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub halftone: Option<ImageHalftone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub threshold: Option<u8>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -338,6 +332,8 @@ pub struct LineEl {
     #[serde(default = "one_dot")] pub width_dots: u16,
 }
 ```
+
+**As built, step 7.** `ImageEl` above replaces this section's first design, an `ImageSource` enum and an `invert` flag. `path` keeps its v1 name, so the frozen corpus element `"path": "logo.png"` still loads - and is reported as having no artwork - and a build from before step 7 still loads a newer image, carrying `png`, `fit`, `halftone` and `threshold` through a save as unknown fields. `ink: white` does what `invert` would have, without turning a transparent surround into a black box.
 
 There is no `DateTime` element and no `Counter` element. Both are *variables* (§2.6), which keeps the element list at the seven the UI has to draw inspectors for.
 
@@ -854,6 +850,15 @@ let ink_rows = from_linear_to_ink(&small);
 
 **Triangle, not Lanczos3.** At a 5× downscale the non-Nearest filters are within noise of each other (RMS 10.9–11.1) because `horizontal_sample` widens the support by the downscale ratio (`sample.rs:259-261`, and again at `:511-513` for the vertical pass), so every kernel converges to an area average. Lanczos3 costs 28.3 ms against Triangle's 9.9 ms on a 3000 × 2000 source, for nothing. Nearest is the only genuinely bad choice (RMS 43.5) and is what `ImageFit::Dots` uses — deliberately — when the artwork already fits in whole dots, because any resampling destroys pixel-art detail that cannot be recovered at 96 dots.
 
+**As built.** Import (`artwork::import`, `artwork::import_within`) is the only place a file is decoded. Drawing unpacks the element's own PNG through one PNG decoder under explicit limits, so a shared label reaches nothing else, and never an SVG parser.
+
+- **Limits.** `into_decoder()`, which reading the EXIF orientation needs, skips the allocation reservation `decode()` makes, and a header alone then made the decoder allocate gigabytes and abort the process. So import checks the sides (16 384), then the pixels (40 million, on the header, because WebP's own buffers ignore `max_alloc`), then reserves the raster itself - and, for a progressive JPEG, the coefficient store its decoder allocates before reading a scan and never counts. A test with a counting allocator holds each hostile header - PNG, BMP, GIF, baseline and progressive JPEG - under 1 MiB. `MAX_ALLOC` bounds those decoder buffers and, separately, the resampling buffer: `image`'s resize runs its vertical pass into a four-channel float buffer as wide as the source and as tall as the result, 2 GiB for a wide source stretched into a tall frame, so import runs whichever order is cheaper, on the transpose when that is the one. Import also holds one float per source pixel while it converts, and refuses a frame drawing would refuse.
+- **Tone.** Integer Rec.601 luma from straight RGBA, composited over white in linear light through constant tables rather than `powf`, whose result depends on the platform's maths library.
+- **Resampling.** The claim above that every kernel converges to an area average is wrong: at 5× Triangle is a tent twice the ratio wide. The test compares import against that same tent computed in double precision - RMS under 0.5, against over 10 for a gamma-space resize.
+- **Threshold.** Line art that was resampled, or has soft alpha edges, gets threshold 187, the largest code below half light in linear terms, so a dot prints when more than half of it is ink. At 128 a stroke one dot wide after a 5× downscale vanishes entirely, because it covers at most three quarters of any dot.
+- **SVG.** Rendered by resvg 0.47 at import only, because it aborts on an uncapped filter region or pattern tile. No `text`, no `raster-images`, crisp edges by default; `<text>`, `<image>`, `<foreignObject>`, `<pattern>`, `<filter>`, `<marker>` and CSS filter functions are refused. Groups needing a layer of their own are capped at 64, eight deep, and clip paths and masks at 64 before usvg sees them: usvg follows a chain of them by recursion, and a long chain overflowed the stack and aborted the process. A marker is copied once per vertex of every path it decorates, which with visible overflow escapes the group cap entirely.
+- **Drawing.** The stored artwork is placed as text is: upright, turned by index, and blended, so white leaves what lies beneath alone. The element's zone is its whole box - so its own threshold and halftone reach its white too - less the dots another element already holds where the artwork is white or within two levels of it, so a faint JPEG or scanned surround does not re-threshold the text beneath. A frame changed since import is resampled nearest-neighbour, in integers, and reported.
+
 The existing CLI code at `crates/relabel-cli/src/bitmap.rs` scales by print direction (`Top` constrains width, `Left` constrains height). **That logic does not move.** The canvas is authored in reading orientation and `BitPlane::oriented()` handles the head; duplicating the direction policy in two crates is how they drift apart.
 
 ### 4.7 Binarisation, and the zone plane
@@ -902,6 +907,8 @@ if zone[dst] != zone[src] { return; }
 ```
 
 Bounding boxes rather than coverage, because a bounding box is explicable in the inspector ("this element's box is thresholded") and a coverage mask is not.
+
+**As built:** zones are the dots an element inks, not its box - a border drawn last would otherwise claim the whole label (`Canvas::paint_zone`). An image is the exception: it claims its box, less what another element holds where the image is near white (§4.6). `zone_table(label, page)` gives `binarise` each image's own halftone and threshold, and `rasterise_plane` applies it.
 
 **The halftone set is five, and the omissions are deliberate.** Measured on a 320 × 96 zone plate, local fidelity as 3×3-blurred RMS against the source: Floyd–Steinberg 16.3, Burkes 18.9, Stucki 19.8, Sierra-3 20.9, Jarvis 20.9, Atkinson 21.4, Bayer-8 22.4, plain threshold 31.5. Jarvis, Stucki and Burkes are tonally *identical* to Floyd–Steinberg — every error-conserving kernel has the same tone reproduction, because tone is a property of the dot, not the kernel — and worse on fidelity, and their ±2-column footprint smears error across 4 % of a 96-dot axis. They add a dropdown entry and nothing else.
 
@@ -1314,22 +1321,22 @@ skrifa = "0.42"
 # optional dependency, which is exactly the case we care about.
 fontique = { version = "0.10", default-features = false, features = ["fontconfig-dlopen"] }
 
-# Import of user artwork. Every one of these codecs is pure Rust and all five
-# cost ZERO new crates once Slint lands: slint pulls image 0.25 with
-# png + jpeg, and resvg 0.47's raster-images feature already pulls gif 0.14
-# and image-webp 0.2.4. `bmp = []` has no dependencies at all. Only
-# avif-native (dep:dav1d) is C, and it stays off. NOTE: imageops::colorops::
-# dither is NOT used - it panics on any image narrower than 2 px.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp"] }
+# Import of user artwork, decoded once, at import, and stored in the label as
+# a grey PNG. Every codec here is pure Rust; avif-native (dep:dav1d) is C and
+# stays off. Pinned exactly: relabel-render works around this version's gaps in
+# its allocation limits (§4.6). NOTE: imageops::colorops::dither is NOT used -
+# it panics on any image narrower than 2 px.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp"] }
 
-# SVG import. The only format that reaches 96 dots with no resampling loss at
-# all, because resvg::render rasterises at the destination resolution. Already
-# in the graph for Slint's @image-url. Defaults off avoids system-fonts and
-# memmap-fonts; `text` is kept because a logo with a <text> element is common,
-# and relabel registers its own embedded fonts into usvg::Options::fontdb -
-# with Slint's system-fonts off that database is empty and SVG text renders as
-# nothing otherwise.
-resvg = { version = "0.47", default-features = false, features = ["text", "raster-images"] }
+# SVG import, rasterised at import only (§4.6). Default features off: no
+# `text` - SVG text is refused, and would bring a second, unhinted shaping
+# stack and a Zlib-only slotmap - and no `raster-images`, whose decoders ignore
+# image's limits. resvg turns tiny-skia's default features back on, so its PNG
+# codec is compiled in. With image and base64 this adds 18 crates to
+# Cargo.lock, every one MIT or offering it.
+resvg = { version = "=0.47.0", default-features = false }
+# The embedded PNG travels in the label's JSON as base64.
+base64 = { version = "0.22.1", default-features = false, features = ["std"] }
 
 # Code 128 only, and it is here rather than barcoders because barcoders makes
 # the caller hand-embed U+00C0/U+0181/U+0106 to select subsets A/B/C. Getting
@@ -1393,7 +1400,7 @@ One more thing to watch on the first GUI build: `png` reaches `flate2`, which de
 - **`femtovg`** — in the Slint tree, which is superficially attractive, but it is a GPU canvas over OpenGL or wgpu with no headless software path. It cannot rasterise a label without a window.
 - **A hand-rolled scanline filler** — already half-adopted: §3.2 hand-rolls every integer blit, because rects and modules need no library at all. What is *not* hand-rolled is glyph outline filling, which needs correct winding, curve flattening and a supersampled or analytic polygon rasteriser. tiny-skia's is already paid for by the Slint dependency and costs 216 µs per label.
 - **`cosmic-text` 0.19.0, `ab_glyph` 0.2.32, `fontdue` 0.9.4** — §4.2.
-- **`rxing` 0.9.2** — Apache-2.0 only, 24 transitive crates including `regex`, `chrono`, `num` and `iana-time-zone`, and an `image = "=0.25.8"` exact pin that would drag the workspace's `image` *below* the 0.25.10 in the lock. It is the only crate with UPC-E and PDF417 writers, and it is the only thing that can *decode* — which is the one argument that would change the calculus, if relabel ever wants a "verify this printed label from a webcam" flow.
+- **`rxing` 0.9.2** — Apache-2.0 only, 24 transitive crates including `regex`, `chrono`, `num` and `iana-time-zone`, and an `image = "=0.25.8"` exact pin - behind an optional feature, off in relabel's use, so it does not in fact hold `image` back. It is the only crate with UPC-E and PDF417 writers, and it is the only thing that can *decode* — which is the one argument that would change the calculus, if relabel ever wants a "verify this printed label from a webcam" flow.
 - **`bwipp-rs` 0.1.1** — the single candidate if MicroPDF417, Aztec, DotCode, Han Xin or GS1 composite is ever wanted. Both versions published on the same day by one author, 855 downloads, `image = ">=0.25, <0.25.10"` (which measurably forces the workspace's `image` down to 0.25.9), and it depends on `qrcode 0.14` and `datamatrix 0.3` anyway. Its `render_matrix` draws one square cell per matrix row, so its PDF417 comes out at 1× row height against ISO 15438's ≥ 3X, and its own Micro QR port fails on the same M3 codeword arithmetic that breaks `qrcode`.
 - **`pdf417` 0.2.1** — does not compile on stable at all: `#![feature(const_mut_refs)]` at `src/lib.rs:69`, `error[E0554]`. Last release 2023-10.
 - **`scanning` 2.1.0** — a published snapshot of `barcoders` master with both defects fixed and a real `upca.rs`. Useful only as proof the fixes are small; it is a hard fork republished under a new name by a third party, its declared repository 404s, both versions were published within one minute in May 2025, and it has under 1000 downloads.

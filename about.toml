@@ -120,6 +120,17 @@ path = "LICENSE-MIT"
 license = "MIT"
 checksum = "eef0c0b2cf6e14147a8362cfa2408a79220cc1ea22bab1a2e188b9cd1d2e0f0d"
 
+# siphasher, via usvg, has no licence text anywhere - not in its package, and
+# not in its repository at the commit it was published from - only COPYING,
+# which names its copyright holders and its two licences. That file is its
+# notice.
+[siphasher.clarify]
+license = "MIT OR Apache-2.0"
+[[siphasher.clarify.files]]
+path = "COPYING"
+license = "MIT"
+checksum = "c962ee4d1d05ddc138b202b2540219ebc57893fcf97b364852094a9a94ce1365"
+
 # The windows-rs crates ship `license-mit` and `license-apache-2.0`, names
 # cargo-about's file walker never visits, so each is named explicitly.
 [windows.clarify]

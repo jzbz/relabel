@@ -50,8 +50,9 @@ async-trait = "0.1"
 # CPU rasteriser, pure Rust, BSD-3-Clause. 0.12 rather than 0.11: 0.11.4 panics
 # in its anti-aliased hairline scan near a pixmap edge, and a barcode bar on a
 # 96-dot label is exactly that case - in a debug build, which is what
-# `cargo test` is. `default-features = false` drops the PNG codec it would
-# otherwise pull for its own tests; `image` handles files.
+# `cargo test` is. `default-features = false` is what relabel asks for, but
+# resvg asks for tiny-skia's defaults and features unify, so its PNG codec is
+# compiled in anyway - the same `png` crate `image` already brings.
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 
 # Code 128 with the character-set switching done for us, and done well: its
@@ -92,6 +93,26 @@ parley = { version = "0.10", default-features = false, features = ["std"] }
 # to keep a one-to-two-dot stem the same width across a glyph. See
 # relabel-render's text module. The version parley 0.10 resolves to.
 skrifa = "0.42.1"
+
+# Raster artwork: decoding what a user imports, and the PNG an image element
+# embeds. Pure Rust for every format enabled here; AVIF (a C decoder), TIFF
+# and the rest stay off. Pinned exactly, because relabel-render works around
+# this version's gaps in its allocation limits.
+image = { version = "=0.25.10", default-features = false, features = [
+    "png",
+    "jpeg",
+    "bmp",
+    "gif",
+    "webp",
+] }
+# SVG artwork, rasterised when it is imported and never when a label is drawn.
+# Default features off: no `text` - SVG text is refused, and would bring a
+# second shaping stack and a Zlib-only crate - and no `raster-images`, whose
+# decoders ignore `image`'s limits. Pinned exactly: usvg's API changes between
+# releases.
+resvg = { version = "=0.47.0", default-features = false }
+# The embedded PNG travels in the label's JSON as base64 text.
+base64 = { version = "0.22.1", default-features = false, features = ["std"] }
 
 # Test-only decoders, so a rendered symbol is read back by code that shares
 # nothing with the encoder that made it. rqrr is a port of quirc. rxing is a

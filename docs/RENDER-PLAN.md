@@ -34,8 +34,9 @@ qrcode      = { version = "0.14.1", default-features = false }
 code128     = "0.2.1"
 barcoders   = { version = "2.0.0", default-features = false, features = ["std"] }
 datamatrix  = "0.3.3"
-image       = { version = "0.25", default-features = false, features = ["png","jpeg","bmp","gif","webp"] }
-resvg       = { version = "0.47", default-features = false, features = ["text","raster-images"] }
+image       = { version = "=0.25.10", default-features = false, features = ["png","jpeg","bmp","gif","webp"] }
+resvg       = { version = "=0.47.0", default-features = false }
+base64      = { version = "0.22.1", default-features = false, features = ["std"] }
 ```
 
 Never at least `tiny-skia` 0.12: 0.11.4 panics on `Pixmap::new(100,10)` + a 1.5-dot AA `fill_rect` near the edge (`scan/hairline_aa.rs:124`), which is a barcode bar on a 96-dot label, in a debug build, which is what `cargo test` is.
@@ -200,6 +201,8 @@ SVG through `resvg` 0.47 rendered straight into the label pixmap with a fitting 
 **Size.** ~450 lines. Two days.
 
 **Print-gated.** Nothing new beyond P2/P3.
+
+**As built.** The element stores `path` (kept under its v1 name), `png` - base64 of an 8-bit grey PNG sized for the frame at import - `fit`, and the `halftone` and `threshold` import chose; no `origin` and no zip. Import is the only place a file is decoded, under side, pixel and memory limits it enforces itself, because `image`'s `into_decoder()` skips the allocation check `decode()` makes. SVG is rendered at import only, without `text` or `raster-images`, with anything that could abort resvg refused. The filter note above is corrected in RENDER-DESIGN §4.6: at 5× Triangle is a tent, not an area average, so the resize test uses the same tent in double precision. Resampled line art gets threshold 187. The CLI prints files through the same import, so a transparent PNG prints white and a mis-named JPEG prints at all; it also prints WebP and SVG, sizing an SVG's millimetres at the model's pitch. The same change moves it from Rec.709 to Rec.601 and from a gamma-space Lanczos resize to a linear-light triangle one, applies EXIF orientation, and refuses files over 64 MiB or 40 megapixels that it used to print. At its default threshold of 128, resampled line art now thins where it used to darken, and it says so, suggesting 187. The SVG goldens run resvg and tiny-skia's floating-point geometry at import; they are verified on x86_64 Linux only. The step adds 18 crates to `Cargo.lock`, all MIT or offering it; `rxing`'s `image` pin is optional and off, so it does not hold `image` back.
 
 ---
 

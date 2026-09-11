@@ -9,12 +9,18 @@
 //! so that when a photograph is dithered its error cannot travel into the
 //! element beside it. See [`crate::halftone`].
 
+use crate::artwork::{self, ArtworkError};
 use crate::barcode::{self, BarcodeError, MIN_MODULE_DOTS, Symbology};
 use crate::canvas::Canvas as Surface;
 use crate::code2d::{self, CodeError, ModuleGrid};
-use crate::document::{BarcodeEl, Common, Element, Ink, Label, LineEl, RectDots, RectEl, Rot};
+use crate::coverage::Coverage;
+use crate::document::{
+    BarcodeEl, Common, Element, ImageEl, ImageFit, ImageHalftone, Ink, Label, LineEl, RectDots,
+    RectEl, Rot,
+};
 use crate::error::RenderError;
 use crate::greymap::GreyMap;
+use crate::halftone::{BinariseOpts, Zone, binarise};
 use crate::target::Target;
 use crate::text::{self, TextClip, TextEngine, TextError, TextStyle};
 use relabel_proto::PrintDirection;
@@ -23,6 +29,10 @@ use relabel_proto::PrintDirection;
 /// last id - on a label a few hundred dots long that is not a realistic count,
 /// and sharing only matters where one of the sharers is a photograph.
 const LAST_ZONE: u8 = 254;
+
+/// An image drawn at a size other than the one it was imported for: its id,
+/// the stored size, and the size drawn.
+pub type ImageResampled = (u32, (u32, u32), (u32, u32));
 
 /// What happened while drawing, beyond the pixels.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -46,6 +56,17 @@ pub struct RenderReport {
     /// Text drawn, but not all of it: cut by its own frame. Drawn but not as
     /// asked, the same kind of entry as `rotation_approximated`.
     pub text_clipped: Vec<(u32, TextClip)>,
+    /// Artwork drawn at a size other than the one it was imported for, by id,
+    /// with the stored size and the size drawn: its frame has changed, or the
+    /// label is drawn for a printer whose head runs the other way. Importing
+    /// it again for the frame puts it right.
+    pub image_resampled: Vec<ImageResampled>,
+    /// Artwork placed one pixel to one dot that is larger than its frame, and
+    /// cropped.
+    pub image_clipped: Vec<u32>,
+    /// Images whose own halftone or threshold went unused: the label has more
+    /// elements than zone ids, and they share the last one.
+    pub zone_shared: Vec<u32>,
 }
 
 impl RenderReport {
@@ -57,6 +78,9 @@ impl RenderReport {
             && self.rotation_approximated.is_empty()
             && self.failed.is_empty()
             && self.text_clipped.is_empty()
+            && self.image_resampled.is_empty()
+            && self.image_clipped.is_empty()
+            && self.zone_shared.is_empty()
     }
 }
 
@@ -76,8 +100,8 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
     // Built on the first text element, and only then: a few microseconds, and
     // no state outlives the render.
     let mut engine: Option<TextEngine> = None;
-    let mut next_zone: u8 = 1;
-    for el in label.drawable() {
+    report.zone_shared = zone_plan(label, Zone::PAGE).1;
+    for (zone, el) in zone_ids(label) {
         let c = el.common();
         // The frame as drawn: a quarter turn swaps its sides, and checking the
         // stored frame instead let a turned symbol run off the canvas with a
@@ -88,8 +112,6 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
         if !c.rot.is_exact() {
             report.rotation_approximated.push(c.id);
         }
-        let zone = next_zone;
-        next_zone = next_zone.saturating_add(1).min(LAST_ZONE);
         match el {
             Element::Rect(e) => draw_rect(&mut surface, target, e, zone),
             Element::Line(e) => draw_line(&mut surface, target, e, zone),
@@ -124,7 +146,11 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
                 Ok(_) => {}
                 Err(err) => report.failed.push((c.id, err.to_string())),
             },
-            other => report.unimplemented.push(other.kind()),
+            Element::Image(e) => {
+                if let Err(err) = draw_image(&mut surface, target, e, zone, &mut report) {
+                    report.failed.push((c.id, err.to_string()));
+                }
+            }
         }
     }
 
@@ -246,13 +272,16 @@ fn rotated(f: &RectDots, rot: Rot) -> RectDots {
     }
 }
 
-/// Convenience for the common case of not caring about the report.
+/// Draw a label and reduce it to one bit, each image in its own zone with
+/// its own halftone and threshold, and the page thresholded at 128. For the
+/// common case of not caring about the report.
 pub fn rasterise_plane(
     label: &Label,
     target: &Target,
 ) -> Result<relabel_proto::BitPlane, RenderError> {
     let (grey, _) = rasterise(label, target)?;
-    Ok(grey.threshold(128))
+    let zones = zone_table(label, Zone::PAGE);
+    Ok(binarise(&grey, &BinariseOpts::with_zones(&zones)))
 }
 
 /// Lay a linear barcode into its frame.
@@ -419,9 +448,7 @@ fn draw_text(
     engine: &mut Option<TextEngine>,
 ) -> Result<TextClip, TextError> {
     let c = &e.common;
-    let f = rotated(&c.frame, c.rot);
-    let (cw, ch) = t.extent(f.feed_len, f.head_len);
-    if cw <= 0 || ch <= 0 {
+    let Some((w, h)) = local_size(c, t) else {
         // Nothing is lost when there is nothing to draw; otherwise the text
         // would vanish with a clean report.
         return if e.text.chars().all(char::is_whitespace) {
@@ -429,9 +456,7 @@ fn draw_text(
         } else {
             Err(TextError::BadParam("the text frame has no area"))
         };
-    }
-    let quarter = matches!(c.rot.quantised(), Rot::D90 | Rot::D270);
-    let (w, h) = if quarter { (ch, cw) } else { (cw, ch) };
+    };
     let eng = match engine {
         Some(eng) => eng,
         None => engine.insert(TextEngine::new()?),
@@ -444,11 +469,175 @@ fn draw_text(
         align: e.align.clone(),
         raster: e.raster.clone(),
     };
-    // A local raster may be as large as the canvas it lands on: a frame that
-    // fits the label is never refused.
-    let limit = (u64::from(t.width_px) * u64::from(t.height_px)).max(text::MAX_LOCAL_DOTS);
-    let local = eng.render_local(&e.text, &style, w as u32, h as u32, limit)?;
+    let local = eng.render_local(&e.text, &style, w, h, local_limit(t))?;
+    let f = rotated(&c.frame, c.rot);
     let (x, y) = t.place(f.feed, f.head);
     s.blend_coverage(x, y, &local.cov.turned(c.rot), c.ink, zone);
     Ok(local.clip)
+}
+
+/// The frame an element is drawn in, as its upright content sees it: measured
+/// on the canvas, then turned back by the element's rotation, so its width is
+/// the reading width whatever the turn and whichever way the printer's head
+/// runs. `None` when it has no area.
+///
+/// Public because import sizes artwork for exactly this frame, and the editor
+/// has to ask for it the way the rasteriser does.
+pub fn local_size(c: &Common, t: &Target) -> Option<(u32, u32)> {
+    let f = rotated(&c.frame, c.rot);
+    let (cw, ch) = t.extent(f.feed_len, f.head_len);
+    if cw <= 0 || ch <= 0 {
+        return None;
+    }
+    let quarter = matches!(c.rot.quantised(), Rot::D90 | Rot::D270);
+    let (w, h) = if quarter { (ch, cw) } else { (cw, ch) };
+    Some((w as u32, h as u32))
+}
+
+/// The most dots a local raster may hold: as many as the canvas it lands on,
+/// and never fewer than text's floor. A frame that fits the label is never
+/// refused for its area, while one billions of dots on a side - it came from a
+/// file - is. Sides are capped separately, at [`text::MAX_SIDE`].
+fn local_limit(t: &Target) -> u64 {
+    (u64::from(t.width_px) * u64::from(t.height_px)).max(text::MAX_LOCAL_DOTS)
+}
+
+/// Unpack an image element's embedded artwork and lay it into its frame.
+///
+/// The artwork was sized for this frame when it was imported, so this is
+/// normally a straight copy. When the frame has changed since - or the label
+/// is drawn for a printer whose head runs the other way - it is resampled
+/// nearest-neighbour, in integers, and reported, because the fix is to import
+/// it again. Placed as text is: upright in a local buffer, turned by index,
+/// then blended, so its white leaves whatever lies beneath alone. Its zone is
+/// its whole box, less the dots another element already holds where the
+/// artwork is white or nearly: see [`Surface::blend_artwork`].
+fn draw_image(
+    s: &mut Surface,
+    t: &Target,
+    e: &ImageEl,
+    zone: u8,
+    report: &mut RenderReport,
+) -> Result<(), ArtworkError> {
+    let c = &e.common;
+    if let ImageFit::Unknown(v) = &e.fit {
+        return Err(ArtworkError::UnknownValue {
+            what: "the fit",
+            value: v.clone(),
+        });
+    }
+    if let Some(ImageHalftone::Unknown(v)) = &e.halftone {
+        return Err(ArtworkError::UnknownValue {
+            what: "the halftone",
+            value: v.clone(),
+        });
+    }
+    if e.png.is_empty() {
+        return Err(ArtworkError::NoArtwork {
+            path: e.path.clone(),
+        });
+    }
+    let (w, h) = local_size(c, t).ok_or(ArtworkError::EmptyFrame)?;
+    let limit = local_limit(t);
+    if w > text::MAX_SIDE || h > text::MAX_SIDE || u64::from(w) * u64::from(h) > limit {
+        return Err(ArtworkError::FrameTooLarge { w, h });
+    }
+    let art = artwork::from_stored(&e.png, limit)?;
+    let p = artwork::fit_box((art.w, art.h), (w, h), &e.fit)
+        .ok_or(ArtworkError::FrameTooLarge { w, h })?;
+    if (p.bw, p.bh) != (art.w, art.h) {
+        report
+            .image_resampled
+            .push((c.id, (art.w, art.h), (p.bw, p.bh)));
+    }
+    if e.fit == ImageFit::Dots && (art.w > w || art.h > h) {
+        report.image_clipped.push(c.id);
+    }
+
+    // Each dot of the frame inside the box takes the stored pixel under its
+    // centre. Stored sides are at most 8191 and box sides under 2^32, so the
+    // products stay far inside u64.
+    let mut cov = Coverage::new(w, h);
+    let mut claim = Coverage::new(w, h);
+    let (sw, sh) = (u64::from(art.w), u64::from(art.h));
+    let (bw, bh) = (i64::from(p.bw), i64::from(p.bh));
+    for y in 0..h {
+        let by = i64::from(y) - p.oy;
+        if by < 0 || by >= bh {
+            continue;
+        }
+        let sy = ((2 * by as u64 + 1) * sh) / (2 * bh as u64);
+        for x in 0..w {
+            let bx = i64::from(x) - p.ox;
+            if bx < 0 || bx >= bw {
+                continue;
+            }
+            let sx = ((2 * bx as u64 + 1) * sw) / (2 * bw as u64);
+            let i = y as usize * w as usize + x as usize;
+            cov.data[i] = 255 - art.px[(sy * sw + sx) as usize];
+            claim.data[i] = 255;
+        }
+    }
+    let f = rotated(&c.frame, c.rot);
+    let (x, y) = t.place(f.feed, f.head);
+    s.blend_artwork(x, y, &cov.turned(c.rot), &claim.turned(c.rot), c.ink, zone);
+    Ok(())
+}
+
+/// Each drawable element with the zone id it paints, in z-order: 1 upwards,
+/// the elements past the 254th all sharing the last id.
+fn zone_ids(label: &Label) -> impl Iterator<Item = (u8, &Element)> {
+    label.drawable().enumerate().map(|(i, el)| {
+        let id = i.saturating_add(1).min(usize::from(LAST_ZONE));
+        (id as u8, el)
+    })
+}
+
+/// The binariser's settings for every zone a label paints: entry 0 is `page`,
+/// and each image with its own halftone or threshold has them in its entry.
+///
+/// For [`binarise`], with the grey map [`rasterise`] made from the same label,
+/// as [`rasterise_plane`] does.
+pub fn zone_table(label: &Label, page: Zone) -> Vec<Zone> {
+    zone_plan(label, page).0
+}
+
+/// The zone table, and the images whose override could not be honoured
+/// because they share the last zone id with other elements - which then gets
+/// the page's settings, since it cannot have all of theirs.
+fn zone_plan(label: &Label, page: Zone) -> (Vec<Zone>, Vec<u32>) {
+    let mut zones = vec![page];
+    let (mut on_last, mut overridden) = (0usize, Vec::new());
+    for (id, el) in zone_ids(label) {
+        let (zone, overrides) = match el {
+            Element::Image(e) => (
+                Zone {
+                    halftone: e
+                        .halftone
+                        .as_ref()
+                        .and_then(ImageHalftone::known)
+                        .unwrap_or(page.halftone),
+                    threshold: e.threshold.unwrap_or(page.threshold),
+                    ..page
+                },
+                e.halftone.is_some() || e.threshold.is_some(),
+            ),
+            _ => (page, false),
+        };
+        if usize::from(id) == zones.len() {
+            zones.push(zone);
+        }
+        if id == LAST_ZONE {
+            on_last += 1;
+            if overrides {
+                overridden.push(el.common().id);
+            }
+        }
+    }
+    if on_last > 1 {
+        zones[usize::from(LAST_ZONE)] = page;
+        (zones, overridden)
+    } else {
+        (zones, Vec::new())
+    }
 }

@@ -219,19 +219,32 @@ fn hidden_elements_are_not_drawn() {
     assert!(g.px.iter().all(|p| *p == 255));
 }
 
-/// An element type that is designed but not built yet is reported, not
-/// silently skipped.
+/// Every element in the frozen kitchen sink is drawn - it inks its frame -
+/// or fails with a reason of its own. None is silently skipped.
 #[test]
-fn unimplemented_elements_are_reported() {
+fn every_known_kind_is_drawn() {
     let t = Target::new(320, 96, 203).unwrap();
-    let mut l = label();
-    l.elements.push(ElementOrRaw::Known(Element::Image(ImageEl {
-        common: Common::new(1, RectDots::default()),
-        path: "logo.png".into(),
-    })));
-    let (_, report) = rasterise(&l, &t).unwrap();
-    assert_eq!(report.unimplemented, vec!["image"]);
-    assert!(!report.is_clean());
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/corpus/v1/kitchen-sink.relabel"),
+    )
+    .unwrap();
+    let l = Label::from_json(&text).unwrap();
+    for el in l.drawable() {
+        let mut one = l.clone();
+        one.elements = vec![ElementOrRaw::Known(el.clone())];
+        let (g, report) = rasterise(&one, &t).unwrap();
+        let inked = g.px.iter().any(|&p| p < 255);
+        let failed = report
+            .failed
+            .iter()
+            .any(|(id, why)| *id == el.common().id && !why.is_empty());
+        assert!(
+            inked != failed,
+            "{}: inked {inked}, failed {failed}: {report:?}",
+            el.kind()
+        );
+    }
 }
 
 /// A placeholder in text is stored as written, so it survives a save and is
@@ -590,6 +603,10 @@ fn each_element_kind_lists_the_keys_it_writes() {
         Element::Image(ImageEl {
             common: Common::new(5, f),
             path: "a.png".into(),
+            png: "iVBORw0KGgo=".into(),
+            fit: ImageFit::Contain,
+            halftone: Some(ImageHalftone::Threshold),
+            threshold: Some(128),
         }),
         Element::Rect(RectEl {
             common: Common::new(6, f),
@@ -636,4 +653,83 @@ fn each_element_kind_lists_the_keys_it_writes() {
     let mut l = label();
     l.elements.push(ElementOrRaw::Known(Element::Text(t)));
     assert!(matches!(l.to_json(), Err(LoadError::ReservedKey(k)) if k == "raster"));
+}
+
+/// The image element as a build from before artwork was embedded knew it: a
+/// path, and nothing else.
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+struct OldImage {
+    #[serde(flatten)]
+    common: Common,
+    path: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum OldElement {
+    Image(OldImage),
+}
+
+/// An older build reading a newer image element keeps it: `path` is there, so
+/// the element loads, and the artwork and its settings ride through a save in
+/// the unknown-field map.
+#[test]
+fn an_older_build_keeps_a_newer_image() {
+    let new = Element::Image(ImageEl {
+        common: Common::new(1, RectDots::default()),
+        path: String::new(),
+        png: "iVBORw0KGgo=".into(),
+        fit: ImageFit::Cover,
+        halftone: Some(ImageHalftone::FloydSteinberg),
+        threshold: Some(187),
+    });
+    let old: OldElement = serde_json::from_value(serde_json::to_value(&new).unwrap()).unwrap();
+    let OldElement::Image(o) = &old;
+    for key in ["png", "fit", "halftone", "threshold"] {
+        assert!(o.common.unknown.contains_key(key), "{key}");
+    }
+    let back: Element = serde_json::from_value(serde_json::to_value(&old).unwrap()).unwrap();
+    assert_eq!(back, new);
+}
+
+/// `path` is written even when empty: an older build requires it, and
+/// refuses the whole label without it.
+#[test]
+fn an_images_path_is_always_written() {
+    let e = Element::Image(ImageEl {
+        common: Common::new(1, RectDots::default()),
+        path: String::new(),
+        png: String::new(),
+        fit: ImageFit::default(),
+        halftone: None,
+        threshold: None,
+    });
+    let v = serde_json::to_value(&e).unwrap();
+    assert_eq!(v["path"], "");
+    assert_eq!(v["fit"], "contain", "the fit is always written");
+    assert!(v.get("png").is_none() && v.get("halftone").is_none());
+}
+
+/// The names in the file are the format: each fit and halftone is written as
+/// exactly these strings, and a rename would turn this build's labels into
+/// unknown values for the next.
+#[test]
+fn image_value_names_are_the_format() {
+    for (fit, name) in [
+        (ImageFit::Contain, "contain"),
+        (ImageFit::Cover, "cover"),
+        (ImageFit::Stretch, "stretch"),
+        (ImageFit::Dots, "dots"),
+    ] {
+        assert_eq!(serde_json::to_value(&fit).unwrap(), name);
+    }
+    for (h, name) in [
+        (ImageHalftone::Threshold, "threshold"),
+        (ImageHalftone::FloydSteinberg, "floyd_steinberg"),
+        (ImageHalftone::Atkinson, "atkinson"),
+        (ImageHalftone::Sierra3, "sierra3"),
+        (ImageHalftone::Bayer8, "bayer8"),
+    ] {
+        assert_eq!(serde_json::to_value(&h).unwrap(), name);
+    }
 }
