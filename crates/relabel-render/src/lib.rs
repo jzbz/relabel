@@ -22,6 +22,7 @@ pub mod error;
 pub mod greymap;
 pub mod halftone;
 pub mod preflight;
+pub mod preview;
 pub mod rasterise;
 pub mod srgb;
 mod svg;

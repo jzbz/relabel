@@ -1220,15 +1220,17 @@ There is **no greyscale pixel buffer in Slint**. `SharedImageBuffer` has exactly
 relabel-render supplies the expansion with no toolkit type in the signature, so the GUI owns the two lines that touch `slint`:
 
 ```rust
-/// Expand a 1-bit plane into RGB8 at an integer zoom, writing into a caller-
-/// supplied buffer. `out.len()` must be `(w*zoom) * (h*zoom) * 3`.
-pub fn plane_to_rgb8(plane: &BitPlane, zoom: u32, out: &mut [u8]);
+/// Draw a 1-bit plane into RGB8 at a whole-number scale, into a buffer the
+/// caller owns and sized from `Extent`. A short buffer is filled as far as it
+/// reaches rather than refused.
+pub fn plane_to_rgb8(plane: &BitPlane, scale: Scale, out: &mut [u8]);
 
-/// Same, for the pre-threshold ink map: 255 - coverage, so ink reads dark.
-pub fn ink_to_rgb8(ink: &InkMap, zoom: u32, out: &mut [u8]);
+/// Same, for the pre-threshold grey map, whose byte is already 0 for ink and
+/// 255 for paper and is copied through unchanged.
+pub fn grey_to_rgb8(grey: &GreyMap, scale: Scale, out: &mut [u8]);
 ```
 
-Measured cost (release build): a 320 × 96 plane expands in 0.030 ms naively and 0.009 ms with a 256-entry byte-triple LUT; at 4× zoom, building one output row and `copy_from_slice`-ing it *zoom*−1 times, 0.094 ms; at 8×, 0.209 ms. The largest page in the registry, B4 Pro at 1276 × 4134, is 3.45 ms naive and 1.00 ms with the LUT. `DESIGN.md` §5's "about 0.1 ms" for 384 × 320 is right.
+Measured cost (release build, worst of three runs): a 320 × 96 plane expands in 12 µs at 1:1 and 69 µs at 8×, against 62 µs and 117 µs for the same rows built a dot at a time; the 256-entry byte-triple table is what buys that, and it is rebuilt on every call for about 1 µs. The largest page by area in the registry, B4 Pro at 1229 × 4134 - not the 1276 this paragraph used to give - is 1.2 ms through the table and 7.3 ms a dot at a time, so the 3.45 ms claimed here was both optimistic and inconsistent with its own 0.030 ms at 320 × 96, which scales to about 5 ms. Reducing that page to fit a 900 × 700 pane is 1.0 ms. `DESIGN.md` §5's "about 0.1 ms" for 384 × 320 is right, and conservative.
 
 **The expansion is never the bottleneck.** A full 320 × 96 label — 40 hard modules, 3 rules, 120 anti-aliased cubic glyph paths, plus the threshold pass — rasterises in **216 µs** in release. `DESIGN.md` §5's hedge that a re-render on every keystroke "will not stay interactive" is true at 1229 dots wide and false at 96; drop it for the small-label case and keep it as a note for the wide models. Debounce exists for the rasteriser at 1229 dots, not for the preview.
 
@@ -1244,8 +1246,8 @@ Three facts about Slint that change how this is wired:
 
 `ImageFit::Preserve` preserves size *in logical pixels* and is "still scaled by the scale factor" (`enums.rs:281-284`). At 1.25× or 1.5× fractional scaling — the Windows and GNOME default — nearest-neighbour then gives some printer dots one physical pixel and their neighbours two. An operator judging a dither would be looking at an artefact of the display, not of the label. Two fixes, and both are used:
 
-1. **Size in physical pixels.** Slint has a `phx` unit (`expression_tree.rs:617`). `width: (plane-w * zoom) * 1phx; height: (plane-h * zoom) * 1phx; image-fit: fill;` makes source-to-target an exact integer ratio in physical pixels.
-2. **Do the zoom in Rust**, so source size equals target size and no filtering runs at all. Cap the expanded buffer — B4 Pro at 2× is 61 MB of RGB8 — and fall back to renderer-side `image-rendering: pixelated` above the cap.
+1. **Size in physical pixels.** Slint has a `phx` unit (`expression_tree.rs:617`). `width: px-w * 1phx; height: px-h * 1phx; image-fit: fill;` makes source-to-target an exact integer ratio in physical pixels, taking both numbers from one `preview::Extent` - which is the same figure as `plane-w * zoom` when magnifying and the correct one when reducing.
+2. **Do the scaling in Rust**, so source size equals target size and no filtering runs at all - in *both* directions. Nearest-neighbour is worse minifying than magnifying, and every model but the 96-dot family needs minifying: at 1/6 the renderer would sample one dot in thirty-six. The expanded buffer is capped at `preview::MAX_BYTES`, 64 MiB, which holds every page in the registry at two pixels to the dot - B4 Pro at 2× is 58.1 MiB, and the ET10, whose 1600-dot head is the widest, stops at a 200 mm label and so at 29.3 - and above the cap the answer is a smaller scale rather than a renderer-side fallback. `image-rendering: pixelated` stays on the element as a belt for the fractional-position case below, not as a scaling strategy.
 
 `image-rendering` is real and works where it matters: `ImageItem` has `in property <ImageRendering> image-rendering` (`i-slint-compiler-1.17.1/builtins.slint:373`) with `Smooth | Pixelated` (`i-slint-common-1.17.1/enums.rs:311-316`), and femtovg maps `Pixelated` to `femtovg::ImageFlags::NEAREST` (`images.rs:333-336`). The software renderer ignores the property entirely but its sampler already discards the fractional part (`draw_functions.rs:196-208`), so it is nearest either way — pixelated is correct on both renderers relabel's feature set enables.
 
@@ -1529,9 +1531,13 @@ pub fn dm_grid(data: &[u8], symbol: Option<DmSymbol>)
     -> Result<ModuleGrid, RenderError>;
 
 // ─── preview, with no toolkit type in the signature ──────────────────────────
-pub fn plane_to_rgb8(plane: &BitPlane, zoom: u32, out: &mut [u8]);
-pub fn ink_to_rgb8(ink: &InkMap, zoom: u32, out: &mut [u8]);
-pub fn rgb8_len(w: u16, h: u16, zoom: u32) -> usize;
+pub const MAX_BYTES: usize;                     // 64 MiB
+pub struct Scale;                              // up(n) / down(n) / for_pane(..)
+pub struct Extent { pub px_w: u32, pub px_h: u32, pub len: usize }
+pub fn plane_to_rgb8(plane: &BitPlane, scale: Scale, out: &mut [u8]);
+pub fn grey_to_rgb8(grey: &GreyMap, scale: Scale, out: &mut [u8]);
+pub fn plane_stamp(plane: &BitPlane, scale: Scale) -> u64;
+pub fn grey_stamp(grey: &GreyMap, scale: Scale) -> u64;
 ```
 
 Sizing the canvas from a model is the caller's job and goes through proto's own helpers, so the arithmetic exists once:
