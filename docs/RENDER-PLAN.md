@@ -260,7 +260,7 @@ The tail is real paper to keep clear — niimblue's `getLabelBounds()` subtracts
 
 ---
 
-## 11. niimblue import (optional, feature-gated)
+## 11. niimblue import (abandoned)
 
 **Delivers.** One-way, best-effort `import_niimblue(&str) -> (Label, Vec<ImportWarning>)` behind a `niimblue-import` feature. Read `canvas.objects` as `serde_json::Value`, whitelist `type ∈ {textbox, i-text, text, rect, line, circle, image, QRCode, Barcode}`, compute effective bounds as `left + width*scaleX`, snap `angle` to the nearest 90°, drop `skewX`/`skewY`/`styles[]`/`path` with a warning. Separately import `LabelPreset` wholesale as a media-preset list — a flat struct, an hour's work, and it partly closes DESIGN-GAPS #7.
 
@@ -271,6 +271,8 @@ The tail is real paper to keep clear — niimblue's `getLabelBounds()` subtracts
 **Tested by.** A corpus of real exported templates, each asserting the warning list as well as the geometry.
 
 **Size.** ~500 lines. One to two days.
+
+**Not built, and why.** Abandoned after a real exported template was obtained from the running app and read. Two of the three rules Delivers states above are wrong, and both fail silently. The export is fabric **7.4.0**, whose `type` strings are capitalised class names - `"Textbox"`, `"Barcode"` - so of the nine types whitelisted above only `Barcode` would ever match and every other object would be dropped without a word. And `originX`/`originY` vary **per object**: the text box in the sample is `center`/`center` where the barcode is `left`/`top`, so `left + width*scaleX` reads a text box's centre as its left edge and misplaces it by half its width - 38 dots of a 240-dot label in that file. An importer written to this section would have placed most objects wrongly and dropped the rest, and its tests would have passed, because fixtures written from the same assumptions agree with them. What the export does confirm: a fabric coordinate is exactly one printer dot (a 30 x 12 mm label at 203 dpi exports as 240 x 96), and `label` carries `printDirection`, `size`, `shape`, `split`, `splitParts`, `tailPos`, `tailLength` and `mirror` as `DESIGN-GAPS.md` #8 describes them. The export and a full design worked up against the old assumptions are kept outside the repository; reviving this step means rewriting the object mapping against a real file first, and the honest test corpus is real exports rather than fixtures this project writes for itself. The step earned its keep anyway: designing it is what found the barcode axis defect fixed in `rasterise`, which had a linear barcode running down the canvas on the 53 registry models whose head runs across it.
 
 ---
 
