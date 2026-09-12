@@ -1,0 +1,16 @@
+{
+  "format": "relabel-label",
+  "version": 1,
+  "meta": { "title": "corpus: a fold and a tail across the head" },
+  "media": {
+    "feed_tenths_mm": 400,
+    "head_tenths_mm": 120,
+    "tail": { "at_start": false, "len_dots": 16, "axis": "head" },
+    "fold": { "at_dots": 40, "parts": 2, "axis": "head" }
+  },
+  "canvas": { "feed": 320, "head": 96, "dpmm": { "num": 8, "den": 1 } },
+  "elements": [
+    { "type": "rect", "id": 1, "frame": { "feed": 8, "head": 8, "feed_len": 40, "head_len": 8 } }
+  ],
+  "repeat": "copy"
+}

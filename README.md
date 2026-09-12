@@ -35,7 +35,7 @@ Bluetooth-first and MIT at once.
 | --- | --- |
 | `crates/relabel-proto` | Frame codec, command set, payload builders and parsers, image encoder, print-flow selection, model registry. Bytes in, bytes out — no I/O, no async, no GUI types, one dependency. |
 | `crates/relabel-core` | Transports (BLE, and an in-memory printer), the session that owns reassembly and request/response matching, the print-job engine, and the CSV reader for variable data. |
-| `crates/relabel-render` | The label document format, and the rasteriser that turns it into dots: whole-dot geometry, halftoning with per-element zones, text, images and SVG, linear barcodes, QR and DataMatrix, and a calibration ruler. Variable data, the preflight that checks every row before a run, and the pixels a preview pane draws. No device, no clock, no async, no GUI types. |
+| `crates/relabel-render` | The label document format, and the rasteriser that turns it into dots: whole-dot geometry, halftoning with per-element zones, text, images and SVG, linear barcodes, QR and DataMatrix, and a calibration ruler. Variable data, the preflight that checks every row before a run, fold-over and cable-flag geometry, and the pixels a preview pane draws. No device, no clock, no async, no GUI types. |
 | `crates/relabel-cli` | Headless driver for hardware bring-up. Not a shipped binary. |
 
 The GUI, `relabel-gui`, is designed but not yet written.

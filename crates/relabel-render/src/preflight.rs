@@ -22,6 +22,7 @@ use crate::bind::{BindError, Bindings, Table, TimesError, bind, parse_times};
 use crate::datetime::CivilTime;
 use crate::document::{DmSize, Element, ElementId, ElementOrRaw, Label};
 use crate::error::RenderError;
+use crate::media::{self, GeometryFault, Keepout};
 use crate::rasterise::{Failure, rasterise};
 use crate::target::Target;
 use crate::template::{is_js_space, placeholders};
@@ -122,6 +123,19 @@ pub enum IssueKind {
     ZoneShared,
     Unimplemented(&'static str),
     Unrecognised(String),
+    /// Media geometry this build read and cannot act on: a shape, tail, fold or
+    /// repeat from a later version, or one whose numbers do not work. Wraps its
+    /// own error, the way `Bind` and `BadTimes` already do, so the numbers reach
+    /// the operator intact.
+    MediaGeometry(GeometryFault),
+    /// The element is on the canvas and still cannot put a readable mark there.
+    Keepout(Keepout),
+    /// The label was drawn for another printer's head. Advisory only: the canvas
+    /// has been re-fitted, and `TargetMismatch` is what refuses one that has not.
+    AuthoredElsewhere {
+        head_px: u16,
+        dpi: u16,
+    },
 }
 
 impl fmt::Display for IssueKind {
@@ -181,6 +195,23 @@ impl fmt::Display for IssueKind {
             IssueKind::Unrecognised(kind) => write!(
                 f,
                 "a {kind} element was written by a later version, and cannot be drawn"
+            ),
+            IssueKind::MediaGeometry(e) => write!(f, "{e}"),
+            IssueKind::Keepout(Keepout::Repeated) => f.write_str(
+                "the element is in a panel the fold repeats, so a copy of the first panel prints over it",
+            ),
+            IssueKind::Keepout(Keepout::Tail) => f.write_str(
+                "part of the element is on the tail, which is paper the fold hides: it prints, but not on the face of the label",
+            ),
+            IssueKind::Keepout(Keepout::Inset) => f.write_str(
+                "part of the element is in the margin the print head cannot reach",
+            ),
+            IssueKind::Keepout(Keepout::Shape) => {
+                f.write_str("part of the element is outside the die-cut, where there is no paper")
+            }
+            IssueKind::AuthoredElsewhere { head_px, dpi } => write!(
+                f,
+                "the label was drawn for a {head_px}-dot head at {dpi} dpi, and has been re-fitted to this one"
             ),
         }
     }
@@ -274,6 +305,25 @@ pub fn preflight(
                 target: axes,
             },
             Severity::Refuse,
+        );
+    }
+    // The media's own geometry: read straight off the document, so none of it
+    // needs a render and none of it is said twice however many rows print.
+    for fault in media::faults(label) {
+        let severity = fault.severity();
+        raise(None, None, IssueKind::MediaGeometry(fault), severity);
+    }
+    if let Some(a) = &label.meta.authored_for
+        && (a.head_px != target.head_axis() || a.dpi != target.dpi)
+    {
+        raise(
+            None,
+            None,
+            IssueKind::AuthoredElsewhere {
+                head_px: a.head_px,
+                dpi: a.dpi,
+            },
+            Severity::Note,
         );
     }
     let mut seen = BTreeSet::new();
@@ -478,6 +528,13 @@ pub fn preflight(
                     Severity::Warn
                 };
                 raise(None, Some(id), IssueKind::OffCanvas, severity);
+            }
+            for (id, k) in r.keepout {
+                // The same rule `OffCanvas` uses, and the table is `Keepout`'s
+                // own: a symbol whose dots the label will not carry refuses the
+                // run, and the tail and the inset only ever warn.
+                let severity = k.severity(symbols.contains(&id));
+                raise(None, Some(id), IssueKind::Keepout(k), severity);
             }
             for id in r.rotation_approximated {
                 raise(

@@ -47,9 +47,8 @@ pub struct RectDots {
     pub head_len: i32,
 }
 
-/// Quarter turns. Stored as the degree so a free angle could be added later
+/// Rotation, stored as the degree, so a free angle could be added later
 /// without breaking the schema.
-/// Rotation, stored as a degree.
 ///
 /// [`Other`](Rot::Other) is what keeps the promise the storage format makes. A
 /// build that quantised every unknown angle to zero would round-trip a
@@ -188,32 +187,91 @@ impl MediaShape {
     }
 }
 
-/// Cable-flag stock: paper at one end that carries no content.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Tail {
-    pub at_start: bool,
-    pub len_dots: i32,
+/// Every `kind` a die-cut shape can carry that this build understands.
+///
+/// Kept beside [`KnownShape`], which must agree with it, so a shape whose kind
+/// is known but whose payload is damaged can be told from a stranger's.
+pub const KNOWN_SHAPE_KINDS: &[&str] = &["rect", "rounded_rect", "circle"];
+
+/// Which of the document's two axes a piece of media geometry runs along.
+///
+/// An open set, shaped exactly like [`Repeat`], because the value comes out of
+/// a file. It is the one field whose loss *inverts* a meaning rather than
+/// dropping one: a build that read an axis it did not know as the default would
+/// fold a cable flag across the wrong axis and write the file back that way.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Axis {
+    /// Along the paper's travel. The default, because every fold-over and
+    /// cable-flag product in the vendor's own catalogue folds across the strip,
+    /// and because it is what a file written before this field existed meant.
+    #[default]
+    Feed,
+    /// Across the print head.
+    Head,
+    #[serde(untagged)]
+    Unknown(Value),
 }
 
-/// Fold-over stock.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+impl Axis {
+    /// Omitted from a saved file when it is the feed, so a label that folds the
+    /// ordinary way saves byte for byte as it did before the field existed.
+    pub fn is_default(&self) -> bool {
+        matches!(self, Axis::Feed)
+    }
+}
+
+/// Cable-flag stock: paper at one end that carries no content.
+///
+/// Real paper, inside the canvas: the page handed to the printer still covers
+/// it, because the paper travels that far. It constrains layout and draws
+/// nothing. See [`crate::media::Bounds`].
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Tail {
+    /// Which end of [`axis`](Tail::axis) it lies at.
+    pub at_start: bool,
+    pub len_dots: i32,
+    /// Which axis it runs across. With `at_start` this gives the four tail
+    /// directions the vendor's own `PaperInfo` carries.
+    #[serde(default, skip_serializing_if = "Axis::is_default")]
+    pub axis: Axis,
+}
+
+/// Fold-over stock: where the paper creases, and into how many panels.
+///
+/// `at_dots` is the **position of the first crease** along
+/// [`axis`](Fold::axis), measured from the canvas origin like every other
+/// coordinate in the document - not a pitch. The first panel runs from the
+/// start of the content (after a leading [`Tail`]) to the crease, and that
+/// length is the pitch of the rest: panel `n` begins at
+/// `at_dots + (n - 1) * pitch`. Two fields cannot describe unequal panels, and
+/// equal panels are what fold-over stock is; whatever is left past the last
+/// panel belongs to no panel and is left exactly as it was drawn.
+///
+/// Lengthening the tail therefore shortens the first panel without moving the
+/// crease, which is what happens to the paper.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Fold {
     pub at_dots: i32,
     pub parts: u8,
+    #[serde(default, skip_serializing_if = "Axis::is_default")]
+    pub axis: Axis,
 }
 
 /// What happens to the rendered region across a fold.
 ///
 /// A transform of the *rendered* result rather than a clone of each element,
-/// which is how the incumbent tool does it. Applying it after rasterisation is
-/// undo-safe, composes correctly with halftoning, and gets upside-down text
-/// right without a second code path.
-/// What happens to the rendered region across a fold.
+/// which is how the incumbent tool does it. Applied to the finished plane,
+/// after binarisation: undo-safe, it leaves the panel that was already right
+/// untouched, and it gets upside-down text right without a second code path.
+/// See [`crate::media::repeat_plane`].
 ///
 /// [`Unknown`](Repeat::Unknown) exists for the same reason as
 /// [`MediaShape::Unknown`], and matters more: mistaking `Copy` for `None`
 /// prints half a fold-over label, so an unrecognised value has to be reported
-/// rather than quietly treated as nothing.
+/// rather than quietly treated as nothing. It holds a whole `Value` rather than
+/// a string so that a later version's parameterised mode - `{"kind":"tile"}` -
+/// is carried through and reported, not a load error that loses the file.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Repeat {
@@ -222,7 +280,7 @@ pub enum Repeat {
     Copy,
     Flip,
     #[serde(untagged)]
-    Unknown(String),
+    Unknown(Value),
 }
 
 /// The physical stock. Display and preset matching only - [`Canvas`] is the
@@ -280,8 +338,8 @@ pub type ElementId = u32;
 
 /// Every `type` tag this build understands.
 ///
-/// Kept beside [`Element::kind`], which must agree with it - the test at the
-/// bottom of this module fails if they drift.
+/// Kept beside [`Element::kind`], which must agree with it; `tests/document.rs`
+/// fails if they drift.
 pub const KNOWN_KINDS: &[&str] = &[
     "text",
     "barcode",

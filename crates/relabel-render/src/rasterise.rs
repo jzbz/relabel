@@ -21,6 +21,7 @@ use crate::document::{
 use crate::error::RenderError;
 use crate::greymap::GreyMap;
 use crate::halftone::{BinariseOpts, Zone, binarise};
+use crate::media::{self, Keepout};
 use crate::target::Target;
 use crate::text::{self, TextClip, TextEngine, TextError, TextStyle};
 use relabel_proto::PrintDirection;
@@ -82,6 +83,11 @@ pub struct RenderReport {
     /// Images whose own halftone or threshold went unused: the label has more
     /// elements than zone ids, and they share the last one.
     pub zone_shared: Vec<u32>,
+    /// Elements on the canvas that still cannot put a readable mark there, by
+    /// id and which paper is in the way: the tail, the unprintable inset, the
+    /// die-cut, or a panel a repeat overwrites. One entry per element - an
+    /// element off the canvas is reported as that and not twice.
+    pub keepout: Vec<(u32, Keepout)>,
 }
 
 impl RenderReport {
@@ -96,6 +102,7 @@ impl RenderReport {
             && self.image_resampled.is_empty()
             && self.image_clipped.is_empty()
             && self.zone_shared.is_empty()
+            && self.keepout.is_empty()
     }
 }
 
@@ -116,13 +123,21 @@ pub fn rasterise(label: &Label, target: &Target) -> Result<(GreyMap, RenderRepor
     // no state outlives the render.
     let mut engine: Option<TextEngine> = None;
     report.zone_shared = zone_plan(label, Zone::PAGE).1;
+    // The media's own geometry, resolved once: the tail, the inset, the die-cut
+    // and the panels a repeat overwrites. None of it draws anything.
+    let bounds = media::Bounds::of(label);
     for (zone, el) in zone_ids(label) {
         let c = el.common();
         // The frame as drawn: a quarter turn swaps its sides, and checking the
         // stored frame instead let a turned symbol run off the canvas with a
         // clean report.
-        if !fits(&rotated(&c.frame, c.rot), &label.canvas) {
+        let f = rotated(&c.frame, c.rot);
+        if !fits(&f, &label.canvas) {
             report.off_canvas.push(c.id);
+        } else if let Some(k) = bounds.keepout(&f) {
+            // Only for a frame whose dots exist: off the canvas is a different
+            // sentence with the same fix, and saying both would bury it.
+            report.keepout.push((c.id, k));
         }
         if !c.rot.is_exact() {
             report.rotation_approximated.push(c.id);
@@ -288,15 +303,52 @@ fn rotated(f: &RectDots, rot: Rot) -> RectDots {
 }
 
 /// Draw a label and reduce it to one bit, each image in its own zone with
-/// its own halftone and threshold, and the page thresholded at 128. For the
-/// common case of not caring about the report.
+/// its own halftone and threshold, and the page thresholded at 128, then
+/// duplicate the panels across the fold. For the common case of not caring
+/// about the report.
 pub fn rasterise_plane(
     label: &Label,
     target: &Target,
 ) -> Result<relabel_proto::BitPlane, RenderError> {
     let (grey, _) = rasterise(label, target)?;
+    Ok(plane_of(label, target, &grey))
+}
+
+/// Both surfaces a preview pane shows, with the fold applied to each.
+///
+/// It exists so the correct thing is the easy thing. [`rasterise`] returns the
+/// grey map *before* the repeat, since the repeat is a transform of the finished
+/// dots, so a grey pane drawn from it beside a dot pane drawn from
+/// [`rasterise_plane`] would show one panel against several, with nothing in
+/// either buffer of bytes able to notice. `GreyMap::coverage` has the same
+/// problem and would under-report the ink of a fold-over label.
+pub fn rasterise_preview(
+    label: &Label,
+    target: &Target,
+) -> Result<(GreyMap, relabel_proto::BitPlane, RenderReport), RenderError> {
+    let (grey, report) = rasterise(label, target)?;
+    let plane = plane_of(label, target, &grey);
+    let grey = match media::plan(label) {
+        Ok(Some(plan)) => media::repeat_grey(&grey, target, &plan),
+        _ => grey,
+    };
+    Ok((grey, plane, report))
+}
+
+/// Binarise, then repeat: one copy of that order, so the printing path and the
+/// preview cannot drift apart.
+///
+/// A repeat this build cannot carry out duplicates nothing here and is refused
+/// by preflight. That split is the crate's existing one - the report is how a
+/// caller learns, preflight is how a run is stopped - and it is why a label
+/// from the future still renders.
+fn plane_of(label: &Label, target: &Target, grey: &GreyMap) -> relabel_proto::BitPlane {
     let zones = zone_table(label, Zone::PAGE);
-    Ok(binarise(&grey, &BinariseOpts::with_zones(&zones)))
+    let plane = binarise(grey, &BinariseOpts::with_zones(&zones));
+    match media::plan(label) {
+        Ok(Some(plan)) => media::repeat_plane(&plane, target, &plan),
+        _ => plane,
+    }
 }
 
 /// Lay a linear barcode into its frame.

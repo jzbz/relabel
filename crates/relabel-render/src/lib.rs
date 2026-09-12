@@ -21,6 +21,7 @@ pub mod document;
 pub mod error;
 pub mod greymap;
 pub mod halftone;
+pub mod media;
 pub mod preflight;
 pub mod preview;
 pub mod rasterise;
@@ -37,6 +38,9 @@ pub use document::{Element, ElementOrRaw, Ink, Label, LoadError};
 pub use error::RenderError;
 pub use greymap::GreyMap;
 pub use halftone::{BinariseOpts, Halftone, Zone, binarise};
+pub use media::{Bounds, GeometryFault, Keepout, Outline, RepeatPlan};
 pub use preflight::{Issue, IssueKind, Preflight, Severity, preflight};
-pub use rasterise::{Failure, RenderReport, local_size, rasterise, rasterise_plane, zone_table};
+pub use rasterise::{
+    Failure, RenderReport, local_size, rasterise, rasterise_plane, rasterise_preview, zone_table,
+};
 pub use target::{Dpmm, Target};

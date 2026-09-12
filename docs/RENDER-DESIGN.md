@@ -161,26 +161,31 @@ pub struct Media {
     /// the canvas is the authority on geometry.
     pub feed_tenths_mm: i32,
     pub head_tenths_mm: i32,
-    #[serde(default)] pub shape: MediaShape,          // Rect | RoundedRect { r } | Circle
-    /// Cable-flag stock: a length of paper at one end that carries no content.
-    #[serde(default)] pub tail: Option<Tail>,
-    /// Fold-over stock: where the label folds, and into how many parts.
-    #[serde(default)] pub fold: Option<Fold>,
+    #[serde(default)] pub shape: MediaShape,   // Rect | RoundedRect { radius } | Circle | Unknown(Value)
+    /// Cable-flag stock: a length of paper at one end of one axis that carries
+    /// no content.
+    #[serde(default)] pub tail: Option<Tail>,     // { at_start, len_dots, axis }
+    /// Fold-over stock: where the label creases, along which axis, and into how
+    /// many panels. `at_dots` is the position of the first crease, measured from
+    /// the canvas origin.
+    #[serde(default)] pub fold: Option<Fold>,     // { at_dots, parts, axis }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub enum Repeat {
     #[default] None,
     /// Duplicate the rendered region across the fold, unchanged.
     Copy,
     /// Duplicate rotated 180°, for a fold-over flag read from both sides.
     Flip,
+    /// A mode a later version wrote. Reported, never treated as `None`.
+    #[serde(untagged)] Unknown(Value),
 }
 ```
 
-`shape`, `tail` and `fold` are **editing guides and layout constraints, not marks**. This is taken from niimblue, where `_renderBackground()` draws them behind a `customBackground` flag while `getLabelBounds()` genuinely subtracts `tailLength` from the usable canvas — so the tail is real paper that must be kept clear, and the shape is a rounded or circular die-cut the content must stay inside. They cost about thirty lines of guide drawing and they describe cable-flag and fold-over stock, which is a large part of why these printers get bought.
+`shape`, `tail` and `fold` are **editing guides and layout constraints, not marks**. This is taken from niimblue, where `_renderBackground()` draws them behind a `customBackground` flag while `getLabelBounds()` genuinely subtracts `tailLength` from the usable canvas — so the tail is real paper that must be kept clear, and the shape is a rounded or circular die-cut the content must stay inside. relabel does **not** shorten the canvas the way `getLabelBounds()` does: the page handed to the printer has to cover the whole label, because the paper travels that far and `Target::require_head` demands the head axis match exactly, so a shortened canvas prints shifted rather than inset. `media::Bounds` carries three rectangles instead - `canvas`, `content` (less the tail) and `usable` (less `Canvas::inset`) - and the die-cut is resolved against the canvas rather than stored, since a circle's centre and diameter follow from it. They cost about thirty lines of guide drawing and they describe cable-flag and fold-over stock, which is a large part of why these printers get bought.
 
-`mirror` is the one property of niimblue's that changes output, and relabel models it differently on purpose. niimblue's `createMirroredObjects()` clones each canvas object across the fold and rotates it (its own comment restricts flip to a half split). relabel's `Repeat` is a transform of the **rendered region**, applied after rasterisation: undo-safe, composes correctly with dithering, and gets flipped text right for free without a second code path.
+`mirror` is the one property of niimblue's that changes output, and relabel models it differently on purpose. niimblue's `createMirroredObjects()` clones each canvas object across the fold and rotates it (its own comment restricts flip to a half split). relabel's `Repeat` is a transform of the **rendered region**, applied after **binarisation** to the finished plane: undo-safe, and it gets flipped text right for free without a second code path. After binarisation is not an implementation detail. Diffusion runs in the canvas frame, so a region rotated before it is dithered disagrees with its own half turn in 6,209 of 15,360 dots under Floyd-Steinberg, and a grey copy sharing its source's zone id moves 3,794 dots of the panel that was already right. Applied to the dots, the turned panel is the half turn exactly, the first panel does not move, and the halftone zones need no copy at all.
 
 **`data` names the label's rows.** It is written only when set, so a label without data saves byte for byte as before, and `"data"` is a reserved key. A binding of a kind this build does not know - `inline`, say - is kept exactly as written; one of a kind it does know that does not parse, one with no `kind`, or a bare string is a load error, never carried along unread. A binding cannot hold one of its own keys among its unknown fields, or it would write that key twice. §2.6 has the types.
 
@@ -1197,6 +1202,7 @@ At `line_height: 1.0` those ppem figures rise by 36 %, which is why 1.0 is the d
 - Suggest DataMatrix when a QR will not fit at 3 dots.
 - Show text as x-height in dots alongside the em size.
 - Never offer a font size below the smallest that produces a 5-dot x-height.
+- Draw the media guides from `media::Bounds` and `RepeatPlan::part`, which are what preflight reads, so a guide and a report cannot disagree about where content may go.
 
 ---
 
@@ -1570,6 +1576,8 @@ let target = Target { head_px: head, feed_px: feed, dpi: spec.dpi };
 **Two-colour.** `DESIGN.md` §9 already defers the `0x8A` double-colour path (three models, zero reported successful prints, and two mutually exclusive documented payload shapes). The document model has no colour axis and `Ink` is deliberately two-valued; adding red later means a second plane, not a wider pixel.
 
 **Arbitrary rotation.** §4.5. `Rot` serialises as a number so this is not a schema break when it arrives.
+
+**Media geometry, past step 10.** Per-inked-dot accounting, so a full-bleed fill on rounded stock is not warned about where no ink is actually lost - the keep-out check is per element frame, which is exact for the tail and conservative for a die-cut. The inset's severity is capped at Warn even for a symbol until print test P8 settles which of `blindZone`'s four edges is which. A tail in the middle of a strip, which v1's `at_start` cannot express. And a flattened unknown map on the seven structs that still lack one, `Tail` and `Fold` included - which is why `axis` had to be added now rather than by a later version.
 
 **Embedded bitmap strikes.** `skrifa::bitmap::BitmapStrikes` exists and is exactly right in principle — `BitmapStrikes::new(&font)`, `glyph_for_size(Size, GlyphId) -> Option<BitmapGlyph>`, `BitmapData::Mask(MaskData { bpp: 1|2|4|8, is_packed, data })` with `decode_to_slice` (`skrifa-0.42.1/src/bitmap.rs:101`, `:353-400`). A 1-bpp strike at 12 or 14 px is a type designer's answer to the question hinting only approximates, and Cozette (MIT), Terminus (OFL 1.1) and Spleen (BSD-2-Clause) all ship `.otb`. Two risks are unverified and must be checked before committing: an `.otb` has no `glyf` or `CFF `, so `OutlineGlyphCollection::get()` returns `None` for every glyph and this is a wholly separate code path; and whether fontique's `FontInfo::from_source` (which needs a valid cmap) and harfrust will accept and shape a bitmap-only face at all is untested.
 

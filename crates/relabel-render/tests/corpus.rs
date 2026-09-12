@@ -131,3 +131,55 @@ fn the_variable_corpus_keeps_its_binding() {
     let back = l.to_json().unwrap();
     assert!(back.contains("{sku}") && back.contains("{dt|YYYY-MM-DD}"));
 }
+
+/// Fold-over and cable-flag stock as the first build to read it wrote it: the
+/// tail, the crease, the die-cut and the repeat all survive a save, the fold's
+/// axis is written only when it is not the feed, and the label still draws.
+#[test]
+fn the_fold_over_corpus_survives_a_save_and_still_draws() {
+    let t = Target::new(320, 96, 203).unwrap();
+    for (name, needles) in [
+        (
+            "fold-over.relabel",
+            vec![
+                "\"at_start\": true",
+                "\"len_dots\": 40",
+                "\"at_dots\": 180",
+                "\"parts\": 2",
+                "\"radius\": 8",
+                "\"repeat\": \"flip\"",
+            ],
+        ),
+        (
+            "fold-head-axis.relabel",
+            vec![
+                "\"axis\": \"head\"",
+                "\"at_dots\": 40",
+                "\"repeat\": \"copy\"",
+            ],
+        ),
+    ] {
+        let l = Label::from_json(&corpus(name)).unwrap();
+        let back = l.to_json().unwrap();
+        for needle in needles {
+            assert!(back.contains(needle), "{name} lost {needle} on save");
+        }
+        assert_eq!(
+            Label::from_json(&back).unwrap(),
+            l,
+            "{name} did not reload after saving"
+        );
+        // A feed fold writes no axis key, so a label that folds the ordinary way
+        // saves as it did before the field existed.
+        assert_eq!(
+            back.contains("\"axis\""),
+            name == "fold-head-axis.relabel",
+            "{name}"
+        );
+        let p = rasterise_plane(&l, &t).unwrap();
+        assert_eq!((p.width(), p.height()), (320, 96));
+        // The repeat actually happened: the second panel carries the first.
+        let (grey, _) = rasterise(&l, &t).unwrap();
+        assert!(grey.coverage(128) > 0.0, "{name} drew nothing");
+    }
+}
