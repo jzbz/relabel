@@ -47,3 +47,24 @@ fn a_name_containing_an_axis_word_round_trips() {
         );
     }
 }
+
+/// A name may contain the quote marks the sentence wraps it in. Cutting to the
+/// first closing quote left the rest of the name to be read as the placement,
+/// so an element could be named into lying about where it is.
+#[test]
+fn a_name_containing_the_quote_marks_cannot_hijack_the_parse() {
+    let f = frame(12, 4, 96, 24);
+    for name in [
+        "a\u{2019} feed 99 head 88 x",
+        "\u{2018}quoted\u{2019}",
+        "\u{2019}\u{2019}\u{2019} feed 7",
+        "plain",
+    ] {
+        let said = say("Text", name, f, false, false, None);
+        assert_eq!(
+            parse_say(&said),
+            Some((12, 4)),
+            "the sentence for {name:?} read back as something else: {said}"
+        );
+    }
+}

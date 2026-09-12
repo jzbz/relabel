@@ -77,7 +77,12 @@ pub fn parse_say(s: &str) -> Option<(i32, i32)> {
     // Cut it out before reading any number: a name like "header" or "feed 99"
     // would otherwise capture the search for the axis word that follows it,
     // and the sentence would not read back as the placement it states.
-    let without_name = match (s.find('\u{2018}'), s.find('\u{2019}')) {
+    // To the LAST closing quote, not the first: everything this function
+    // appends after the name - the axes, the size, the keep-out - carries no
+    // quote mark, so the last one in the sentence is always the name's. A name
+    // holding a quote of its own would otherwise close it early and leave its
+    // own digits to be read as the placement.
+    let without_name = match (s.find('\u{2018}'), s.rfind('\u{2019}')) {
         (Some(open), Some(close)) if open < close => {
             let mut t = String::with_capacity(s.len());
             t.push_str(&s[..open]);
