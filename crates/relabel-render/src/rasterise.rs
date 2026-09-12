@@ -375,7 +375,17 @@ fn draw_barcode(s: &mut Surface, t: &Target, e: &BarcodeEl, zone: u8) -> Result<
 
     let b = rotated(&e.common.frame, e.common.rot);
     let turn = e.common.rot.quantised();
-    let along_head = matches!(turn, Rot::D90 | Rot::D270);
+    // Which document axis the bars march along, chosen so that on the canvas
+    // they run the way the same frame's text runs. `local_size` measures a
+    // frame through the target - "the reading width whatever the turn and
+    // whichever way the printer's head runs" - and this has to agree with it:
+    // on a `Top` printer the head is the canvas's horizontal, so an unrotated
+    // symbol marches along the head where on a `Left` printer it marches along
+    // the feed. Without the swap an unrotated barcode ran down a `Top` canvas
+    // while unrotated text ran across it, and a landscape frame was refused as
+    // `TooWide` on 53 of the registry's 79 models.
+    let along_head =
+        matches!(turn, Rot::D90 | Rot::D270) ^ matches!(t.direction, PrintDirection::Top);
     let reversed = matches!(turn, Rot::D180 | Rot::D270);
 
     let depth = if e.bar_dots > 0 {

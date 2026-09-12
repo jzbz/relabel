@@ -402,3 +402,54 @@ fn a_barcode_at_the_edge_of_the_coordinate_range_does_not_overflow() {
         }
     }
 }
+
+/// The same picture on a printer whose head runs the other way is the same
+/// picture. An element's reading direction follows the canvas, not the
+/// document's own feed axis: `local_size` measures a frame through the target,
+/// so text has always done this, and a barcode that did not ran down a `Top`
+/// canvas while the text beside it ran across - and refused a landscape frame
+/// as `TooWide` on the 53 models of the registry whose head runs that way.
+#[test]
+fn a_barcode_reads_the_way_text_does_on_both_printers() {
+    use relabel_proto::PrintDirection;
+    use relabel_render::rasterise;
+
+    // One screen rectangle, written in each printer's document axes.
+    let label = |dir, el: &str| {
+        let frame = match dir {
+            PrintDirection::Left => r#""feed": 8, "head": 4, "feed_len": 170, "head_len": 60"#,
+            PrintDirection::Top => r#""feed": 4, "head": 8, "feed_len": 60, "head_len": 170"#,
+        };
+        let s = format!(
+            r#"{{ "format": "relabel-label", "version": 1,
+                 "media": {{ "feed_tenths_mm": 250, "head_tenths_mm": 250 }},
+                 "canvas": {{ "feed": 200, "head": 200, "dpmm": {{ "num": 8, "den": 1 }} }},
+                 "elements": [ {{ "id": 1, "frame": {{ {frame} }}, {el} }} ] }}"#
+        );
+        Label::from_json(&s).unwrap_or_else(|e| panic!("{e}\n{s}"))
+    };
+    let kinds = [
+        (
+            "text",
+            r#""type": "text", "text": "AB", "family": "Noto Sans", "size": 24.0"#,
+        ),
+        (
+            "barcode",
+            r#""type": "barcode", "symbology": "code128", "data": "AB", "module_dots": 2, "bar_dots": 40"#,
+        ),
+    ];
+    for (name, el) in kinds {
+        let mut drawn = Vec::new();
+        for dir in [PrintDirection::Left, PrintDirection::Top] {
+            let t = Target::with_direction(200, 200, 203, dir).unwrap();
+            let (g, r) = rasterise(&label(dir, el), &t).unwrap();
+            assert!(r.failed.is_empty(), "{name} on {dir:?}: {:?}", r.failed);
+            assert!(g.px.iter().any(|&p| p != 255), "{name} on {dir:?}: drawn");
+            drawn.push(g.px);
+        }
+        assert_eq!(
+            drawn[0], drawn[1],
+            "{name}: the same picture, dot for dot, on both printers"
+        );
+    }
+}
