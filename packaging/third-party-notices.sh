@@ -17,6 +17,11 @@
 # or CARGO_ABOUT set to such a binary. Needs the network too: two crates in
 # about.toml have their licence files fetched from upstream.
 #
+# Two licence texts are appended by this script rather than by cargo-about: the
+# embedded fonts' OFL, because fonts are not crates, and Slint's royalty-free
+# licence, because a LicenseRef has no canonical text and cargo-about carries
+# none. Both are checked before they are written.
+#
 # cargo-about's own --fail is not enough. It exits 0 when a pinned
 # clarification no longer matches - btleplug then silently loses both its BSD
 # notices - when an upstream fetch fails, and when it falls back to a generic
@@ -67,17 +72,70 @@ fi
 
 # Warnings and errors, less the one a single-crate run always prints for the
 # clarifications that belong to other crates.
+# Slint's royalty-free licence is not an SPDX identifier, so cargo-about
+# resolves the crates to it and then has no text to print. That text is
+# appended below from packaging/licenses, so the warning is expected.
 problems=$(grep -E '\[(WARN|ERROR)\]|^(warning|error):' "$log" |
-    grep -v 'config found for a crate not present in the graph' || true)
-# Generic texts standing in for a crate's own, less the accepted five.
+    grep -v 'config found for a crate not present in the graph' |
+    grep -v 'LicenseRef-Slint-Royalty-free-2.0 has no license file' || true)
+# Crates that publish no licence text at all, so the canonical text is the only
+# thing there is to print. Each was checked by looking inside the published
+# crate: nothing named LICENSE, LICENCE or COPYING. Anything that does ship its
+# text belongs in about.toml's clarify section instead, where the copyright
+# line survives.
+no_text='block2|objc2|objc2-encode|objc2-foundation|objc2-core-bluetooth'
+no_text="$no_text|objc-sys|objc2-app-kit|objc2-cloud-kit|objc2-core-data"
+no_text="$no_text|objc2-core-foundation|objc2-core-graphics|objc2-core-image"
+no_text="$no_text|objc2-core-text|objc2-core-video|objc2-quartz-core|dispatch"
+no_text="$no_text|accesskit|accesskit_atspi_common|accesskit_consumer"
+no_text="$no_text|accesskit_macos|accesskit_unix|accesskit_windows|accesskit_winit"
+no_text="$no_text|lyon_algorithms|lyon_extra|lyon_geom|lyon_path"
+no_text="$no_text|taffy|clipboard-win|integer-sqrt"
+
+# Generic texts standing in for a crate's own, less the ones named above.
 fallbacks=$(grep 'falling back to canonical text' "$log" |
-    grep -v -E "for crate '(block2|objc2|objc2-encode|objc2-foundation|objc2-core-bluetooth) " || true)
+    grep -v -E "for crate '($no_text) " || true)
 
 if [ -n "$problems$fallbacks" ]; then
     printf '%s\n' "$problems" "$fallbacks" | sed '/^$/d' >&2
     echo "the notices are incomplete; nothing was written to $out" >&2
     exit 1
 fi
+# Slint's licence, which cargo-about cannot carry: a LicenseRef has no
+# canonical text, and a clarification does not give one to a licence the tool
+# has never heard of. The text lives in the repository rather than being read
+# out of a cargo cache at release time, and is checked here against the copy
+# every Slint crate ships, so it cannot quietly go stale.
+slint_text="$root/packaging/licenses/LicenseRef-Slint-Royalty-free-2.0.md"
+slint_sha=5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe
+if [ "$(sha256sum "$slint_text" | cut -d' ' -f1)" != "$slint_sha" ]; then
+    echo "$slint_text is not the text Slint 1.17 ships; nothing was written to $out" >&2
+    exit 1
+fi
+for src in "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/slint-1.17.*/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md; do
+    [ -f "$src" ] || continue
+    if ! cmp -s "$src" "$slint_text"; then
+        echo "$slint_text differs from $src; nothing was written to $out" >&2
+        exit 1
+    fi
+done
+
+{
+    printf '\n%s\n' "================================================================================"
+    echo "Slint Royalty-free Desktop, Mobile, and Web Applications License 2.0"
+    echo "         (LicenseRef-Slint-Royalty-free-2.0)"
+    echo "================================================================================"
+    echo "Used by:"
+    for c in slint slint-macros i-slint-common i-slint-compiler i-slint-core \
+        i-slint-core-macros i-slint-backend-selector i-slint-backend-winit \
+        i-slint-renderer-software; do
+        echo "  - $c 1.17.1 <https://github.com/slint-ui/slint>"
+    done
+    echo "    Authors: SixtyFPS GmbH <info@slint.dev>"
+    echo
+    cat "$slint_text"
+} >>"$draft"
+
 # The embedded fonts are not crates, so cargo-about does not know them.
 {
     printf '\n%s\n' "================================================================================"

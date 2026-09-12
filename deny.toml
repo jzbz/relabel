@@ -40,6 +40,40 @@ allow = [
 # LGPL, GPL - is absent on purpose too; see THIRD-PARTY.md for what each would
 # require.
 exceptions = [
+    # --- the GUI toolkit, and the window and accessibility stack under it ---
+    # Slint offers GPL-3.0-only, its royalty-free licence, or a commercial one.
+    # relabel takes the royalty-free branch: it permits a desktop application
+    # under any licence, which is what this is. See THIRD-PARTY.md.
+    { crate = "slint", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
+    { crate = "slint-build", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
+    { crate = "slint-macros", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
+    { crate = "i-slint-common", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
+    { crate = "i-slint-compiler", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
+    { crate = "i-slint-core", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
+    { crate = "i-slint-core-macros", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
+    { crate = "i-slint-backend-selector", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
+    { crate = "i-slint-backend-winit", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
+    { crate = "i-slint-renderer-software", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
+    # The window and accessibility stack winit brings, Apache-2.0 only.
+    { crate = "winit", allow = ["Apache-2.0"] },
+    { crate = "accesskit_winit", allow = ["Apache-2.0"] },
+    { crate = "gethostname", allow = ["Apache-2.0"] },
+    # Text measurement inside the software renderer.
+    { crate = "ab_glyph", allow = ["Apache-2.0"] },
+    { crate = "ab_glyph_rasterizer", allow = ["Apache-2.0"] },
+    { crate = "owned_ttf_parser", allow = ["Apache-2.0"] },
+    { crate = "unicode-linebreak", allow = ["Apache-2.0"] },
+    { crate = "linked_hash_set", allow = ["Apache-2.0"] },
+    # A conjunction, not a choice: both licences apply at once, so MIT alone
+    # cannot admit it.
+    { crate = "dpi", allow = ["Apache-2.0", "MIT"] },
+    { crate = "imgref", allow = ["CC0-1.0"] },
+    { crate = "libloading", allow = ["ISC"] },
+    { crate = "slotmap", allow = ["Zlib"] },
+    # winit's clipboard, on the Boost licence.
+    { crate = "clipboard-win", allow = ["BSL-1.0"] },
+    { crate = "error-code", allow = ["BSL-1.0"] },
+    # --- everything below predates the GUI ---
     # Via datamatrix, for DataMatrix symbols. No NOTICE file.
     { crate = "flagset", allow = ["Apache-2.0"] },
     # Via hashbrown's default hasher, which parley and fontique ask for.

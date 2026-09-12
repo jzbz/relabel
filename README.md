@@ -37,8 +37,9 @@ Bluetooth-first and MIT at once.
 | `crates/relabel-core` | Transports (BLE, and an in-memory printer), the session that owns reassembly and request/response matching, the print-job engine, and the CSV reader for variable data. |
 | `crates/relabel-render` | The label document format, and the rasteriser that turns it into dots: whole-dot geometry, halftoning with per-element zones, text, images and SVG, linear barcodes, QR and DataMatrix, and a calibration ruler. Variable data, the preflight that checks every row before a run, fold-over and cable-flag geometry, and the pixels a preview pane draws. No device, no clock, no async, no GUI types. |
 | `crates/relabel-cli` | Headless driver for hardware bring-up. Not a shipped binary. |
+| `crates/relabel-gui` | The desktop app, in Slint. Opens a label, draws it at whole dots, and edits it by pointer or keyboard. Early: it neither prints nor connects yet. |
 
-The GUI, `relabel-gui`, is designed but not yet written.
+`relabel-gui` has started: it opens and edits a label, and does not print yet.
 
 The split is deliberate. `relabel-proto` is pure and synchronous, so the fuzz
 target builds in a second and the protocol tests need neither a Bluetooth stack

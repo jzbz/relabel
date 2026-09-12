@@ -1,0 +1,59 @@
+import { ElRow } from "../types.slint";
+
+export { ElRow }
+
+// The counter-example, kept as a test fixture rather than as a comment.
+//
+// This is the drag the toolkit's own documentation shows - SliderBase's
+// `mouse-x - pressed-x` - on a TouchArea that moves with the element it is
+// dragging. It is here so that the test asserting it undershoots fails if
+// someone ever "simplifies" the real canvas into this shape, and so that the
+// size of the error is on the record rather than inferred.
+export component NaiveProbe inherits Window {
+    in property <[ElRow]> rows;
+    in property <int> zoom: 4;
+    callback move-to(id: int, x: int, y: int);
+
+    out property <length> dot: root.zoom * 1phx;
+    width: 900px;
+    height: 600px;
+
+    grid := Rectangle {
+        x: 13.5px;
+        y: 13.5px;
+        width: 600phx;
+        height: 300phx;
+
+        for row[i] in root.rows: Rectangle {
+            x: row.x * root.dot;
+            y: row.y * root.dot;
+            width: row.w * root.dot;
+            height: row.h * root.dot;
+            background: #333333;
+            // Only so the test can find it the same way it finds a real row.
+            accessible-role: list-item;
+            accessible-item-index: i;
+            accessible-label: row.say;
+
+            ta := TouchArea {
+                // SliderBase's own shape: capture the value at the press, then
+                // add the pointer's travel to it on every move.
+                property <int> base-x;
+                property <int> base-y;
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        self.base-x = row.x;
+                        self.base-y = row.y;
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        root.move-to(row.id,
+                                     self.base-x + Math.round((self.mouse-x - self.pressed-x) / root.dot),
+                                     self.base-y + Math.round((self.mouse-y - self.pressed-y) / root.dot));
+                    }
+                }
+            }
+        }
+    }
+}

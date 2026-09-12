@@ -120,21 +120,42 @@ resvg and usvg depend on for their own binaries, is compiled but never called.
 
 ## Arriving with work in progress
 
-- **Slint, for the GUI.** Offered as `GPL-3.0-only OR
-  LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0`. relabel
-  takes the royalty-free licence, whose section 2 requires either Slint's
-  `AboutSlint` widget in an About screen reachable from the application's top
-  level, or Slint's attribution badge on a public page, preferably where the
-  binaries are downloaded. The licence names the widget itself, so an About
-  screen with only a line of text naming Slint is not what it asks for. The
-  same licence forbids use in an embedded system and exposing Slint's API. The
-  GPL branch is never the one taken; it would put the whole binary under
-  GPL-3.0.
+- **Slint, for the GUI.** Arrived with `relabel-gui`. Offered as
+  `GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR
+  LicenseRef-Slint-Software-3.0`; relabel takes the royalty-free licence, which
+  is written for desktop applications and is the reason the GPL branch - which
+  would put the whole binary under GPL-3.0 - is never the one taken. It forbids
+  use in an embedded system and exposing Slint's API, neither of which this
+  does.
 
-  A Slint build brings about thirty more crates that `deny.toml` rejects
-  today - Apache-2.0-only ones, ISC, Zlib, BSL-1.0 and CC0-1.0, measured on a
-  scratch copy of this workspace with the Slint features rpgp uses - so the
-  allowlist grows then, deliberately.
+  **Section 2 is an obligation this project has not yet met.** It requires
+  either Slint's `AboutSlint` widget in an About screen reachable from the
+  application's top level, or Slint's attribution badge on a public page,
+  preferably where the binaries are downloaded. The licence names the widget
+  itself, so an About screen with only a line of text naming Slint is not what
+  it asks for. The first slice of the editor has no About screen at all, so
+  **no binary may be released until one of the two is in place.**
+
+  It is also the one licence in the notice file that cargo-about cannot carry:
+  a `LicenseRef` has no canonical text and a clarification does not give the
+  tool one. `packaging/licenses/LicenseRef-Slint-Royalty-free-2.0.md` holds the
+  text, checked on every run against the copy each Slint crate ships, and
+  `packaging/third-party-notices.sh` appends it the way it already appends the
+  fonts' OFL.
+
+  The build brings **24 crates `deny.toml` names one by one**: the ten Slint
+  crates, eight Apache-2.0-only ones (`winit`, `accesskit_winit`, `ab_glyph`,
+  `ab_glyph_rasterizer`, `owned_ttf_parser`, `unicode-linebreak`,
+  `linked_hash_set`, `gethostname`), `dpi` whose `Apache-2.0 AND MIT` is a
+  conjunction rather than a choice, `imgref` on CC0-1.0, `libloading` on ISC,
+  `slotmap` on Zlib, and `clipboard-win` and `error-code` on BSL-1.0. That is
+  fewer than the thirty this section used to estimate, because the GUI takes
+  the software renderer rather than femtovg and so brings no OpenGL stack.
+
+  Twenty-five of its crates publish no licence text of any kind, so the notice
+  reproduces the canonical text for them; they are named in
+  `packaging/third-party-notices.sh`. Eleven more publish one without saying
+  where, and `about.toml` now points at each, so their copyright lines survive.
 
 ## Fonts
 

@@ -1,0 +1,54 @@
+[package]
+name = "relabel-gui"
+description = "The relabel desktop application: label designer and printer control"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# A binary crate has no library target, so nothing in it can be reached from a
+# test or a bench. Everything lives in the library; main.rs only calls it.
+[lib]
+name = "relabel_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "relabel"
+path = "src/main.rs"
+
+[dependencies]
+relabel-render.workspace = true
+relabel-proto.workspace = true
+thiserror.workspace = true
+# default-features = false is not a style choice. The default set compiles in
+# `backend-qt`, which the selector prefers over winit at runtime whenever qmake
+# is on PATH, and `renderer-skia`, which is C++; the README's "no Qt, no C++"
+# depends on both staying off. `system-tray` is also in the default set and
+# needs ksni, which this label printer has no use for.
+#
+# renderer-software alone, not femtovg: the canvas is a nearest-neighbour blit
+# of a one-bit plane plus a few dozen rectangles, which no GPU is needed for,
+# and the software renderer rounds geometry to whole device pixels where
+# femtovg translates by an unrounded physical distance. Keeping it out also
+# keeps six Apache-2.0-only OpenGL crates out of the licence exception list.
+slint = { version = "1.17", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "accessibility",
+    "backend-winit",
+    "renderer-software",
+] }
+
+[dev-dependencies]
+# The whole canvas is tested through this: mock_drag for the gesture and the
+# accessibility tree for what a screen reader is told. renderer-software here
+# as well, which is what lets a test take a snapshot and count device pixels.
+i-slint-backend-testing = { version = "1.17", features = ["renderer-software"] }
+# Only to write an element of a type this build does not know, which is the one
+# thing the document's escape hatch cannot be tested without. Nothing in the
+# crate itself needs it: a label is loaded and saved as a string.
+serde_json.workspace = true
+
+[build-dependencies]
+slint-build = "1.17"

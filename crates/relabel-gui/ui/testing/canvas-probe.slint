@@ -1,0 +1,51 @@
+import { LabelCanvas } from "../canvas.slint";
+import { ElRow } from "../types.slint";
+
+export { ElRow }
+
+// A window round the real canvas, compiled a second time with debug info so
+// that ElementHandle can see the element tree. It imports the shipped
+// component rather than restating it, so a test drives what the application
+// draws.
+//
+// The canvas is placed at a deliberately awkward offset: 13.5 logical pixels
+// is 16.875 device pixels at 1.25x, which is exactly the fractional placement
+// the grid anchor exists to absorb. A test that placed it at 0 would pass
+// whether the anchor was there or not.
+export component CanvasProbe inherits Window {
+    in property <image> plane <=> canvas.plane;
+    in property <int> plane-px-w <=> canvas.plane-px-w;
+    in property <int> plane-px-h <=> canvas.plane-px-h;
+    in property <int> dots-x <=> canvas.dots-x;
+    in property <int> dots-y <=> canvas.dots-y;
+    in property <[ElRow]> rows <=> canvas.rows;
+    in property <int> selected <=> canvas.selected;
+    in property <int> zoom <=> canvas.zoom;
+    in property <string> status;
+
+    callback select(id: int);
+    callback begin-move(id: int);
+    callback move-to(id: int, x: int, y: int);
+    callback end-move(committed: bool);
+    callback nudge(id: int, dx: int, dy: int, coarse: bool);
+    callback set-say(id: int, value: string);
+    callback undo();
+    callback redo();
+
+    width: 900px;
+    height: 600px;
+    background: #ffffff;
+
+    canvas := LabelCanvas {
+        x: 13.5px;
+        y: 13.5px;
+        select(id) => { root.select(id); }
+        begin-move(id) => { root.begin-move(id); }
+        move-to(id, x, y) => { root.move-to(id, x, y); }
+        end-move(c) => { root.end-move(c); }
+        nudge(id, dx, dy, c) => { root.nudge(id, dx, dy, c); }
+        set-say(id, v) => { root.set-say(id, v); }
+        undo() => { root.undo(); }
+        redo() => { root.redo(); }
+    }
+}

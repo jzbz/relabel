@@ -1,0 +1,31 @@
+// Structs shared with Rust. Everything here is pre-computed by relabel-gui's
+// own `rows` module: the canvas never parses, formats or converts a value, and
+// never decides which axis the print head runs along.
+
+// One element, as the canvas draws it.
+//
+// `x` and `y` are *canvas* dots - the picture as the operator sees it, after
+// `Target::place` has swapped the axes for the printer this label was drawn
+// for - and `w` and `h` are the element's extent as drawn, after its rotation
+// has swapped them. The document's own feed/head names deliberately do not
+// appear: keeping them here would invite the canvas to multiply the wrong one
+// by the zoom, and a transposed rectangle is still a rectangle, so nothing
+// about the picture would look wrong.
+export struct ElRow {
+    id: int,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    // What an assistive technology reads, built in Rust so that this sentence
+    // and the parser that reads it back cannot drift apart.
+    say: string,
+    // Refuses a drag and a nudge, still selectable and still readable. The
+    // flag is in the file format and this is the only thing in the workspace
+    // that honours it.
+    locked: bool,
+    // 0 clear, then the Keepout ordinals: 1 repeated, 2 tail, 3 inset,
+    // 4 outside the die-cut. The tone comes from media::Bounds, which is what
+    // preflight reads, so a red frame and a refused run cannot disagree.
+    keepout: int,
+}

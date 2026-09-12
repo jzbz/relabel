@@ -1,0 +1,286 @@
+import { ElRow } from "types.slint";
+
+// The label as dots, with a frame round every element the operator can move.
+//
+// Hand-rolled because Slint 1.17 has no Canvas element and its DragArea moves
+// a data payload rather than geometry. Everything here is a Rectangle, an
+// Image, a TouchArea and a FocusScope.
+//
+// # Nothing in here owns anything
+//
+// Every gesture is a callback into Rust, which mutates the document and writes
+// the row back. No binding in this file assigns to a model row, which is worth
+// stating because a field assignment on a repeater row is rewritten by the
+// compiler into read-whole-struct / rebuild / assign-whole-row; keeping the
+// rules in Rust means that rewrite never happens and the same rule can be
+// reached by a unit test as well as by a gesture.
+//
+// # Dots, physical pixels, and why there is no `px` anywhere below
+//
+// `zoom` is a whole number of *device* pixels per printer dot - the same
+// integer `preview::Scale::up` was given - so the dot grid lands on whole
+// device pixels at any display scale, including the 1.25x and 1.5x that
+// Windows and GNOME default to. `dot` is that integer as a length, and every
+// position in this file is an integer number of dots times `dot`. A size
+// stated in logical `px` would be multiplied by a fractional scale factor and
+// give one dot two device pixels and its neighbour three.
+export component LabelCanvas {
+    // --- what to draw ---
+    // The 1-bit plane, already expanded to `zoom` device pixels per dot by
+    // relabel-render. The toolkit never scales it: source and target are the
+    // same size in device pixels, so no filter runs.
+    in property <image> plane;
+    in property <int> plane-px-w;
+    in property <int> plane-px-h;
+    // The canvas's own extent in canvas dots. From the document rather than
+    // from the image: a label whose render failed still has to show its
+    // element frames, and a pane sized from an image that is not there would
+    // be a pane of nothing.
+    in property <int> dots-x;
+    in property <int> dots-y;
+    // One row per drawable element, in document z-order. Later rows paint over
+    // earlier ones, which is also the order Slint hit-tests them in, so the
+    // topmost element takes a click with no reverse iteration anywhere.
+    in property <[ElRow]> rows;
+    // The selected element's id, or -1. An `in` property, not `in-out`: the
+    // document owns the selection, because the rule that a locked element is
+    // selectable but not movable has to live next to the element.
+    in property <int> selected: -1;
+    in property <int> zoom: 4;
+
+    // --- what the operator does ---
+    // Selection follows focus, so this fires for a click and for a Tab alike.
+    callback select(id: int);
+    // Pointer down on an element: open one undo step for the whole gesture.
+    callback begin-move(id: int);
+    // Canvas dots, absolute, not a delta. Sent on every move event.
+    callback move-to(id: int, x: int, y: int);
+    // Pointer up, or a cancelled gesture, which is the one that must roll back.
+    callback end-move(committed: bool);
+    // dx and dy are -1, 0 or 1. How far one step is - one dot, or a
+    // millimetre's worth of dots at this label's pitch - is Rust's to decide.
+    callback nudge(id: int, dx: int, dy: int, coarse: bool);
+    // An assistive technology wrote a new placement. Rust parses it; an
+    // unparseable one moves nothing.
+    callback set-say(id: int, value: string);
+    callback undo();
+    callback redo();
+
+    // One printer dot as a length.
+    out property <length> dot: root.zoom * 1phx;
+    // This component's own origin in *device* pixels, which at a fractional
+    // display scale is a fractional number. Dividing a length by `1phx`
+    // converts it, so nothing has to be told the scale factor from Rust and
+    // there is no stale copy of it to go wrong when a window moves between
+    // monitors.
+    property <float> origin-px-x: root.absolute-position.x / 1phx;
+    property <float> origin-px-y: root.absolute-position.y / 1phx;
+
+    width: root.dots-x * root.dot;
+    height: root.dots-y * root.dot;
+
+    // The canvas-wide key handler. It surrounds the per-element FocusScopes,
+    // so a key an element rejected arrives here.
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.modifiers.control && event.text == "z") {
+                if (event.modifiers.shift) { root.redo(); } else { root.undo(); }
+                return EventResult.accept;
+            }
+            return EventResult.reject;
+        }
+
+        // The dot grid's origin.
+        //
+        // Its offset cancels whatever fraction of a device pixel the layout
+        // above left in this component's own absolute position, so the dots
+        // sit on whole device pixels however the pane was placed. Without it a
+        // canvas centred in an odd-width pane at 1.25x lands on a half pixel,
+        // and i-slint-renderer-femtovg translates by an unrounded physical
+        // distance (itemrenderer.rs:897) - the software renderer rounds, so
+        // the two would not even disagree the same way.
+        grid := Rectangle {
+            x: (Math.round(root.origin-px-x) - root.origin-px-x) * 1phx;
+            y: (Math.round(root.origin-px-y) - root.origin-px-y) * 1phx;
+            width: root.width;
+            height: root.height;
+
+            // There is no canvas or graphic role in AccessibleRole, so the
+            // surface is a list and each element a list-item. It is the closest
+            // honest mapping: a list has a count, its items have indices, and
+            // an item can be selected.
+            accessible-role: list;
+            accessible-label: "Label canvas";
+            accessible-item-count: root.rows.length;
+
+            Image {
+                x: 0phx;
+                y: 0phx;
+                width: root.plane-px-w * 1phx;
+                height: root.plane-px-h * 1phx;
+                source: root.plane;
+                // Not an accessibility node: the dots are described by the
+                // elements that drew them, and an unlabelled graphic inside the
+                // list would be one more thing to skip past.
+                accessible-role: none;
+                // fill, not preserve: preserve keeps a size in *logical*
+                // pixels and then multiplies by the scale factor. The size is
+                // already stated in device pixels above, so fill is a 1:1 blit.
+                image-fit: fill;
+                // A belt for the case where a clamped zoom or a rounding
+                // somewhere leaves source and target a pixel apart: nearest
+                // neighbour keeps the dots square instead of smearing them.
+                image-rendering: pixelated;
+            }
+
+            for row[i] in root.rows: frame := Rectangle {
+                x: row.x * root.dot;
+                y: row.y * root.dot;
+                width: row.w * root.dot;
+                height: row.h * root.dot;
+
+                // Chrome over the dots, never the dots themselves: the element's
+                // content is already in the image below, so the frame is an
+                // outline and a wash. A hairline is 1 device pixel at any
+                // display scale - 1px would be two pixels at 2x and one and a
+                // quarter at 1.25x.
+                background: root.selected == row.id
+                    ? (row.keepout == 0 ? #1a6dd41f : #d418181f)
+                    : #00000000;
+                border-width: root.selected == row.id ? 2phx : 1phx;
+                border-color: row.keepout != 0
+                    ? #d41818
+                    : (root.selected == row.id
+                        ? #1a6dd4
+                        : (row.locked ? #8a8a8a : #33333388));
+
+                accessible-role: list-item;
+                accessible-item-index: i;
+                accessible-item-selectable: true;
+                accessible-item-selected: root.selected == row.id;
+                // The label is the sentence; the value is the same sentence,
+                // because the value is the half an assistive technology may
+                // write back and it has to be readable before it is writable.
+                accessible-label: row.say;
+                accessible-value: row.say;
+                accessible-action-set-value(v) => {
+                    root.set-say(row.id, v);
+                }
+
+                forward-focus: focus;
+
+                // Zero-sized on purpose, the pattern SliderBase uses: focus
+                // without taking the pointer events the TouchArea beside it
+                // needs. Selection follows focus, so Tab selects what it lands
+                // on and a click selects through focus() below - one rule, not
+                // two.
+                focus := FocusScope {
+                    x: 0phx;
+                    y: 0phx;
+                    width: 0phx;
+                    height: 0phx;
+                    focus-gained(reason) => {
+                        root.select(row.id);
+                    }
+                    key-pressed(event) => {
+                        if (event.text == Key.LeftArrow) {
+                            root.nudge(row.id, -1, 0, event.modifiers.shift);
+                            return EventResult.accept;
+                        }
+                        if (event.text == Key.RightArrow) {
+                            root.nudge(row.id, 1, 0, event.modifiers.shift);
+                            return EventResult.accept;
+                        }
+                        if (event.text == Key.UpArrow) {
+                            root.nudge(row.id, 0, -1, event.modifiers.shift);
+                            return EventResult.accept;
+                        }
+                        if (event.text == Key.DownArrow) {
+                            root.nudge(row.id, 0, 1, event.modifiers.shift);
+                            return EventResult.accept;
+                        }
+                        // Everything else - Ctrl+Z included - goes to the
+                        // canvas scope that surrounds this one.
+                        return EventResult.reject;
+                    }
+                }
+
+                grab := TouchArea {
+                    // Inflated to a size a pointer can actually hit: a 1-dot
+                    // rule is four device pixels tall at 4x and nobody can
+                    // click it. The arithmetic below does not care, because it
+                    // reads the pointer's own position rather than this area's
+                    // geometry, so the hit area is free to differ from the
+                    // frame.
+                    property <length> min-grab: 10px;
+                    width: Math.max(parent.width, self.min-grab);
+                    height: Math.max(parent.height, self.min-grab);
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    mouse-cursor: row.locked ? MouseCursor.not-allowed : MouseCursor.move;
+
+                    // Dots between the pointer and the element's origin, taken
+                    // at the press and held for the gesture.
+                    property <int> grab-x;
+                    property <int> grab-y;
+
+                    // The pointer's position in canvas dots.
+                    //
+                    // `absolute-position + mouse-x` rather than the documented
+                    // `mouse-x - pressed-x` idiom, and this is the one thing in
+                    // the file that must not be simplified. That idiom is valid
+                    // only while the TouchArea does not move; this one travels
+                    // with the element it is dragging, so each interpolated
+                    // move event reports a mouse-x measured from an origin that
+                    // has already followed the pointer, and the measured delta
+                    // decays to nothing. `absolute-position` lowers to
+                    // ItemAbsolutePosition(self) + {x: self.x, y: self.y} and
+                    // depends reactively on every ancestor's x and y, so this
+                    // sum is the pointer's position in the window whatever the
+                    // element underneath it did.
+                    function ptr-x() -> int {
+                        Math.round((self.absolute-position.x + self.mouse-x
+                                    - grid.absolute-position.x) / root.dot)
+                    }
+                    function ptr-y() -> int {
+                        Math.round((self.absolute-position.y + self.mouse-y
+                                    - grid.absolute-position.y) / root.dot)
+                    }
+
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            focus.focus();
+                            // A difference of two rounded values, so the
+                            // element does not jump to the grid under the
+                            // pointer at the press and does not drift over a
+                            // long drag: at zero movement the placement below
+                            // is exactly where the element already was.
+                            self.grab-x = self.ptr-x() - row.x;
+                            self.grab-y = self.ptr-y() - row.y;
+                            root.begin-move(row.id);
+                        }
+                        if (event.kind == PointerEventKind.up) {
+                            root.end-move(true);
+                        }
+                        if (event.kind == PointerEventKind.cancel) {
+                            root.end-move(false);
+                        }
+                    }
+
+                    moved => {
+                        if (self.pressed) {
+                            root.move-to(row.id,
+                                         self.ptr-x() - self.grab-x,
+                                         self.ptr-y() - self.grab-y);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // So a pane above can put the keyboard into the canvas.
+    public function focus-canvas() {
+        keys.focus();
+    }
+}
