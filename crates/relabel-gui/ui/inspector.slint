@@ -1,0 +1,557 @@
+import { LineEdit } from "std-widgets.slint";
+import { InsSlot } from "types.slint";
+
+// One slot of the inspector, in one of three shapes.
+//
+// # Nothing here is bound to a property a widget writes
+//
+// Measured in Slint 1.17.1: a widget's first write to a property carrying a
+// one-way binding removes that binding permanently - `Property::set` calls
+// `remove_binding` unless the binding intercepts the write, and only a two-way
+// binding does (i-slint-core-1.17.1/properties.rs:1005-1020, :348-360). A field
+// filled by `text: root.value` therefore shows the number the operator typed for
+// ever after, and hands that stale number back when the next element is
+// selected; `accessible-value` reads the same stale number, so it is an
+// accessibility defect rather than a cosmetic one. The compiler gives no
+// diagnostic for it. So `text` is assigned inside `show`, and only inside
+// `show`. Everything else - the label, the unit, the range, the step, the
+// visibility, the read-only flag - is an ordinary binding onto `spec`, which no
+// widget writes and therefore cannot destroy.
+//
+// # Why three shapes rather than one with a role that follows the field
+//
+// `accessible-role` must be a constant expression: the compiler refuses anything
+// else (passes/lower_accessibility.rs:25-38). A ternary role does not build.
+//
+// # Why a field's focus change is not the operator entering or leaving it
+//
+// `has-focus` turns false and back to true when the window loses and regains
+// activation, and when the field's own context menu opens and closes
+// (i-slint-core-1.17.1/window.rs:1395-1402, :1875, :1950). Only the TextInput is
+// told the FocusReason, and it publishes none, so a change handler cannot tell
+// those from Tab or a click. Committing on the blur wrote half a number while the
+// operator was in another window, and selecting on the matching focus-in threw
+// away the digit already typed when they came back. So entering is decided from
+// where the keyboard was - `keyboard-at` - and leaving is finished by wherever it
+// arrives: the next field, or the canvas through the shell.
+component Slot inherits Rectangle {
+    // Written by `show` and by nothing else, which is why it is private: a
+    // component may not assign to its own input property ("Assignment on a input
+    // property", measured), and nothing outside has any business setting half a
+    // slot.
+    private property <InsSlot> spec;
+
+    // The pane's label column: the same in every slot, so the fields line up.
+    // Handed down rather than fixed, because it is the widest label's own width
+    // and a number chosen by eye would drift from the style's metrics.
+    in property <length> label-width;
+    // This slot's label at its natural width, for the pane to take the widest
+    // of. Read from a Text with no constraint of its own, so it depends on the
+    // words alone and not on the column it helps to size.
+    out property <length> label-natural: caption.preferred-width;
+
+    callback edited(field: int, value: string);
+    callback commit();
+    callback stepped(field: int, by: int);
+
+    // Which slot the keyboard is in, or -1, as an operator would say it: a window
+    // losing activation or a context menu opening does not change it. Shared by all
+    // sixteen slots through a two-way binding onto the pane's, which is the one kind
+    // of binding a write does not remove.
+    in-out property <int> keyboard-at;
+    // This slot's number in that count.
+    in property <int> index;
+    // Whether this slot's editor has the keyboard at this moment, read from focus.
+    out property <bool> has-keyboard: num.has-focus || word-edit.has-focus;
+
+    // The keyboard arriving in this slot's editor, by any route.
+    function arrive() {
+        // Back in the slot the keyboard never left: neither an entry nor a visit,
+        // so nothing is committed and nothing is selected, and the digit typed
+        // before the operator switched windows is still there to type after.
+        if (root.keyboard-at == root.index) {
+            return;
+        }
+        root.keyboard-at = root.index;
+        // Whatever was typed into the field the keyboard came from. Here rather
+        // than on that field's blur, which cannot tell leaving it from the window
+        // losing activation.
+        root.commit();
+        // A number is selected on arrival by every route, not only by Tab:
+        // `TextInput` selects itself on focus-in only for
+        // FocusReason::TabNavigation, and not at all on macOS
+        // (items/text.rs:1180-1182), so a click or a programmatic focus would leave
+        // the caret in front of the number and the first digit typed would prefix
+        // it. Measured: the same keystrokes committed 37, 378 or 837 depending on
+        // how the field was entered. A word is not: a name or a template is usually
+        // entered to be corrected rather than replaced, and a text field cannot be
+        // silently changed by a prefix the way a number can.
+        if (root.spec.shape == 1) {
+            num.select-all();
+        }
+    }
+
+    // An unused slot has to leave the layout as well as the tree. `visible:
+    // false` does take an element out of the accessibility tree and out of the
+    // Tab order - measured, and the testing backend's traversal skips an
+    // invisible item too (search_api.rs:374) - but it keeps the row its height,
+    // so the height has to be taken away as well.
+    visible: root.spec.shape != 0;
+    min-height: root.spec.shape == 0 ? 0px : 32px;
+    max-height: root.spec.shape == 0 ? 0px : 32px;
+
+    public function show(s: InsSlot) {
+        root.spec = s;
+        num.text = s.value;
+        word-edit.text = s.value;
+    }
+
+    // For the pane above, handing the keyboard over. The contents are selected
+    // because a letter typed over a selected value is what the operator meant,
+    // where a digit prefixed onto the number already there is not.
+    public function take-keyboard() {
+        if (root.spec.shape == 1) {
+            num.focus();
+            num.select-all();
+        }
+        if (root.spec.shape == 2) {
+            word-edit.focus();
+            word-edit.select-all();
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        Rectangle {
+            width: root.label-width;
+            caption := Text {
+                // Placed rather than laid out, so this Rectangle's size is the
+                // column's and not the words'.
+                x: 0px;
+                height: parent.height;
+                text: root.spec.label;
+                vertical-alignment: center;
+                // The name is announced by the shape beside it, once. A second
+                // node would say it twice.
+                accessible-role: AccessibleRole.none;
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+
+            // --- a number ---
+            number := Rectangle {
+                visible: root.spec.shape == 1;
+                accessible-role: AccessibleRole.spinbox;
+                accessible-label: root.spec.label;
+                accessible-description: root.spec.unit;
+                // What an empty field stands for. The LineEdit below shows it as a
+                // placeholder, but that LineEdit is `accessible-role: none` and is
+                // flattened out of the tree (accessibility.rs:74-114), so the node a
+                // reader lands on has to say it.
+                accessible-placeholder-text: root.spec.hint;
+                accessible-value: num.text;
+                accessible-value-minimum: root.spec.minimum;
+                accessible-value-maximum: root.spec.maximum;
+                accessible-value-step: root.spec.step;
+                accessible-read-only: root.spec.read-only;
+                // A whole value arrives at once, so it stages and commits in one
+                // go. Guarded on read-only here because neither SpinBox's nor
+                // LineEdit's own set-value action checks it - measured: a
+                // read-only LineEdit still answers a write through the tree.
+                accessible-action-set-value(v) => {
+                    if (!root.spec.read-only) {
+                        root.edited(root.spec.field, v);
+                        root.commit();
+                    }
+                }
+                accessible-action-increment => {
+                    if (!root.spec.read-only) {
+                        root.stepped(root.spec.field, 1);
+                    }
+                }
+                accessible-action-decrement => {
+                    if (!root.spec.read-only) {
+                        root.stepped(root.spec.field, -1);
+                    }
+                }
+
+                // Up and Down, for the price of no Tab stop at all. `enabled` and
+                // `focus-on-tab-navigation` are consulted when focus arrives
+                // (items/input_items.rs:650) and never when a key is captured
+                // (:556-579), so a scope that refuses focus still sees the key on
+                // its way down to the field. Without this the role `spinbox`
+                // would announce a spin button with nothing to spin it by.
+                steps := FocusScope {
+                    focus-on-tab-navigation: false;
+                    focus-on-click: false;
+                    capture-key-pressed(event) => {
+                        if (event.text == Key.UpArrow && !root.spec.read-only) {
+                            root.stepped(root.spec.field, 1);
+                            return EventResult.accept;
+                        }
+                        if (event.text == Key.DownArrow && !root.spec.read-only) {
+                            root.stepped(root.spec.field, -1);
+                            return EventResult.accept;
+                        }
+                        return EventResult.reject;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        num := LineEdit {
+                            // The field is one node, and it is the shape above:
+                            // the pattern SpinBox uses for its own TextInput
+                            // (spinbox-base.slint:79-80). Without this the pane
+                            // would publish a labelled box containing an
+                            // unlabelled one whose own set-value action writes
+                            // text the document never hears about.
+                            accessible-role: AccessibleRole.none;
+                            // The style's own minimum, so the pane does not grow
+                            // as the operator types a longer value.
+                            preferred-width: self.min-width;
+                            horizontal-alignment: right;
+                            read-only: root.spec.read-only;
+                            placeholder-text: root.spec.hint;
+                            edited(t) => {
+                                root.edited(root.spec.field, t);
+                            }
+                            accepted(t) => {
+                                root.commit();
+                            }
+                            // Focus arriving only; a focus loss does nothing
+                            // here, for the reason at the top of this file.
+                            changed has-focus => {
+                                if (self.has-focus) {
+                                    root.arrive();
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: root.spec.unit;
+                            vertical-alignment: center;
+                            // At most as wide as the field it follows, and elided
+                            // past that: the whole unit is the description an
+                            // assistive technology reads.
+                            max-width: num.min-width;
+                            overflow: elide;
+                            accessible-role: AccessibleRole.none;
+                        }
+                    }
+                }
+            }
+
+            // --- a string ---
+            word := Rectangle {
+                visible: root.spec.shape == 2;
+                accessible-role: AccessibleRole.text-input;
+                accessible-label: root.spec.label;
+                accessible-description: root.spec.unit;
+                accessible-placeholder-text: root.spec.hint;
+                accessible-value: word-edit.text;
+                accessible-read-only: root.spec.read-only;
+                accessible-action-set-value(v) => {
+                    if (!root.spec.read-only) {
+                        root.edited(root.spec.field, v);
+                        root.commit();
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    word-edit := LineEdit {
+                        accessible-role: AccessibleRole.none;
+                        preferred-width: self.min-width;
+                        read-only: root.spec.read-only;
+                        placeholder-text: root.spec.hint;
+                        edited(t) => {
+                            root.edited(root.spec.field, t);
+                        }
+                        accepted(t) => {
+                            root.commit();
+                        }
+                        changed has-focus => {
+                            if (self.has-focus) {
+                                root.arrive();
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.spec.unit;
+                        vertical-alignment: center;
+                        max-width: word-edit.min-width;
+                        overflow: elide;
+                        accessible-role: AccessibleRole.none;
+                    }
+                }
+            }
+
+            // --- shown, not edited ---
+            //
+            // A Text rather than a disabled editor, so an assistive technology is
+            // not offered a value it cannot set. Bound, safely: nothing writes a
+            // Text.
+            read := Rectangle {
+                visible: root.spec.shape == 3;
+                accessible-role: AccessibleRole.text;
+                accessible-label: root.spec.label;
+                accessible-value: root.spec.value;
+                accessible-description: root.spec.unit;
+
+                HorizontalLayout {
+                    Text {
+                        text: root.spec.value;
+                        vertical-alignment: center;
+                        // Asks for no width of its own, so a long sentence is
+                        // elided inside the pane rather than widening it.
+                        preferred-width: 0px;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                        accessible-role: AccessibleRole.none;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The selected element's fields.
+//
+// A fixed run of slots rather than a form of named per-kind controls, because
+// which fields an element has is `Element::own_keys`'s answer and a second copy
+// here is the one that would go stale - and because a name inside an `if` block
+// cannot be reached from the component that has to push into it ("Cannot access
+// id", measured), so per-kind sections could not be refreshed at all.
+//
+// A fixed *length*, written one row at a time, rather than a model that grows
+// and shrinks: `VecModel::set_vec` emits a model reset, and a reset drops the
+// repeater instance holding the keyboard focus - the defect
+// `tests/focus_after_undo.rs` already pins for the canvas.
+export component Inspector inherits Rectangle {
+    in property <[InsSlot]> slots;
+    in property <string> heading;
+    // Nothing selected. The whole pane leaves the accessibility tree and the Tab
+    // order rather than offering fields that edit nothing.
+    in property <bool> shown;
+
+    callback field-edited(field: int, value: string);
+    callback field-commit();
+    callback field-stepped(field: int, by: int);
+
+    // Which slot the keyboard is in, or -1; see `Slot.arrive`. Set by a slot when
+    // the keyboard arrives in it and by the shell when the canvas takes it.
+    in-out property <int> keyboard-at: -1;
+    // Whether a field has the keyboard at this moment. Read from focus rather than
+    // remembered, so the shell's F6 goes the right way however the keyboard got
+    // where it is - by F6, Tab, Shift+Tab, a click or an assistive technology.
+    out property <bool> has-keyboard: f0.has-keyboard || f1.has-keyboard || f2.has-keyboard
+        || f3.has-keyboard || f4.has-keyboard || f5.has-keyboard || f6.has-keyboard
+        || f7.has-keyboard || f8.has-keyboard || f9.has-keyboard || f10.has-keyboard
+        || f11.has-keyboard || f12.has-keyboard || f13.has-keyboard || f14.has-keyboard
+        || f15.has-keyboard;
+
+    // No fixed width: the pane is as narrow as its widest field needs, so there
+    // is no magic number for anyone to maintain and none to drift from the
+    // widgets' own metrics. It must not stretch, because the canvas beside it is
+    // routinely wider than the window and would give away the column's width.
+    horizontal-stretch: 0;
+
+    property <length> label-width: max(
+        f0.label-natural, f1.label-natural, f2.label-natural, f3.label-natural,
+        f4.label-natural, f5.label-natural, f6.label-natural, f7.label-natural,
+        f8.label-natural, f9.label-natural, f10.label-natural, f11.label-natural,
+        f12.label-natural, f13.label-natural, f14.label-natural, f15.label-natural);
+
+    // One call refreshes the pane. Written out rather than generated: a macro
+    // would hide the one thing a reader has to be able to check, which is that
+    // every slot is assigned and no slot is bound.
+    public function show-fields() {
+        f0.show(root.slots[0]);
+        f1.show(root.slots[1]);
+        f2.show(root.slots[2]);
+        f3.show(root.slots[3]);
+        f4.show(root.slots[4]);
+        f5.show(root.slots[5]);
+        f6.show(root.slots[6]);
+        f7.show(root.slots[7]);
+        f8.show(root.slots[8]);
+        f9.show(root.slots[9]);
+        f10.show(root.slots[10]);
+        f11.show(root.slots[11]);
+        f12.show(root.slots[12]);
+        f13.show(root.slots[13]);
+        f14.show(root.slots[14]);
+        f15.show(root.slots[15]);
+    }
+
+    // The first slot is always the name, which is a string, so the keyboard lands
+    // somewhere a letter is the right first keystroke.
+    public function take-keyboard() {
+        if (root.shown) {
+            f0.take-keyboard();
+        }
+    }
+
+    pane := Rectangle {
+        visible: root.shown;
+        // There is no form or panel role worth having; `groupbox` is the honest
+        // one, and its description is what the canvas calls this element, so a
+        // reader entering the pane hears what it is about to edit.
+        accessible-role: AccessibleRole.groupbox;
+        accessible-label: "Element";
+        accessible-description: root.heading;
+
+        VerticalLayout {
+            padding: 8px;
+            spacing: 4px;
+            alignment: start;
+
+            Text {
+                text: root.heading;
+                // Asks for no width of its own, for the same reason as a read
+                // row: a long name is elided rather than widening the pane.
+                preferred-width: 0px;
+                overflow: elide;
+                accessible-role: AccessibleRole.text;
+                accessible-label: "Selected element";
+                accessible-value: root.heading;
+            }
+
+            // Sixteen, because the widest kind - a Text element - needs
+            // fourteen, and two spare mean the next field added is a change to
+            // one Rust file.
+            f0 := Slot {
+                index: 0;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f1 := Slot {
+                index: 1;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f2 := Slot {
+                index: 2;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f3 := Slot {
+                index: 3;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f4 := Slot {
+                index: 4;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f5 := Slot {
+                index: 5;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f6 := Slot {
+                index: 6;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f7 := Slot {
+                index: 7;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f8 := Slot {
+                index: 8;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f9 := Slot {
+                index: 9;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f10 := Slot {
+                index: 10;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f11 := Slot {
+                index: 11;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f12 := Slot {
+                index: 12;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f13 := Slot {
+                index: 13;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f14 := Slot {
+                index: 14;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+            f15 := Slot {
+                index: 15;
+                keyboard-at <=> root.keyboard-at;
+                label-width: root.label-width;
+                edited(f, v) => { root.field-edited(f, v); }
+                commit() => { root.field-commit(); }
+                stepped(f, b) => { root.field-stepped(f, b); }
+            }
+        }
+    }
+}

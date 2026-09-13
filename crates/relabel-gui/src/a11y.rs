@@ -30,7 +30,17 @@ pub fn say(
     s.push_str(kind);
     if !name.is_empty() {
         s.push_str(" \u{2018}");
-        s.push_str(name);
+        // The two quote marks are the name's delimiters in this sentence, so a
+        // name carrying one is spoken with a plain apostrophe in its place.
+        // `parse_say` already cuts to the last closing quote and reads such a
+        // sentence back correctly without this; neutralising keeps the marks
+        // meaning one thing to whatever else reads the sentence - a reader who
+        // hears punctuation, or a second parser that cuts at the first quote.
+        // Only the sentence changes: the file keeps the name as it was typed.
+        s.extend(name.chars().map(|c| match c {
+            '\u{2018}' | '\u{2019}' => '\'',
+            c => c,
+        }));
         s.push('\u{2019}');
     }
     s.push_str(&format!(
@@ -183,5 +193,46 @@ mod tests {
         let said = say("Text", "SKU", frame(-40, 4, 96, 24), false, true, None);
         assert!(said.ends_with(", off the label"), "{said}");
         assert!(!said.contains("tail"), "{said}");
+    }
+
+    /// A name field makes any name reachable, including one written to look like
+    /// the end of the name and the start of a placement.
+    #[test]
+    fn a_name_carrying_the_sentences_own_quote_marks_still_reads_back_as_its_placement() {
+        let f = frame(5, 6, 96, 24);
+        for name in [
+            "\u{2019}, feed 77, head 88",
+            "\u{2018}feed 1 head 2\u{2019}",
+            "Joe\u{2019}s \u{2018}best\u{2019}",
+        ] {
+            let said = say("Text", name, f, false, false, None);
+            assert_eq!(parse_say(&said), Some((5, 6)), "{said}");
+            assert_eq!(said.matches('\u{2018}').count(), 1, "{said}");
+            assert_eq!(said.matches('\u{2019}').count(), 1, "{said}");
+        }
+    }
+
+    /// The sentence is a rendering of the name, not the name: what is saved is
+    /// what the operator typed, quote marks and all.
+    #[test]
+    fn the_file_keeps_the_name_the_operator_typed_even_when_the_sentence_cannot() {
+        use relabel_render::document::{Common, Element, ElementOrRaw, Label, RectEl};
+        use relabel_render::target::Dpmm;
+        let typed = "Joe\u{2019}s \u{2018}best\u{2019}";
+        let mut common = Common::new(1, frame(5, 6, 40, 24));
+        common.name = typed.to_string();
+        let mut label = Label::new(320, 96, Dpmm::DPI_203);
+        label.elements = vec![ElementOrRaw::Known(Element::Rect(RectEl {
+            common,
+            stroke_dots: 0,
+            radius_dots: 0,
+        }))];
+        let saved = label.to_json().expect("a writable label");
+        let back = Label::from_json(&saved).expect("a readable label");
+        let name = &back.elements[0].known().expect("a rectangle").common().name;
+        assert_eq!(name, typed);
+        let said = say("Rectangle", name, frame(5, 6, 40, 24), false, false, None);
+        assert!(said.contains("Joe's 'best'"), "{said}");
+        assert!(!said.contains(typed), "{said}");
     }
 }

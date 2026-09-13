@@ -12,6 +12,13 @@ use slint::{Model, ModelRc, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// How the canvas tells a pane beside it that the document may have changed: the
+/// window, and the document to read the pane's values from.
+///
+/// A closure rather than a trait bound on `Canvas`, so the canvas needs to know
+/// nothing about the inspector's own trait and no existing probe changes.
+pub(crate) type PanePush<H> = Rc<dyn Fn(&H, &Doc)>;
+
 /// The canvas's own state: the document, the rows on screen and the zoom.
 pub struct Canvas<H: CanvasHost> {
     doc: Doc,
@@ -24,6 +31,12 @@ pub struct Canvas<H: CanvasHost> {
     rows: Rc<VecModel<H::Row>>,
     zoom: u32,
     pane: Pane,
+    /// Told after every outcome, when there is a pane above to tell.
+    ///
+    /// Monomorphic in `H`, so the canvas needs to know nothing about the
+    /// inspector's own trait, `CanvasHost` does not grow a pane-shaped hole, and
+    /// no existing probe changes.
+    push_ins: Option<PanePush<H>>,
 }
 
 /// Whole device pixels per dot. Four, because one dot of a 203 dpi head is an
@@ -39,11 +52,24 @@ impl<H: CanvasHost> Canvas<H> {
             rows: Rc::new(VecModel::default()),
             zoom: DEFAULT_ZOOM,
             pane: Pane::default(),
+            push_ins: None,
         }
     }
 
     pub fn doc(&self) -> &Doc {
         &self.doc
+    }
+
+    /// For `ins::wire`, which applies its own commands to the same document.
+    pub(crate) fn doc_mut(&mut self) -> &mut Doc {
+        &mut self.doc
+    }
+
+    /// Install the pane's push. `publish` does not call it: the `Everything` arm
+    /// of `refresh` calls `publish`, and the pane would then be pushed twice for
+    /// one outcome.
+    pub(crate) fn tell_pane(&mut self, push: PanePush<H>) {
+        self.push_ins = Some(push);
     }
 
     pub fn zoom(&self) -> u32 {
@@ -82,13 +108,19 @@ impl<H: CanvasHost> Canvas<H> {
         self.repaint(host);
     }
 
-    /// What one outcome costs: at most one row written and one repaint.
-    fn refresh(&mut self, host: &H, out: Outcome) {
+    /// What one outcome costs: at most one row written, one repaint, and the
+    /// pane's sixteen slots.
+    pub(crate) fn refresh(&mut self, host: &H, out: Outcome) {
+        // Unconditional, and no longer the `Selection` arm's job: a commit flushed
+        // by a selection yields `Row(a)`, and an arm that only drew the row would
+        // leave the border on the element the operator just left. Setting the
+        // same id again marks nothing dirty.
+        host.set_selected(self.doc.selected().map_or(-1, |id| id as i32));
         match out.effect {
             Effect::Nothing => {}
-            Effect::Selection => {
-                host.set_selected(self.doc.selected().map_or(-1, |id| id as i32));
-            }
+            // The selection was pushed above; the variant means only that there
+            // is nothing to redraw.
+            Effect::Selection => {}
             Effect::Row(id) => {
                 if let Some(s) = self.doc.shown_one(id) {
                     // The row is rebuilt whole in Rust and written with
@@ -102,6 +134,14 @@ impl<H: CanvasHost> Canvas<H> {
                 self.repaint(host);
             }
             Effect::Everything => self.publish(host),
+        }
+        // Also unconditional, and deliberately not keyed to the effect.
+        // `Effect::Nothing` is exactly what a refused edit and a placement clamped
+        // onto the value the element already held return, and those are the two
+        // cases where a field is holding something the document does not. After
+        // the rows, so the numbers describe the rows the canvas now shows.
+        if let Some(push) = self.push_ins.clone() {
+            push(host, &self.doc);
         }
         if let Some(note) = out.note {
             host.set_status(note.as_str().into());

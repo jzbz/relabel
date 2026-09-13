@@ -65,6 +65,12 @@ export component LabelCanvas {
     callback set-say(id: int, value: string);
     callback undo();
     callback redo();
+    // The keyboard arrived on the canvas surface rather than on an element: a
+    // click on bare canvas, or `focus-canvas` below. A callback of its own because
+    // it selects nothing, and a pane beside the canvas has no other way to learn
+    // that the keyboard left it with an edit still to finish. Not raised when a
+    // window or a popup hands the keyboard back, which is a return, not an arrival.
+    callback surface-focused();
 
     // One printer dot as a length.
     out property <length> dot: root.zoom * 1phx;
@@ -82,8 +88,17 @@ export component LabelCanvas {
     // The canvas-wide key handler. It surrounds the per-element FocusScopes,
     // so a key an element rejected arrives here.
     keys := FocusScope {
+        focus-gained(reason) => {
+            if (reason != FocusReason.window-activation
+                && reason != FocusReason.popup-activation) {
+                root.surface-focused();
+            }
+        }
         key-pressed(event) => {
-            if (event.modifiers.control && event.text == "z") {
+            // Both cases: a keyboard sends Ctrl+Shift+Z with the shifted character,
+            // which is why Slint's own shortcut table matches "z" | "Z" for Redo
+            // (i-slint-core input.rs:991-996).
+            if (event.modifiers.control && (event.text == "z" || event.text == "Z")) {
                 if (event.modifiers.shift) { root.redo(); } else { root.undo(); }
                 return EventResult.accept;
             }
@@ -174,9 +189,19 @@ export component LabelCanvas {
                 // needs. Selection follows focus, so Tab selects what it lands
                 // on and a click selects through focus() below - one rule, not
                 // two.
+                //
+                // On the part of the frame that is on the canvas, not at the frame's
+                // origin. Tab skips a focus item whose own geometry is outside a
+                // clipping ancestor (i-slint-core item_tree.rs:399-410,
+                // window.rs:1327), and a point at the origin is outside the canvas
+                // as soon as the placement is negative - which `keep_reachable`
+                // allows until one dot is left, so an element with 39 of its 40
+                // dots in view had dropped out of the Tab order, and Tab is the only
+                // keyboard route back to it. `grid`'s offset is taken off too, since
+                // it can put a point at the canvas's own edge a fraction outside.
                 focus := FocusScope {
-                    x: 0phx;
-                    y: 0phx;
+                    x: Math.max(0phx, -row.x * root.dot - grid.x);
+                    y: Math.max(0phx, -row.y * root.dot - grid.y);
                     width: 0phx;
                     height: 0phx;
                     focus-gained(reason) => {

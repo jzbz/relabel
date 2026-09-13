@@ -84,13 +84,30 @@ pub fn keep_reachable(bounds: &Bounds, drawn: RectDots, feed: i32, head: i32) ->
     )
 }
 
-/// One axis of [`keep_reachable`]. A frame with no extent along this axis has
-/// no dots to keep on the canvas, so it is held inside the canvas itself.
+/// The interval a placement may land in on one axis: far enough on that one dot
+/// of the element is still on the canvas.
+///
+/// Split out of [`keep_reachable`] rather than restated, because the inspector
+/// announces this interval to a reader and the editor enforces it - and a field
+/// that announced a bound the editor did not keep would be worse than a field
+/// with no bound at all. Both branches are here, including the one a frame with
+/// no extent along this axis takes: it has no dots to keep on the canvas, so it
+/// is held inside the canvas itself.
+pub fn reach(len: i32, canvas: i32) -> (i32, i32) {
+    let r = if len <= 0 {
+        (0, canvas.max(0))
+    } else {
+        (1 - len, (canvas - 1).max(0))
+    };
+    debug_assert!(r.0 <= r.1, "an axis with no room to land in: {r:?}");
+    r
+}
+
+/// One axis of [`keep_reachable`], clamped to exactly the interval [`reach`]
+/// announces.
 fn keep_axis(pos: i32, len: i32, canvas: i32) -> i32 {
-    if len <= 0 {
-        return pos.clamp(0, canvas.max(0));
-    }
-    pos.clamp(1 - len, (canvas - 1).max(0))
+    let (lo, hi) = reach(len, canvas);
+    pos.clamp(lo, hi)
 }
 
 /// Whether a drawn frame lies wholly inside the canvas.
@@ -219,5 +236,47 @@ mod tests {
         let label = Label::new(96, 320, Dpmm::DPI_203);
         let b = Bounds::of(&label);
         assert_eq!(keep_reachable(&b, frame(0, 0, 0, 0), -4, 9000), (0, 320));
+    }
+
+    /// Every placement inside the announced interval is kept exactly, and every
+    /// one outside it lands on the interval's nearer edge - so a field that
+    /// announces `reach` is announcing what the editor will do.
+    #[test]
+    fn the_interval_a_placement_may_land_in_is_the_one_the_clamp_enforces() {
+        let label = Label::new(96, 320, Dpmm::DPI_203);
+        let b = Bounds::of(&label);
+        for drawn in [
+            frame(0, 0, 24, 40),
+            frame(0, 0, 400, 1),
+            frame(0, 0, 1, 900),
+        ] {
+            let feed = reach(drawn.feed_len, b.canvas.feed_len);
+            let head = reach(drawn.head_len, b.canvas.head_len);
+            for f in feed.0 - 3..=feed.1 + 3 {
+                for h in [head.0 - 1, head.0, head.1, head.1 + 1] {
+                    assert_eq!(
+                        keep_reachable(&b, drawn, f, h),
+                        (f.clamp(feed.0, feed.1), h.clamp(head.0, head.1)),
+                        "{drawn:?} at feed {f}, head {h}"
+                    );
+                }
+            }
+        }
+        assert_eq!(reach(24, 96), (-23, 95));
+    }
+
+    /// The two branches differ, which is why the interval is computed once: a
+    /// frame with no extent along an axis restated as `1 - len ..= canvas - 1`
+    /// would be announced as 1 to 319 and then held in 0 to 320.
+    #[test]
+    fn a_frame_with_no_extent_announces_the_interval_it_is_actually_held_in() {
+        let label = Label::new(96, 320, Dpmm::DPI_203);
+        let b = Bounds::of(&label);
+        assert_eq!(reach(0, 320), (0, 320));
+        assert_ne!(reach(0, 320), (1, 319));
+        assert_eq!(
+            keep_reachable(&b, frame(0, 0, 0, 0), -4, 9000),
+            (reach(0, 96).0, reach(0, 320).1)
+        );
     }
 }

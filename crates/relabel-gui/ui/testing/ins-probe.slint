@@ -1,0 +1,69 @@
+import { Designer } from "../shell.slint";
+import { ElRow, InsSlot } from "../types.slint";
+
+export { ElRow, InsSlot }
+
+// The application's shell in a window of its own, compiled a second time with
+// debug info so that ElementHandle can see the element tree. It imports the
+// shipped shell rather than restating it, so a test drives the same F6, Tab and
+// Ctrl+Z code the application runs, and the pane it measures is the pane an
+// operator gets.
+//
+// Fixed at the application window's preferred size, because what the pane costs
+// the canvas beside it is measured against that size.
+export component InsProbe inherits Window {
+    in property <image> plane <=> shell.plane;
+    in property <int> plane-px-w <=> shell.plane-px-w;
+    in property <int> plane-px-h <=> shell.plane-px-h;
+    in property <int> dots-x <=> shell.dots-x;
+    in property <int> dots-y <=> shell.dots-y;
+    in property <[ElRow]> rows <=> shell.rows;
+    in property <int> selected <=> shell.selected;
+    in property <int> zoom <=> shell.zoom;
+    in property <[InsSlot]> ins-slots <=> shell.ins-slots;
+    in property <string> ins-heading <=> shell.ins-heading;
+    in property <bool> ins-shown <=> shell.ins-shown;
+    in property <string> status <=> shell.status;
+
+    callback select(id: int);
+    callback begin-move(id: int);
+    callback move-to(id: int, x: int, y: int);
+    callback end-move(committed: bool);
+    callback nudge(id: int, dx: int, dy: int, coarse: bool);
+    callback set-say(id: int, value: string);
+    callback undo();
+    callback redo();
+    callback field-edited(field: int, value: string);
+    callback field-commit();
+    callback field-stepped(field: int, by: int);
+
+    public function show-fields() {
+        shell.show-fields();
+    }
+
+    public function focus-canvas() {
+        shell.focus-canvas();
+    }
+
+    width: 900px;
+    height: 600px;
+    background: #ffffff;
+
+    shell := Designer {
+        // A component with no base of its own is placed at its preferred size
+        // and centred, which would leave the canvas column no width at all.
+        width: 100%;
+        height: 100%;
+        select(id) => { root.select(id); }
+        begin-move(id) => { root.begin-move(id); }
+        move-to(id, x, y) => { root.move-to(id, x, y); }
+        end-move(c) => { root.end-move(c); }
+        nudge(id, dx, dy, c) => { root.nudge(id, dx, dy, c); }
+        set-say(id, v) => { root.set-say(id, v); }
+        undo() => { root.undo(); }
+        redo() => { root.redo(); }
+        field-edited(f, v) => { root.field-edited(f, v); }
+        field-commit() => { root.field-commit(); }
+        field-stepped(f, b) => { root.field-stepped(f, b); }
+    }
+}

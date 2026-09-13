@@ -1,19 +1,22 @@
 //! The relabel desktop application.
 //!
-//! The first slice is one pane: the label as dots, with a frame round every
-//! element, and placement by pointer or by keyboard. The document lives in
-//! Rust; the `.slint` side holds a flat model of rows and no rules at all.
+//! Two panes: the label as dots, with a frame round every element and placement
+//! by pointer or by keyboard, and beside it the selected element's fields. The
+//! document lives in Rust; the `.slint` side holds flat models of rows and slots
+//! and no rules at all.
 
 pub mod a11y;
 pub mod canvas;
 pub mod doc;
 pub mod geom;
+pub mod ins;
 pub mod preview;
 pub mod rows;
 
 slint::include_modules!();
 
 impl_canvas_host!(AppWindow, ElRow);
+impl_ins_host!(AppWindow, InsSlot);
 
 /// Open a label and show it.
 pub fn run_app(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -27,6 +30,7 @@ pub fn run_app(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>>
     let ui = AppWindow::new()?;
     let first = doc.orientation_note();
     let canvas = canvas::wire(&ui, doc);
+    ins::wire(&ui, &canvas);
     {
         let c = canvas.borrow();
         let undrawable = c.doc().undrawable();
@@ -40,6 +44,10 @@ pub fn run_app(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>>
             .into(),
         );
     }
+    // So the window opens with the keyboard in the canvas: F6 is a capture, and
+    // the capture list is built from the focused item's ancestor chain, which is
+    // empty when nothing has focus.
+    ui.invoke_focus_canvas();
     ui.run()?;
     Ok(())
 }

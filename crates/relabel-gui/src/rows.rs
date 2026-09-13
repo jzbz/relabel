@@ -142,6 +142,82 @@ macro_rules! impl_canvas_host {
     };
 }
 
+/// One inspector slot, whichever compiled component it belongs to.
+pub trait InsRow: Clone + 'static {
+    fn of(s: &crate::ins::Slot) -> Self;
+}
+
+/// The inspector's half of a window.
+///
+/// A separate trait from [`CanvasHost`], and a separate `ins::wire`, so the
+/// canvas probes - which have no inspector - compile and pass untouched, and so
+/// the pane stays a pane rather than becoming part of the canvas.
+pub trait InsHost: CanvasHost {
+    type Slot: InsRow;
+
+    fn set_ins_slots(&self, slots: slint::ModelRc<Self::Slot>);
+    fn set_ins_heading(&self, heading: slint::SharedString);
+    fn set_ins_shown(&self, shown: bool);
+    /// Not a setter: the one call that assigns the properties the widgets write
+    /// themselves, so no property on the window holds a copy for a widget's own
+    /// write to orphan. Called after the slots are written, never before.
+    fn invoke_show_fields(&self);
+
+    fn on_field_edited(&self, f: impl FnMut(i32, slint::SharedString) + 'static);
+    fn on_field_commit(&self, f: impl FnMut() + 'static);
+    fn on_field_stepped(&self, f: impl FnMut(i32, i32) + 'static);
+}
+
+/// Bind a compiled window and its slot struct to the wiring in [`crate::ins`].
+/// Called once for the application and once for the inspector's test probe.
+#[macro_export]
+macro_rules! impl_ins_host {
+    ($win:ty, $slot:path) => {
+        impl $crate::rows::InsRow for $slot {
+            fn of(s: &$crate::ins::Slot) -> $slot {
+                $slot {
+                    shape: s.shape.ordinal(),
+                    field: s.field.token(),
+                    label: s.field.label().into(),
+                    unit: s.field.unit().into(),
+                    hint: s.field.hint().into(),
+                    value: s.value.as_str().into(),
+                    minimum: s.min,
+                    maximum: s.max,
+                    step: s.step,
+                    read_only: s.read_only,
+                }
+            }
+        }
+
+        impl $crate::rows::InsHost for $win {
+            type Slot = $slot;
+
+            fn set_ins_slots(&self, slots: slint::ModelRc<$slot>) {
+                <$win>::set_ins_slots(self, slots)
+            }
+            fn set_ins_heading(&self, heading: slint::SharedString) {
+                <$win>::set_ins_heading(self, heading)
+            }
+            fn set_ins_shown(&self, shown: bool) {
+                <$win>::set_ins_shown(self, shown)
+            }
+            fn invoke_show_fields(&self) {
+                <$win>::invoke_show_fields(self)
+            }
+            fn on_field_edited(&self, f: impl FnMut(i32, slint::SharedString) + 'static) {
+                <$win>::on_field_edited(self, f)
+            }
+            fn on_field_commit(&self, f: impl FnMut() + 'static) {
+                <$win>::on_field_commit(self, f)
+            }
+            fn on_field_stepped(&self, f: impl FnMut(i32, i32) + 'static) {
+                <$win>::on_field_stepped(self, f)
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

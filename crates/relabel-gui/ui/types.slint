@@ -29,3 +29,42 @@ export struct ElRow {
     // preflight reads, so a red frame and a refused run cannot disagree.
     keepout: int,
 }
+
+// One field of the inspector, whichever field it happens to be this selection.
+//
+// Every string here was formatted in Rust, every number decided there. The pane
+// parses nothing, formats nothing, converts no unit, enforces no range, and does
+// not know that element kinds exist: `Element::own_keys` answers which fields a
+// kind has, and that answer must not exist twice.
+export struct InsSlot {
+    // 0 unused, 1 a number, 2 a string, 3 read-only. Not an exported Slint enum,
+    // for `ElRow.keepout`'s reason: a shape this build does not know must draw as
+    // nothing rather than fall out of a match.
+    shape: int,
+    // An opaque token minted by relabel-gui's `ins` module and handed straight
+    // back in the callbacks. Nothing in this file reads it or compares it, which
+    // is why an integer is safe here where a spelled key would invite a typo no
+    // compiler would catch.
+    field: int,
+    // Drawn beside the field, and announced as its name. A field nobody can see
+    // the name of is not a keyboard path.
+    label: string,
+    // The value, as Rust formatted it. Assigned into the widget by `show`, never
+    // bound to it: see the note at the top of `inspector.slint`.
+    value: string,
+    // The unit, drawn after the field and announced as its description: "dots",
+    // "degrees", or the spellings an open value set takes.
+    unit: string,
+    // What an empty field means. Shown as placeholder text, so it is only ever
+    // read when the field is in fact empty.
+    hint: string,
+    // Announced to an assistive technology, never enforced by a widget: a widget
+    // that enforced a range would be the second place the rules live, and the
+    // silent one.
+    minimum: float,
+    maximum: float,
+    // What one increment is, in this field's own unit. Settable here, unlike a
+    // std SpinBox's, which announces (maximum - minimum) / 100.
+    step: float,
+    read-only: bool,
+}

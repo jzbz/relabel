@@ -164,3 +164,32 @@ fn control_z_reaches_the_canvas_from_a_focused_element() {
         "Ctrl+Z was pressed while an element had focus"
     );
 }
+
+/// A keyboard sends Ctrl+Shift+Z with the shifted character: winit's logical key
+/// keeps every modifier but Ctrl, so the text is "Z", and Slint's own shortcut
+/// table matches both cases for Redo for that reason (i-slint-core input.rs:991-996).
+#[test]
+fn control_shift_z_as_a_keyboard_sends_it_redoes_on_the_canvas() {
+    let (ui, canvas) = probe(reference_label());
+    focus_row(&ui, 0);
+    key(&ui, Key::RightArrow, false);
+    let w = ui.window();
+    w.dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    w.dispatch_event(WindowEvent::KeyPressed { text: "z".into() });
+    w.dispatch_event(WindowEvent::KeyReleased { text: "z".into() });
+    assert_eq!(frame_of(canvas.borrow().doc().label(), 1).feed, 8, "undone");
+    w.dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Shift.into(),
+    });
+    w.dispatch_event(WindowEvent::KeyPressed { text: "Z".into() });
+    w.dispatch_event(WindowEvent::KeyReleased { text: "Z".into() });
+    w.dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Shift.into(),
+    });
+    w.dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
+    assert_eq!(frame_of(canvas.borrow().doc().label(), 1).feed, 9, "redone");
+}

@@ -82,6 +82,8 @@ Items marked *(settled)* have since been answered — see `PROTOCOL-NOTES.md`. T
 **20. Accessibility of a canvas editor: not mentioned once.** rpgp enables Slint's `accessibility` feature. A drag-and-drop label designer plus a 1-bit bitmap preview is close to the worst case for a screen reader.
 → At minimum decide whether element properties are editable by keyboard/numeric fields (they should be) rather than drag-only.
 
+**Answered, in the inspector slice.** Element properties are editable by keyboard, and that is the primary path rather than a concession: every field publishes a role, a name, a unit, a range, a step and a read-only flag, accepts an assistive technology's set-value and increment as first-class inputs, and is reachable by Tab or by F6 from the canvas. The canvas stays `list` / `list-item` with the sentence as both label and value. The status line is a polite live region, which is the channel a refusal is announced on. Two limits are recorded rather than solved: an element the window's clip cuts off entirely is hidden from the accessibility tree and skipped by Tab (`i-slint-backend-winit/accesskit.rs:576`, `i-slint-core/window.rs:1327`), which a fit-or-zoom control fixes and a `ScrollView` does not; and flag controls are still read-only rows, so a locked element cannot be unlocked from the pane.
+
 **21. Font licensing.** `rendering` recommends embedding fonts (correct, given the fontconfig-dlopen escape) and never says which fonts, under what licence, or how the user adds their own. Embedding a font is a redistribution decision in an MIT repo.
 → Pick OFL fonts, record them in `THIRD-PARTY.md`, and design a user-font path (`fontique::Collection::register_fonts`).
 

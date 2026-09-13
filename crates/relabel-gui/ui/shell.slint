@@ -1,0 +1,222 @@
+import { LabelCanvas } from "canvas.slint";
+import { Inspector } from "inspector.slint";
+import { ElRow, InsSlot } from "types.slint";
+
+// The two panes, the keys that move between them, and the status line.
+//
+// A component of its own rather than the body of the application window,
+// because it is behaviour - F6 between the panes, Ctrl+Z from inside a field,
+// the Tab order across both - and behaviour only the application window carried
+// could not be tested: the test probe is what is compiled with debug info, and a
+// probe that restated this would drift from it. Both windows are a thin `Window`
+// round this component, so they run the same code.
+export component Designer {
+    // --- the canvas, forwarded unchanged ---
+    in property <image> plane <=> canvas.plane;
+    in property <int> plane-px-w <=> canvas.plane-px-w;
+    in property <int> plane-px-h <=> canvas.plane-px-h;
+    in property <int> dots-x <=> canvas.dots-x;
+    in property <int> dots-y <=> canvas.dots-y;
+    in property <[ElRow]> rows <=> canvas.rows;
+    in property <int> selected <=> canvas.selected;
+    in property <int> zoom <=> canvas.zoom;
+
+    // --- the inspector ---
+    in property <[InsSlot]> ins-slots <=> inspector.slots;
+    in property <string> ins-heading <=> inspector.heading;
+    in property <bool> ins-shown <=> inspector.shown;
+
+    in property <string> status;
+
+    callback select(id: int);
+    callback begin-move(id: int);
+    callback move-to(id: int, x: int, y: int);
+    callback end-move(committed: bool);
+    callback nudge(id: int, dx: int, dy: int, coarse: bool);
+    callback set-say(id: int, value: string);
+    callback undo();
+    callback redo();
+
+    callback field-edited(field: int, value: string);
+    callback field-commit();
+    callback field-stepped(field: int, by: int);
+
+    // Called from Rust after every outcome, never before `ins-slots` is written.
+    public function show-fields() {
+        inspector.show-fields();
+    }
+
+    // So the window opens with the keyboard somewhere. Without it F6 below does
+    // nothing at startup: the capture list is built from the focused item's
+    // ancestor chain (window.rs:1084-1104), and with no focus item it is empty.
+    public function focus-canvas() {
+        canvas.focus-canvas();
+    }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        // F6 cycles the two panes. Captured rather than handled, because a
+        // capture is offered to every scope from the window down to the focused
+        // item, so this sees the key while the keyboard is inside a field; and
+        // `focus-on-tab-navigation: false` so it costs no Tab stop of its own.
+        // Tab alone is not enough: on a fifty-element label the inspector is
+        // fifty Tab stops past the selected element.
+        panes := FocusScope {
+            focus-on-tab-navigation: false;
+            focus-on-click: false;
+            // All the height the status line does not need, whatever the pane
+            // holds. Sized by its contents instead, the row grew when a selection
+            // first showed the pane, and the canvas centred in it jumped down
+            // under the pointer in the middle of the press that selected.
+            vertical-stretch: 1;
+            capture-key-pressed(event) => {
+                if (event.text == Key.F6) {
+                    // Which way to go is read from focus, not remembered. Tab,
+                    // Shift+Tab, a click and an assistive technology all carry
+                    // the keyboard across the pane boundary without F6, and a
+                    // toggle only F6 wrote was wrong after any of them.
+                    if (root.ins-shown && !inspector.has-keyboard) {
+                        inspector.take-keyboard();
+                    } else {
+                        // The selection is not changed on the way out: a pane
+                        // hand-off is not an edit, and deselecting would empty
+                        // the pane the operator is trying to leave.
+                        canvas.focus-canvas();
+                    }
+                    return EventResult.accept;
+                }
+                // Undo and redo from anywhere in the window. The canvas handles
+                // these in its own scope (canvas.slint), which a field in the
+                // inspector is not inside, so without this they would do nothing
+                // while the keyboard is in the pane. A capture runs before the
+                // focused item's own handler, so in this window the canvas's
+                // copy never sees them; it still serves the canvas probe, which
+                // has no shell.
+                //
+                // Both cases of the letter: a keyboard delivers Ctrl+Shift+Z with
+                // the shifted character, because winit's logical key keeps every
+                // modifier but Ctrl, and Slint's own shortcut table matches "z" |
+                // "Z" for Redo for that reason (i-slint-core input.rs:991-996).
+                // Missed here, the key reaches a field's own text-level redo
+                // instead of the document's.
+                if (event.modifiers.control && (event.text == "z" || event.text == "Z")) {
+                    if (event.modifiers.shift) {
+                        root.redo();
+                    } else {
+                        root.undo();
+                    }
+                    return EventResult.accept;
+                }
+                // Ctrl+Y, Redo in that table on Windows. Taken on every platform:
+                // nothing else in this window binds it, and a field would
+                // otherwise run its own redo there too.
+                if (event.modifiers.control && !event.modifiers.shift
+                    && (event.text == "y" || event.text == "Y")) {
+                    root.redo();
+                    return EventResult.accept;
+                }
+                return EventResult.reject;
+            }
+
+            // The arrows, for the selected element, while the keyboard is on the
+            // canvas surface rather than on that element's own scope - which is
+            // where F6 back leaves it, because the shell cannot reach into the
+            // canvas's repeater to focus one row. Handled on the way back up
+            // rather than captured, so an arrow gets here only after the element
+            // that has the keyboard, or the field, has turned it down; and never
+            // while a field has the keyboard, where an arrow the field ignored is
+            // not a request to move anything. Rust refuses a locked element.
+            key-pressed(event) => {
+                if (inspector.has-keyboard || root.selected < 0) {
+                    return EventResult.reject;
+                }
+                if (event.text == Key.LeftArrow) {
+                    root.nudge(root.selected, -1, 0, event.modifiers.shift);
+                    return EventResult.accept;
+                }
+                if (event.text == Key.RightArrow) {
+                    root.nudge(root.selected, 1, 0, event.modifiers.shift);
+                    return EventResult.accept;
+                }
+                if (event.text == Key.UpArrow) {
+                    root.nudge(root.selected, 0, -1, event.modifiers.shift);
+                    return EventResult.accept;
+                }
+                if (event.text == Key.DownArrow) {
+                    root.nudge(root.selected, 0, 1, event.modifiers.shift);
+                    return EventResult.accept;
+                }
+                return EventResult.reject;
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                // The canvas keeps its own Rectangle: it sets its width from the
+                // label and is routinely wider than the window.
+                Rectangle {
+                    background: #f4f4f4;
+                    horizontal-stretch: 1;
+                    // Clipped here rather than by the window, so an oversized
+                    // plane does not paint under the fields beside it.
+                    clip: true;
+
+                    canvas := LabelCanvas {
+                        // Anchored at the label's start rather than centred. Two
+                        // reasons, both measured: a child with a position is
+                        // left out of this Rectangle's own size, which is what
+                        // stops a 1280-pixel canvas from claiming the column and
+                        // pushing the inspector out of the window; and with a
+                        // pane beside it, a centred canvas wider than its column
+                        // loses the label's leftmost elements off both edges,
+                        // where an anchored one keeps the label's origin in view.
+                        x: 0px;
+                        // Every way the keyboard can leave the pane for the canvas
+                        // ends in one of these two, and the next field it enters is
+                        // an arrival rather than a return (inspector.slint).
+                        // Selecting commits what was typed on the Rust side.
+                        select(id) => {
+                            inspector.keyboard-at = -1;
+                            root.select(id);
+                        }
+                        // Bare canvas selects nothing, so nothing else would finish
+                        // what was typed.
+                        surface-focused() => {
+                            inspector.keyboard-at = -1;
+                            root.field-commit();
+                        }
+                        begin-move(id) => { root.begin-move(id); }
+                        move-to(id, x, y) => { root.move-to(id, x, y); }
+                        end-move(c) => { root.end-move(c); }
+                        nudge(id, dx, dy, c) => { root.nudge(id, dx, dy, c); }
+                        set-say(id, v) => { root.set-say(id, v); }
+                        undo() => { root.undo(); }
+                        redo() => { root.redo(); }
+                    }
+                }
+
+                inspector := Inspector {
+                    field-edited(f, v) => { root.field-edited(f, v); }
+                    field-commit() => { root.field-commit(); }
+                    field-stepped(f, b) => { root.field-stepped(f, b); }
+                }
+            }
+        }
+
+        Text {
+            text: root.status;
+            wrap: word-wrap;
+            vertical-stretch: 0;
+            accessible-role: AccessibleRole.text;
+            accessible-label: "Status";
+            accessible-value: root.status;
+            // The only channel a refusal has, and the reason it needs no modal: a
+            // live region is announced when it changes. Polite, because a refused
+            // field edit blocks nothing and the field itself already holds the
+            // truth.
+            accessible-live-region: AccessibleLiveness.polite;
+        }
+    }
+}

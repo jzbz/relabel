@@ -1,0 +1,52 @@
+import { LineEdit } from "std-widgets.slint";
+import { Inspector } from "../inspector.slint";
+import { InsSlot } from "../types.slint";
+
+export { InsSlot }
+
+// The counter-example, kept as a test fixture rather than as a comment.
+//
+// One LineEdit bound one way to a pushed value - the obvious way to fill a field
+// - beside the shipped Inspector, which Rust pushes the same number into by
+// assignment. It is here so that the test asserting the bound field goes stale
+// fails if someone ever "simplifies" a slot's `show` into a binding, and so that
+// what goes wrong is on the record rather than remembered.
+export component NaiveFieldProbe inherits Window {
+    in property <string> pushed;
+    in property <[InsSlot]> slots <=> inspector.slots;
+    in property <bool> shown <=> inspector.shown;
+    in property <string> heading <=> inspector.heading;
+
+    callback naive-edited(value: string);
+    callback field-edited(field: int, value: string);
+    callback field-commit();
+
+    public function show-fields() {
+        inspector.show-fields();
+    }
+
+    width: 700px;
+    height: 400px;
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 8px;
+        alignment: start;
+
+        naive := LineEdit {
+            // The fault, on purpose: a one-way binding onto the property the
+            // widget writes itself on every keystroke.
+            text: root.pushed;
+            accessible-label: "naive";
+            edited(t) => { root.naive-edited(t); }
+        }
+
+        HorizontalLayout {
+            inspector := Inspector {
+                field-edited(f, v) => { root.field-edited(f, v); }
+                field-commit() => { root.field-commit(); }
+            }
+            Rectangle { }
+        }
+    }
+}

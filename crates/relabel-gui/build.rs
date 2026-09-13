@@ -15,6 +15,8 @@ fn main() {
     for probe in [
         "ui/testing/canvas-probe.slint",
         "ui/testing/naive-drag.slint",
+        "ui/testing/ins-probe.slint",
+        "ui/testing/naive-field.slint",
     ] {
         slint_build::compile_with_config(probe, config.clone().with_debug_info(true))
             .unwrap_or_else(|e| panic!("compiling {probe}: {e}"));
