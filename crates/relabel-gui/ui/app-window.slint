@@ -1,8 +1,8 @@
-import { Designer } from "shell.slint";
+import { Designer, DefaultWindow } from "shell.slint";
 import { ElRow, InsSlot } from "types.slint";
 
 // Only what the compiled root exports becomes a Rust type.
-export { ElRow, InsSlot }
+export { ElRow, InsSlot, DefaultWindow }
 
 // The application window: the designer shell and nothing else. Every property
 // and callback is the shell's, forwarded, so the window the operator uses and the
@@ -20,6 +20,17 @@ export component AppWindow inherits Window {
     in property <[InsSlot]> ins-slots <=> shell.ins-slots;
     in property <string> ins-heading <=> shell.ins-heading;
     in property <bool> ins-shown <=> shell.ins-shown;
+    in property <string> ins-captions <=> shell.ins-captions;
+    in property <int> pan-x <=> shell.pan-x;
+    in property <int> pan-y <=> shell.pan-y;
+    in property <int> scene-x <=> shell.scene-x;
+    in property <int> scene-y <=> shell.scene-y;
+    in property <int> scene-w <=> shell.scene-w;
+    in property <int> scene-h <=> shell.scene-h;
+    in property <string> zoom-says <=> shell.zoom-says;
+    out property <int> view-px-w <=> shell.view-px-w;
+    out property <int> view-px-h <=> shell.view-px-h;
+    out property <bool> pointer-down <=> shell.pointer-down;
     in property <string> status <=> shell.status;
 
     callback select(id: int);
@@ -33,6 +44,13 @@ export component AppWindow inherits Window {
     callback field-edited(field: int, value: string);
     callback field-commit();
     callback field-stepped(field: int, by: int);
+    callback zoom-step(by: int);
+    callback zoom-one();
+    callback zoom-fit();
+    callback zoom-wheel(travel: float, at-x: float, at-y: float);
+    callback pan-by(dx: float, dy: float);
+    callback pan-to(x: int, y: int);
+    callback view-resized();
 
     public function show-fields() {
         shell.show-fields();
@@ -43,8 +61,9 @@ export component AppWindow inherits Window {
     }
 
     title: "relabel";
-    preferred-width: 900px;
-    preferred-height: 600px;
+    // From the shell's global, which the test probe is sized from too.
+    preferred-width: DefaultWindow.width;
+    preferred-height: DefaultWindow.height;
 
     shell := Designer {
         // A component with no base of its own is placed at its preferred size
@@ -62,5 +81,12 @@ export component AppWindow inherits Window {
         field-edited(f, v) => { root.field-edited(f, v); }
         field-commit() => { root.field-commit(); }
         field-stepped(f, b) => { root.field-stepped(f, b); }
+        zoom-step(by) => { root.zoom-step(by); }
+        zoom-one() => { root.zoom-one(); }
+        zoom-fit() => { root.zoom-fit(); }
+        zoom-wheel(t, x, y) => { root.zoom-wheel(t, x, y); }
+        pan-by(dx, dy) => { root.pan-by(dx, dy); }
+        pan-to(x, y) => { root.pan-to(x, y); }
+        view-resized() => { root.view-resized(); }
     }
 }

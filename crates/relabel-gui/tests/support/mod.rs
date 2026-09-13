@@ -144,8 +144,9 @@ fn is_field_role(h: &ElementHandle) -> bool {
     )
 }
 
-/// The labels of the two text nodes that are not fields.
-const NOT_FIELDS: [&str; 2] = ["Status", "Selected element"];
+/// The labels of the three text nodes that are not fields: the status line, the
+/// pane's heading and the zoom readout.
+const NOT_FIELDS: [&str; 3] = ["Status", "Selected element", "Zoom"];
 
 /// One inspector field, by the name it announces, or `None` when it is not in
 /// the accessibility tree at all.
@@ -200,12 +201,16 @@ pub fn status_of(probe: &impl slint::ComponentHandle) -> ElementHandle {
         .expect("the status line")
 }
 
-/// A key pressed and released, with Shift or Control held around it.
-pub fn press(w: &slint::Window, k: Key, shift: bool, control: bool) {
-    let held: Vec<Key> = [(shift, Key::Shift), (control, Key::Control)]
-        .into_iter()
-        .filter_map(|(on, k)| on.then_some(k))
-        .collect();
+/// A key pressed and released, with Shift or Control held around it: a named
+/// [`Key`], or the character a keyboard produces with those modifiers, such as `"="`
+/// or `"_"`.
+pub fn press(
+    w: &slint::Window,
+    k: impl Into<slint::SharedString> + Copy,
+    shift: bool,
+    control: bool,
+) {
+    let held = modifiers(shift, control);
     for h in &held {
         w.dispatch_event(WindowEvent::KeyPressed { text: (*h).into() });
     }
@@ -214,6 +219,88 @@ pub fn press(w: &slint::Window, k: Key, shift: bool, control: bool) {
     for h in held.iter().rev() {
         w.dispatch_event(WindowEvent::KeyReleased { text: (*h).into() });
     }
+}
+
+fn modifiers(shift: bool, control: bool) -> Vec<Key> {
+    [(shift, Key::Shift), (control, Key::Control)]
+        .into_iter()
+        .filter_map(|(on, k)| on.then_some(k))
+        .collect()
+}
+
+/// A wheel or trackpad scroll at `position`, in logical pixels of travel, with
+/// Shift or Control held around it. The toolkit reads the modifiers from the
+/// window's key state rather than from the event, so they are pressed first.
+pub fn wheel(
+    w: &slint::Window,
+    position: slint::LogicalPosition,
+    dx: f32,
+    dy: f32,
+    shift: bool,
+    control: bool,
+) {
+    let held = modifiers(shift, control);
+    for h in &held {
+        w.dispatch_event(WindowEvent::KeyPressed { text: (*h).into() });
+    }
+    w.dispatch_event(WindowEvent::PointerScrolled {
+        position,
+        delta_x: dx,
+        delta_y: dy,
+    });
+    for h in held.iter().rev() {
+        w.dispatch_event(WindowEvent::KeyReleased { text: (*h).into() });
+    }
+}
+
+/// The primary button going down at `position`, after the pointer arrived there.
+pub fn down(w: &slint::Window, position: slint::LogicalPosition) {
+    w.dispatch_event(WindowEvent::PointerMoved { position });
+    w.dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: slint::platform::PointerEventButton::Left,
+    });
+}
+
+/// The pointer moving to `position`, button state unchanged.
+pub fn move_to(w: &slint::Window, position: slint::LogicalPosition) {
+    w.dispatch_event(WindowEvent::PointerMoved { position });
+}
+
+/// The primary button coming up at `position`.
+pub fn up(w: &slint::Window, position: slint::LogicalPosition) {
+    w.dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: slint::platform::PointerEventButton::Left,
+    });
+}
+
+/// A drag on mock time: a press at `from`, a hold of `hold` milliseconds, then
+/// moves of at most `step` logical pixels every `every` milliseconds until `by` is
+/// covered, and the release where the last move left the pointer.
+///
+/// `ElementHandle::mock_drag` moves at a fixed pace from the press on
+/// (search_api.rs:17, :22), so it cannot say how long a pointer was held before it
+/// moved or how fast it went, and both are what a Flickable's thresholds read.
+pub fn drag_timed(
+    w: &slint::Window,
+    from: slint::LogicalPosition,
+    by: (f32, f32),
+    step: f32,
+    every: u64,
+    hold: u64,
+) {
+    down(w, from);
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(hold));
+    let steps = ((by.0.hypot(by.1)) / step).ceil().max(1.0) as u32;
+    let mut at = from;
+    for i in 1..=steps {
+        let t = i as f32 / steps as f32;
+        at = slint::LogicalPosition::new(from.x + by.0 * t, from.y + by.1 * t);
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(every));
+        move_to(w, at);
+    }
+    up(w, at);
 }
 
 /// Text typed one character at a time, as a person types it.

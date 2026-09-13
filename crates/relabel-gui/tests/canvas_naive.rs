@@ -43,6 +43,10 @@ fn the_documented_idiom_undershoots_on_a_touch_area_that_moves() {
         say: "box".into(),
         locked: false,
         keepout: 0,
+        clear_left: 0,
+        clear_right: 0,
+        clear_up: 0,
+        clear_down: 0,
     }]));
     ui.set_rows(slint::ModelRc::from(rows.clone()));
     {

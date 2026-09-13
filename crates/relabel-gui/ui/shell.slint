@@ -1,8 +1,20 @@
 import { LabelCanvas } from "canvas.slint";
 import { Inspector } from "inspector.slint";
+import { ZoomBar, Scroller } from "zoom.slint";
 import { ElRow, InsSlot } from "types.slint";
 
-// The two panes, the keys that move between them, and the status line.
+// The size the application opens at, which its probe is fixed at too, so the two
+// cannot drift. Wide enough for a 40 mm label at two device pixels to the dot beside
+// the pane at scale 1: 640 of view, the pane's 442 to 451, 36 of padding and spacing
+// and a 12 px bar, rounded up for other fonts. Tall enough for the tallest kind's
+// pane beside a two-line status line.
+export global DefaultWindow {
+    out property <length> width: 1200px;
+    out property <length> height: 640px;
+}
+
+// The two panes, the keys that move between them, the view round the canvas, and
+// the status line.
 //
 // A component of its own rather than the body of the application window,
 // because it is behaviour - F6 between the panes, Ctrl+Z from inside a field,
@@ -25,8 +37,27 @@ export component Designer {
     in property <[InsSlot]> ins-slots <=> inspector.slots;
     in property <string> ins-heading <=> inspector.heading;
     in property <bool> ins-shown <=> inspector.shown;
+    in property <string> ins-captions <=> inspector.captions;
 
     in property <string> status;
+
+    // --- the view, pushed and read by crate::view ---
+    // The pan, in whole device pixels from the canvas origin.
+    in property <int> pan-x;
+    in property <int> pan-y;
+    // The pannable extent in device pixels, which the scroll bars have no other
+    // source for.
+    in property <int> scene-x;
+    in property <int> scene-y;
+    in property <int> scene-w;
+    in property <int> scene-h;
+    in property <string> zoom-says <=> bar.says;
+    // Whole device pixels less the half pixel the dot grid's anchor can add
+    // (canvas.slint, `grid`), so a Fit that fills the view is not a pixel too wide.
+    // Read by Rust when needed: a layout property is evaluated when read.
+    out property <int> view-px-w: Math.floor(port.width / 1phx - 0.5);
+    out property <int> view-px-h: Math.floor(port.height / 1phx - 0.5);
+    out property <bool> pointer-down: canvas.pointer-down;
 
     callback select(id: int);
     callback begin-move(id: int);
@@ -40,6 +71,27 @@ export component Designer {
     callback field-edited(field: int, value: string);
     callback field-commit();
     callback field-stepped(field: int, by: int);
+
+    callback zoom-step(by: int);
+    callback zoom-one();
+    callback zoom-fit();
+    // Logical pixels of wheel travel, and the pointer in device pixels from the
+    // view's top-left.
+    callback zoom-wheel(travel: float, at-x: float, at-y: float);
+    // Device pixels.
+    callback pan-by(dx: float, dy: float);
+    callback pan-to(x: int, y: int);
+    callback view-resized();
+
+    // On the device size rather than on `width`: a move to a display of another
+    // scale changes the first and not the second (measured, reach run4.log). Late by
+    // one event-loop turn, which is only ever used to refit and keep, never to reveal.
+    changed view-px-w => {
+        root.view-resized();
+    }
+    changed view-px-h => {
+        root.view-resized();
+    }
 
     // Called from Rust after every outcome, never before `ins-slots` is written.
     public function show-fields() {
@@ -117,6 +169,29 @@ export component Designer {
                     root.redo();
                     return EventResult.accept;
                 }
+                // The zoom, from anywhere in the window, for Ctrl+Z's reason. Both
+                // characters of each key: a keyboard sends Ctrl+Shift+= as "+" and
+                // Ctrl+Shift+- as "_" with Shift still held (measured on X11,
+                // logs/x11-keys.log). A capture sees them from inside a field, which
+                // ignores Control keys anyway (items/text.rs:1057-1059), so a field
+                // never receives these characters. On macOS Cmd arrives as control
+                // (i-slint-backend-winit event_loop.rs:258).
+                if (event.modifiers.control && (event.text == "=" || event.text == "+")) {
+                    root.zoom-step(1);
+                    return EventResult.accept;
+                }
+                if (event.modifiers.control && (event.text == "-" || event.text == "_")) {
+                    root.zoom-step(-1);
+                    return EventResult.accept;
+                }
+                if (event.modifiers.control && event.text == "1") {
+                    root.zoom-one();
+                    return EventResult.accept;
+                }
+                if (event.modifiers.control && event.text == "0") {
+                    root.zoom-fit();
+                    return EventResult.accept;
+                }
                 return EventResult.reject;
             }
 
@@ -154,46 +229,129 @@ export component Designer {
             HorizontalLayout {
                 spacing: 12px;
 
-                // The canvas keeps its own Rectangle: it sets its width from the
-                // label and is routinely wider than the window.
-                Rectangle {
-                    background: #f4f4f4;
+                VerticalLayout {
                     horizontal-stretch: 1;
-                    // Clipped here rather than by the window, so an oversized
-                    // plane does not paint under the fields beside it.
-                    clip: true;
+                    spacing: 8px;
 
-                    canvas := LabelCanvas {
-                        // Anchored at the label's start rather than centred. Two
-                        // reasons, both measured: a child with a position is
-                        // left out of this Rectangle's own size, which is what
-                        // stops a 1280-pixel canvas from claiming the column and
-                        // pushing the inspector out of the window; and with a
-                        // pane beside it, a centred canvas wider than its column
-                        // loses the label's leftmost elements off both edges,
-                        // where an anchored one keeps the label's origin in view.
-                        x: 0px;
-                        // Every way the keyboard can leave the pane for the canvas
-                        // ends in one of these two, and the next field it enters is
-                        // an arrival rather than a return (inspector.slint).
-                        // Selecting commits what was typed on the Rust side.
-                        select(id) => {
-                            inspector.keyboard-at = -1;
-                            root.select(id);
+                    // Above the view, so the bar takes its height from the canvas
+                    // column and none from the pane.
+                    bar := ZoomBar {
+                        fit => { root.zoom-fit(); }
+                        one => { root.zoom-one(); }
+                        step(by) => { root.zoom-step(by); }
+                    }
+
+                    // The canvas keeps a Rectangle of its own: it sets its width from
+                    // the label and is routinely wider than the window.
+                    column := Rectangle {
+                        vertical-stretch: 1;
+                        property <length> bar-size: 12px;
+                        // Positioned, so none of this is counted in the column's own
+                        // size: a 1280-pixel canvas still cannot push the pane out of
+                        // the window (12c's reason, kept). The bars' room is reserved
+                        // whether or not they are drawn, so a bar appearing never
+                        // resizes the port.
+                        //
+                        // An ancestor of every element's TouchArea. An element rejects
+                        // a wheel by default, so the wheel passes out to here
+                        // (input_items.rs:193-212, input.rs:1681-1695); while pressed
+                        // the element answers GrabMouse and keeps it
+                        // (input_items.rs:198-199), so nothing pans under a drag. No
+                        // Flickable: it would delay every press, or intercept
+                        // Ctrl+wheel for 800 ms after its own scroll (flickable.rs:376,
+                        // :726-758).
+                        wheel := TouchArea {
+                            x: 0px;
+                            y: 0px;
+                            width: Math.max(0px, parent.width - parent.bar-size);
+                            height: Math.max(0px, parent.height - parent.bar-size);
+                            scroll-event(e) => {
+                                if (e.modifiers.control) {
+                                    root.zoom-wheel(e.delta-y / 1px, self.mouse-x / 1phx, self.mouse-y / 1phx);
+                                } else if (e.modifiers.shift && e.delta-x == 0px) {
+                                    // A vertical wheel with Shift held pans across where
+                                    // the platform has not already turned it; macOS has,
+                                    // and its travel then arrives horizontal and takes
+                                    // the plain path below.
+                                    root.pan-by(-e.delta-y / 1phx, 0);
+                                } else {
+                                    root.pan-by(-e.delta-x / 1phx, -e.delta-y / 1phx);
+                                }
+                                return EventResult.accept;
+                            }
+
+                            port := Rectangle {
+                                width: 100%;
+                                height: 100%;
+                                background: #f4f4f4;
+                                // Clipped here rather than by the window, so an oversized
+                                // plane does not paint under the fields beside it.
+                                clip: true;
+
+                                canvas := LabelCanvas {
+                                    // Top-left on both axes, at the pan. Anchored rather
+                                    // than centred: a centred canvas wider or taller
+                                    // than its view loses the label's start off both
+                                    // edges, and moves whenever the column's size does.
+                                    // A pan of 0 always means the label's origin, which
+                                    // Fit, the reveal and the anchors all use.
+                                    x: -root.pan-x * 1phx;
+                                    y: -root.pan-y * 1phx;
+                                    viewed: true;
+                                    seen-x: root.pan-x * 1phx;
+                                    seen-y: root.pan-y * 1phx;
+                                    seen-width: port.width;
+                                    seen-height: port.height;
+                                    // Every way the keyboard can leave the pane for the
+                                    // canvas ends in one of these two, and the next field
+                                    // it enters is an arrival rather than a return
+                                    // (inspector.slint). Selecting commits what was typed
+                                    // on the Rust side.
+                                    select(id) => {
+                                        inspector.keyboard-at = -1;
+                                        root.select(id);
+                                    }
+                                    // Bare canvas selects nothing, so nothing else would
+                                    // finish what was typed.
+                                    surface-focused() => {
+                                        inspector.keyboard-at = -1;
+                                        root.field-commit();
+                                    }
+                                    begin-move(id) => { root.begin-move(id); }
+                                    move-to(id, x, y) => { root.move-to(id, x, y); }
+                                    end-move(c) => { root.end-move(c); }
+                                    nudge(id, dx, dy, c) => { root.nudge(id, dx, dy, c); }
+                                    set-say(id, v) => { root.set-say(id, v); }
+                                    undo() => { root.undo(); }
+                                    redo() => { root.redo(); }
+                                }
+                            }
                         }
-                        // Bare canvas selects nothing, so nothing else would finish
-                        // what was typed.
-                        surface-focused() => {
-                            inspector.keyboard-at = -1;
-                            root.field-commit();
+
+                        Scroller {
+                            x: 0px;
+                            y: wheel.height;
+                            width: wheel.width;
+                            height: parent.bar-size;
+                            horizontal: true;
+                            lo: root.scene-x;
+                            whole: root.scene-w;
+                            shown: root.view-px-w;
+                            offset: root.pan-x;
+                            to(at) => { root.pan-to(at, root.pan-y); }
                         }
-                        begin-move(id) => { root.begin-move(id); }
-                        move-to(id, x, y) => { root.move-to(id, x, y); }
-                        end-move(c) => { root.end-move(c); }
-                        nudge(id, dx, dy, c) => { root.nudge(id, dx, dy, c); }
-                        set-say(id, v) => { root.set-say(id, v); }
-                        undo() => { root.undo(); }
-                        redo() => { root.redo(); }
+                        Scroller {
+                            x: wheel.width;
+                            y: 0px;
+                            width: parent.bar-size;
+                            height: wheel.height;
+                            horizontal: false;
+                            lo: root.scene-y;
+                            whole: root.scene-h;
+                            shown: root.view-px-h;
+                            offset: root.pan-y;
+                            to(at) => { root.pan-to(root.pan-x, at); }
+                        }
                     }
                 }
 
@@ -205,18 +363,37 @@ export component Designer {
             }
         }
 
-        Text {
-            text: root.status;
-            wrap: word-wrap;
+        status-row := Rectangle {
             vertical-stretch: 0;
-            accessible-role: AccessibleRole.text;
-            accessible-label: "Status";
-            accessible-value: root.status;
-            // The only channel a refusal has, and the reason it needs no modal: a
-            // live region is announced when it changes. Polite, because a refused
-            // field edit blocks nothing and the field itself already holds the
-            // truth.
-            accessible-live-region: AccessibleLiveness.polite;
+            // Exactly two lines, whatever it holds. A note written inside a press - the
+            // refusal a staged field's commit makes when the press selects - must not
+            // change the panes' height under the pointer, for the reason the pane's
+            // width must not. One line's height is measured rather than chosen.
+            height: 2 * line.preferred-height;
+            line := Text {
+                x: 0px;
+                y: 0px;
+                text: " ";
+                visible: false;
+                accessible-role: AccessibleRole.none;
+            }
+            Text {
+                width: parent.width;
+                height: parent.height;
+                text: root.status;
+                wrap: word-wrap;
+                // Elided past two lines on screen (textlayout/sharedparley.rs:945); the
+                // whole sentence is still the value the live region announces.
+                overflow: elide;
+                accessible-role: AccessibleRole.text;
+                accessible-label: "Status";
+                accessible-value: root.status;
+                // The only channel a refusal has, and the reason it needs no modal: a
+                // live region is announced when it changes. Polite, because a refused
+                // field edit blocks nothing and the field itself already holds the
+                // truth.
+                accessible-live-region: AccessibleLiveness.polite;
+            }
         }
     }
 }

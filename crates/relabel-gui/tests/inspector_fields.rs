@@ -190,7 +190,8 @@ fn the_fields_a_kind_does_not_have_are_in_neither_the_tree_nor_the_layout() {
     assert!(find_field(&ui, "stroke").is_none());
     let status = status_of(&ui);
     let bottom = status.absolute_position().y + status.size().height;
-    assert!(bottom <= 600.0, "the status line ends at {bottom}");
+    let window = ui.global::<DefaultWindow>().get_height();
+    assert!(bottom <= window, "the status line ends at {bottom}");
     // And the eight rows sit one under the other with nothing between them.
     let ys: Vec<f32> = fields_of(&ui)
         .iter()

@@ -13,7 +13,7 @@ mod support;
 use i_slint_backend_testing::ElementHandle;
 use relabel_gui::canvas::{Canvas, DEFAULT_ZOOM, wire};
 use relabel_gui::doc::Doc;
-use relabel_gui::preview::Pane;
+use relabel_gui::preview::{NoDots, Pane};
 use slint::ComponentHandle;
 use slint::platform::WindowEvent;
 use std::cell::RefCell;
@@ -179,4 +179,48 @@ fn the_dots_are_not_expanded_again_when_nothing_moved() {
         pane.draw(&doc, DEFAULT_ZOOM).expect("drawable").is_some(),
         "a zoom change has different pixels for the same dots"
     );
+}
+
+/// A zoom the label has no plane at is refused whole. Stored anyway, the frames
+/// would be drawn at that zoom over a plane drawn at another, or over none.
+#[test]
+fn a_zoom_the_label_has_no_dots_at_is_refused_and_changes_nothing() {
+    let (ui, canvas) = probe(1.0);
+    assert_eq!(
+        canvas.borrow_mut().set_zoom(&ui, 32),
+        Err(NoDots::TooLarge),
+        "320 by 96 dots at 32x is past the preview's byte cap"
+    );
+    assert_eq!(canvas.borrow().zoom(), DEFAULT_ZOOM);
+    assert_eq!(ui.get_zoom(), DEFAULT_ZOOM as i32);
+    assert_eq!(ui.get_plane_px_w(), 1280);
+}
+
+/// The zoom `dot` is multiplied by and the zoom the plane was expanded at are one
+/// number, clamped once by `Scale::up`, and a real change of zoom repaints without
+/// anyone forgetting the stamp first.
+#[test]
+fn the_zoom_pushed_to_the_window_is_the_one_the_dots_were_drawn_at() {
+    let (ui, canvas) = probe(1.0);
+    canvas
+        .borrow_mut()
+        .set_zoom(&ui, 0)
+        .expect("zero reads as one");
+    assert_eq!(
+        (canvas.borrow().zoom(), ui.get_zoom(), ui.get_plane_px_w()),
+        (1, 1, 320)
+    );
+    let one = ui.get_plane();
+    assert_eq!((one.size().width, one.size().height), (320, 96));
+    canvas
+        .borrow_mut()
+        .set_zoom(&ui, 2)
+        .expect("drawable at 2x");
+    assert_eq!(
+        (canvas.borrow().zoom(), ui.get_zoom(), ui.get_plane_px_w()),
+        (2, 2, 640)
+    );
+    let two = ui.get_plane();
+    assert_eq!((two.size().width, two.size().height), (640, 192));
+    assert!(two != one, "a new image for the new zoom");
 }

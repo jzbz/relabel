@@ -12,11 +12,13 @@ pub mod geom;
 pub mod ins;
 pub mod preview;
 pub mod rows;
+pub mod view;
 
 slint::include_modules!();
 
 impl_canvas_host!(AppWindow, ElRow);
 impl_ins_host!(AppWindow, InsSlot);
+impl_view_host!(AppWindow);
 
 /// Open a label and show it.
 pub fn run_app(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -31,6 +33,9 @@ pub fn run_app(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>>
     let first = doc.orientation_note();
     let canvas = canvas::wire(&ui, doc);
     ins::wire(&ui, &canvas);
+    // Opens fitted, and stays fitted until a zoom is chosen: the window manager's
+    // first sizes are provisional, and a fit taken once here would be stale.
+    view::wire(&ui, &canvas, view::Opening::Fit);
     {
         let c = canvas.borrow();
         let undrawable = c.doc().undrawable();

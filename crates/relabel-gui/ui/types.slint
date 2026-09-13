@@ -28,6 +28,13 @@ export struct ElRow {
     // 4 outside the die-cut. The tone comes from media::Bounds, which is what
     // preflight reads, so a red frame and a refused run cannot disagree.
     keepout: int,
+    // Whole dots of canvas beside the frame - left, right, up, down - that the
+    // pointer padding round a small frame may cover without reaching the frame of
+    // an element drawn earlier. `geom::clearances` says why only earlier ones.
+    clear-left: int,
+    clear-right: int,
+    clear-up: int,
+    clear-down: int,
 }
 
 // One field of the inspector, whichever field it happens to be this selection.

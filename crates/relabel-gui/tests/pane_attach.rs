@@ -2,9 +2,10 @@
 //! must not cost.
 //!
 //! The canvas is routinely wider than the window, so every pixel the pane takes
-//! is a pixel of label out of view - and an element whose frame falls wholly
-//! outside the view is out of the accessibility tree and the Tab order too. These
-//! pin that cost rather than leave it to be noticed.
+//! is a pixel of label out of view. Since slice 12b an element wholly outside the
+//! view keeps its place in the accessibility tree and the Tab order as a point just
+//! inside the view's edge, so out of view no longer means unreachable; these pin
+//! what the pane costs the view rather than leave it to be noticed.
 
 #[path = "support/mod.rs"]
 mod support;
@@ -27,9 +28,14 @@ include!(concat!(env!("OUT_DIR"), "/ins-probe.rs"));
 relabel_gui::impl_canvas_host!(InsProbe, ElRow);
 relabel_gui::impl_ins_host!(InsProbe, InsSlot);
 
-/// The probe window's width, and the shell's padding on either side of it.
-const WINDOW: f32 = 900.0;
+/// The shell's padding on either side of the window.
 const PADDING: f32 = 12.0;
+
+/// The probe window's width, which is the application's, read from the one global
+/// both are sized from.
+fn window_width(ui: &InsProbe) -> f32 {
+    ui.global::<DefaultWindow>().get_width()
+}
 
 fn probe(label: relabel_render::Label, scale: f32) -> (InsProbe, Rc<RefCell<Canvas<InsProbe>>>) {
     support::ensure_platform();
@@ -91,7 +97,10 @@ fn every_field_is_inside_the_pane_rather_than_clipped_by_it() {
             pane.absolute_position().x,
             pane.absolute_position().x + pane.size().width,
         );
-        assert!(right <= WINDOW - PADDING + 0.01, "the pane ends at {right}");
+        assert!(
+            right <= window_width(&ui) - PADDING + 0.01,
+            "the pane ends at {right}"
+        );
         for field in fields_of(&ui) {
             let at = field.absolute_position().x;
             let end = at + field.size().width;
@@ -143,7 +152,7 @@ fn the_canvas_does_not_take_the_panes_width() {
     );
     let pane_end = pane.absolute_position().x + pane.size().width;
     assert!(
-        (pane_end - (WINDOW - PADDING)).abs() < 0.01,
+        (pane_end - (window_width(&ui) - PADDING)).abs() < 0.01,
         "the pane ends at {pane_end}, not at the window's padding"
     );
     // Every field's editor is the style's own minimum width, which a pane squeezed
@@ -152,17 +161,21 @@ fn the_canvas_does_not_take_the_panes_width() {
     assert!(feed.size().width >= 100.0, "{}", feed.size().width);
 }
 
+/// An element the view does not show is still in the accessibility tree, as a
+/// point just inside the view's edge, and still editable through the pane. Before
+/// slice 12b this asserted the opposite: element 3 was out of the tree until its
+/// feed was typed back into view, which was the defect.
 #[test]
-fn an_element_the_window_cannot_show_is_still_editable_through_the_pane() {
+fn an_element_out_of_view_is_in_the_tree_and_editable_through_the_pane() {
     let (ui, canvas) = probe(reference_label(), 1.0);
     ui.invoke_select(1);
-    let visible: Vec<usize> = rows_of(&ui)
+    let present: Vec<usize> = rows_of(&ui)
         .iter()
         .filter_map(ElementHandle::accessible_item_index)
         .collect();
     assert!(
-        !visible.contains(&2),
-        "element 3 at feed 240 was supposed to be out of view: {visible:?}"
+        present.contains(&2),
+        "element 3 at feed 240 is out of view at zoom 4 and still in the tree: {present:?}"
     );
     ui.invoke_select(3);
     assert_eq!(
@@ -171,11 +184,11 @@ fn an_element_the_window_cannot_show_is_still_editable_through_the_pane() {
     );
     field_of(&ui, "feed").set_accessible_value("20");
     assert_eq!(support::frame_of(canvas.borrow().doc().label(), 3).feed, 20);
-    let visible: Vec<usize> = rows_of(&ui)
+    let present: Vec<usize> = rows_of(&ui)
         .iter()
         .filter_map(ElementHandle::accessible_item_index)
         .collect();
-    assert!(visible.contains(&2), "typed back into view: {visible:?}");
+    assert!(present.contains(&2), "still in the tree: {present:?}");
 }
 
 /// A feed the field announces and accepts must not cost the element its Tab stop

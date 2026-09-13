@@ -123,6 +123,121 @@ pub fn inside_canvas(canvas: &RectDots, f: &RectDots) -> bool {
         && f.head.saturating_add(f.head_len) <= canvas.head.saturating_add(canvas.head_len)
 }
 
+/// The most dots of pointer padding a frame is offered on any side.
+///
+/// The canvas pads a frame smaller than its minimum grab by at most half of that
+/// grab, five logical pixels, which at one pixel to the dot is five dots for every
+/// unit of display scale: thirty-two covers every scale up to 6.4. A gap this wide
+/// never limits anything, so an element across the label costs nothing.
+pub const CLEAR_MAX: i32 = 32;
+
+/// Whole dots of canvas beside each frame - left, right, up, down - that its pointer
+/// padding may cover without reaching the frame of any element listed before it.
+///
+/// `frames` are canvas `(x, y, w, h)` in z-order, and the canvas hit-tests rows in
+/// reverse, so a later element is asked about a press before every earlier one. Its
+/// exact frame should win, being drawn over theirs; its padding should not, or a press
+/// on an earlier element's own drawn frame selects a thin neighbour drawn after it. A
+/// one-dot rule one dot below a box took presses on the box's last row at 1x and 2x,
+/// where ten logical pixels of padding are several dots. Padding over a *later* frame
+/// costs nothing, because that frame is asked first.
+///
+/// The frame grown by these amounts meets no earlier frame that has area:
+/// - one overlapping the frame on both axes stops the padding on each side it runs
+///   past;
+/// - one beside the frame, overlapping it on the other axis, limits that side to the
+///   gap between them;
+/// - one off a corner limits whichever of its two sides has the wider gap, which gives
+///   up the least.
+pub fn clearances(frames: &[(i32, i32, i32, i32)]) -> Vec<[i32; 4]> {
+    frames
+        .iter()
+        .enumerate()
+        .map(|(i, &(x, y, w, h))| {
+            let mut clear = [CLEAR_MAX; 4];
+            let mut limit = |side: usize, gap: i64| {
+                clear[side] = gap.min(i64::from(clear[side])) as i32;
+            };
+            // A frame with no area draws nothing a press could be meant for.
+            for &(gx, gy, gw, gh) in frames[..i].iter().filter(|g| g.2 > 0 && g.3 > 0) {
+                match (span(x, w, gx, gw), span(y, h, gy, gh)) {
+                    (
+                        Span::Over {
+                            before: left,
+                            after: right,
+                        },
+                        Span::Over {
+                            before: up,
+                            after: down,
+                        },
+                    ) => {
+                        for (side, past) in [left, right, up, down].into_iter().enumerate() {
+                            if past {
+                                limit(side, 0);
+                            }
+                        }
+                    }
+                    (Span::Over { .. }, Span::Clear { after, gap }) => {
+                        limit(2 + usize::from(after), gap)
+                    }
+                    (Span::Clear { after, gap }, Span::Over { .. }) => {
+                        limit(usize::from(after), gap)
+                    }
+                    (
+                        Span::Clear {
+                            after: right,
+                            gap: across,
+                        },
+                        Span::Clear {
+                            after: down,
+                            gap: along,
+                        },
+                    ) => {
+                        if across >= along {
+                            limit(usize::from(right), across);
+                        } else {
+                            limit(2 + usize::from(down), along);
+                        }
+                    }
+                }
+            }
+            clear
+        })
+        .collect()
+}
+
+/// Where another span lies against a frame's span on one axis.
+enum Span {
+    /// Overlapping it, and whether it runs past its start and past its end.
+    Over { before: bool, after: bool },
+    /// Clear of it by `gap` dots, before its start or after its end.
+    Clear { after: bool, gap: i64 },
+}
+
+/// The span `other..other + other_len` against `at..at + len`, both half-open. A
+/// frame with no extent on this axis is overlapped only by a span that strictly
+/// straddles it, which is what a press on its padding could land on.
+fn span(at: i32, len: i32, other: i32, other_len: i32) -> Span {
+    let (a0, a1) = (i64::from(at), i64::from(at) + i64::from(len));
+    let (b0, b1) = (i64::from(other), i64::from(other) + i64::from(other_len));
+    if b0 < a1 && b1 > a0 {
+        Span::Over {
+            before: b0 < a0,
+            after: b1 > a1,
+        }
+    } else if b1 <= a0 {
+        Span::Clear {
+            after: false,
+            gap: a0 - b1,
+        }
+    } else {
+        Span::Clear {
+            after: true,
+            gap: b0 - a1,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,6 +378,88 @@ mod tests {
             }
         }
         assert_eq!(reach(24, 96), (-23, 95));
+    }
+
+    const WIDE: [i32; 4] = [CLEAR_MAX; 4];
+
+    #[test]
+    fn an_element_drawn_first_may_pad_its_frame_on_every_side() {
+        assert_eq!(clearances(&[(8, 8, 40, 24)]), vec![WIDE]);
+    }
+
+    /// The case that was measured: an underline one dot below the box it underlines.
+    #[test]
+    fn a_rule_drawn_one_dot_below_an_earlier_box_may_pad_one_dot_towards_it() {
+        let c = clearances(&[(8, 8, 40, 24), (8, 33, 40, 1)]);
+        assert_eq!(c[0], WIDE);
+        assert_eq!(c[1], [CLEAR_MAX, CLEAR_MAX, 1, CLEAR_MAX]);
+    }
+
+    #[test]
+    fn only_an_element_drawn_before_limits_a_frames_padding() {
+        let c = clearances(&[(8, 33, 40, 1), (8, 8, 40, 24)]);
+        assert_eq!(c[0], WIDE, "the later box is asked about a press first");
+        assert_eq!(c[1], [CLEAR_MAX, CLEAR_MAX, CLEAR_MAX, 1]);
+    }
+
+    #[test]
+    fn an_earlier_frame_under_a_later_one_stops_its_padding_on_each_side_it_runs_past() {
+        let c = clearances(&[(0, 0, 20, 20), (10, 10, 20, 20)]);
+        assert_eq!(c[1], [0, CLEAR_MAX, 0, CLEAR_MAX]);
+        let c = clearances(&[(0, 0, 40, 40), (10, 10, 4, 1)]);
+        assert_eq!(c[1], [0, 0, 0, 0], "a rule inside a box drawn before it");
+    }
+
+    #[test]
+    fn an_earlier_frame_off_a_corner_limits_the_side_with_the_wider_gap() {
+        let c = clearances(&[(0, 0, 7, 9), (10, 10, 4, 4)]);
+        assert_eq!(c[1], [3, CLEAR_MAX, CLEAR_MAX, CLEAR_MAX]);
+    }
+
+    #[test]
+    fn a_frame_with_no_area_or_a_gap_wider_than_any_padding_limits_nothing() {
+        let c = clearances(&[(0, 0, 0, 40), (0, 0, 40, 0), (10, 10, 4, 4)]);
+        assert_eq!(c[2], WIDE);
+        let c = clearances(&[(-100, 10, 20, 4), (10, 10, 4, 4)]);
+        assert_eq!(c[1], WIDE);
+    }
+
+    /// Every frame grown by its clearances, against every earlier frame with area,
+    /// dot by dot: no dot of the growth lies on one. Frames are drawn from a small
+    /// square so that they touch, overlap and sit off each other's corners often.
+    #[test]
+    fn a_frame_padded_by_its_clearances_never_covers_an_earlier_frame() {
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |n: i32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as i32
+        };
+        for _ in 0..400 {
+            let frames: Vec<(i32, i32, i32, i32)> = (0..6)
+                .map(|_| (next(40) - 4, next(40) - 4, next(12), next(12)))
+                .collect();
+            for (i, (&(x, y, w, h), c)) in frames.iter().zip(clearances(&frames)).enumerate() {
+                let on = |px: i32, py: i32, (fx, fy, fw, fh): (i32, i32, i32, i32)| {
+                    px >= fx && px < fx + fw && py >= fy && py < fy + fh
+                };
+                for px in x - c[0]..x + w + c[1] {
+                    for py in y - c[2]..y + h + c[3] {
+                        if on(px, py, (x, y, w, h)) {
+                            continue;
+                        }
+                        for &g in &frames[..i] {
+                            assert!(
+                                !on(px, py, g),
+                                "frame {i} of {frames:?} padded by {c:?} covers dot {px},{py} \
+                                 of earlier frame {g:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// The two branches differ, which is why the interval is computed once: a

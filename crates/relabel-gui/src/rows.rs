@@ -34,8 +34,11 @@ pub fn keepout_ordinal(off_canvas: bool, k: Option<Keepout>) -> i32 {
 }
 
 /// One row of the canvas model, whichever compiled component it belongs to.
-pub trait CanvasRow: Clone + 'static {
-    fn of(s: &Shown) -> Self;
+///
+/// `PartialEq` so the canvas can write only the rows an outcome changed.
+pub trait CanvasRow: Clone + PartialEq + 'static {
+    /// `clear` is [`crate::geom::clearances`]'s answer for this frame.
+    fn of(s: &Shown, clear: [i32; 4]) -> Self;
 }
 
 /// The canvas's half of a window: the properties it is pushed and the callbacks
@@ -70,7 +73,7 @@ pub trait CanvasHost: slint::ComponentHandle + 'static {
 macro_rules! impl_canvas_host {
     ($win:ty, $row:path) => {
         impl $crate::rows::CanvasRow for $row {
-            fn of(s: &$crate::doc::Shown) -> $row {
+            fn of(s: &$crate::doc::Shown, clear: [i32; 4]) -> $row {
                 $row {
                     id: s.id as i32,
                     x: s.x,
@@ -80,6 +83,10 @@ macro_rules! impl_canvas_host {
                     say: s.say.as_str().into(),
                     locked: s.locked,
                     keepout: $crate::rows::keepout_ordinal(s.off_canvas, s.keepout),
+                    clear_left: clear[0],
+                    clear_right: clear[1],
+                    clear_up: clear[2],
+                    clear_down: clear[3],
                 }
             }
         }
@@ -142,6 +149,99 @@ macro_rules! impl_canvas_host {
     };
 }
 
+/// The view's half of a window: the pan and readout it is pushed, what it reads
+/// back from the layout, and the commands it sends.
+///
+/// A trait of its own beside `InsHost`, for that trait's reason: the canvas probes
+/// have no view, compile untouched, and keep the zoom their tests are stated at.
+pub trait ViewHost: CanvasHost {
+    fn set_pan_x(&self, px: i32);
+    fn set_pan_y(&self, px: i32);
+    /// The scroll bars' extent in device pixels: the pans the view allows, plus one
+    /// view.
+    fn set_scene_x(&self, px: i32);
+    fn set_scene_y(&self, px: i32);
+    fn set_scene_w(&self, px: i32);
+    fn set_scene_h(&self, px: i32);
+    fn set_zoom_says(&self, says: slint::SharedString);
+    /// The port in whole device pixels, less the half pixel the dot grid's anchor
+    /// can add. Read when needed rather than pushed, because the layout decides it.
+    fn get_view_px_w(&self) -> i32;
+    fn get_view_px_h(&self) -> i32;
+    /// True from a press on an element to its release or cancel, written by the
+    /// element's own TouchArea.
+    fn get_pointer_down(&self) -> bool;
+
+    fn on_zoom_step(&self, f: impl FnMut(i32) + 'static);
+    fn on_zoom_one(&self, f: impl FnMut() + 'static);
+    fn on_zoom_fit(&self, f: impl FnMut() + 'static);
+    fn on_zoom_wheel(&self, f: impl FnMut(f32, f32, f32) + 'static);
+    fn on_pan_by(&self, f: impl FnMut(f32, f32) + 'static);
+    fn on_pan_to(&self, f: impl FnMut(i32, i32) + 'static);
+    fn on_view_resized(&self, f: impl FnMut() + 'static);
+}
+
+/// Bind a compiled shell window to [`crate::view`]. Once for the application, once
+/// in each shell test file that wires the view.
+#[macro_export]
+macro_rules! impl_view_host {
+    ($win:ty) => {
+        impl $crate::rows::ViewHost for $win {
+            fn set_pan_x(&self, px: i32) {
+                <$win>::set_pan_x(self, px)
+            }
+            fn set_pan_y(&self, px: i32) {
+                <$win>::set_pan_y(self, px)
+            }
+            fn set_scene_x(&self, px: i32) {
+                <$win>::set_scene_x(self, px)
+            }
+            fn set_scene_y(&self, px: i32) {
+                <$win>::set_scene_y(self, px)
+            }
+            fn set_scene_w(&self, px: i32) {
+                <$win>::set_scene_w(self, px)
+            }
+            fn set_scene_h(&self, px: i32) {
+                <$win>::set_scene_h(self, px)
+            }
+            fn set_zoom_says(&self, says: slint::SharedString) {
+                <$win>::set_zoom_says(self, says)
+            }
+            fn get_view_px_w(&self) -> i32 {
+                <$win>::get_view_px_w(self)
+            }
+            fn get_view_px_h(&self) -> i32 {
+                <$win>::get_view_px_h(self)
+            }
+            fn get_pointer_down(&self) -> bool {
+                <$win>::get_pointer_down(self)
+            }
+            fn on_zoom_step(&self, f: impl FnMut(i32) + 'static) {
+                <$win>::on_zoom_step(self, f)
+            }
+            fn on_zoom_one(&self, f: impl FnMut() + 'static) {
+                <$win>::on_zoom_one(self, f)
+            }
+            fn on_zoom_fit(&self, f: impl FnMut() + 'static) {
+                <$win>::on_zoom_fit(self, f)
+            }
+            fn on_zoom_wheel(&self, f: impl FnMut(f32, f32, f32) + 'static) {
+                <$win>::on_zoom_wheel(self, f)
+            }
+            fn on_pan_by(&self, f: impl FnMut(f32, f32) + 'static) {
+                <$win>::on_pan_by(self, f)
+            }
+            fn on_pan_to(&self, f: impl FnMut(i32, i32) + 'static) {
+                <$win>::on_pan_to(self, f)
+            }
+            fn on_view_resized(&self, f: impl FnMut() + 'static) {
+                <$win>::on_view_resized(self, f)
+            }
+        }
+    };
+}
+
 /// One inspector slot, whichever compiled component it belongs to.
 pub trait InsRow: Clone + 'static {
     fn of(s: &crate::ins::Slot) -> Self;
@@ -158,6 +258,11 @@ pub trait InsHost: CanvasHost {
     fn set_ins_slots(&self, slots: slint::ModelRc<Self::Slot>);
     fn set_ins_heading(&self, heading: slint::SharedString);
     fn set_ins_shown(&self, shown: bool);
+    /// Every field's caption, one to a line, pushed once. The pane's caption column
+    /// is the widest of them all rather than of the kind on show, so the pane is one
+    /// width whatever is selected and the view beside it cannot change size inside
+    /// the press that selects.
+    fn set_ins_captions(&self, captions: slint::SharedString);
     /// Not a setter: the one call that assigns the properties the widgets write
     /// themselves, so no property on the window holds a copy for a widget's own
     /// write to orphan. Called after the slots are written, never before.
@@ -201,6 +306,9 @@ macro_rules! impl_ins_host {
             }
             fn set_ins_shown(&self, shown: bool) {
                 <$win>::set_ins_shown(self, shown)
+            }
+            fn set_ins_captions(&self, captions: slint::SharedString) {
+                <$win>::set_ins_captions(self, captions)
             }
             fn invoke_show_fields(&self) {
                 <$win>::invoke_show_fields(self)

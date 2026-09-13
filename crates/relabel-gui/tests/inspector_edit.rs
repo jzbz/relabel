@@ -366,10 +366,12 @@ fn a_name_typed_into_the_pane_reaches_the_sentence_the_canvas_reads() {
     );
 }
 
-/// An edit is `Effect::Row`, so the canvas writes one row and resets no model,
-/// and the keyboard is still in the field for the next number.
+/// An edit is `Effect::Row`, so the canvas resets no model and writes only what the
+/// edit changed: the edited row, and of a neighbour drawn after it nothing but how far
+/// its pointer padding may reach towards the frame that moved. The keyboard is still
+/// in the field for the next number.
 #[test]
-fn an_edit_writes_one_row_and_leaves_the_keyboard_where_it_was() {
+fn an_edit_writes_only_what_it_changed_and_leaves_the_keyboard_where_it_was() {
     let (ui, canvas) = probe(near_label());
     ui.invoke_select(1);
     let other = ui.get_rows().row_data(1).expect("a second row");
@@ -378,7 +380,14 @@ fn an_edit_writes_one_row_and_leaves_the_keyboard_where_it_was() {
     press(ui.window(), Key::Return, false, false);
     assert_eq!(frame_of(canvas.borrow().doc().label(), 1).feed, 5);
     assert_eq!(ui.get_rows().row_data(0).expect("a row").x, 5);
-    assert_eq!(ui.get_rows().row_data(1), Some(other));
+    assert_eq!(
+        ui.get_rows().row_data(1),
+        Some(ElRow {
+            clear_left: other.clear_left - 1,
+            ..other
+        }),
+        "the neighbour one dot nearer the frame that moved, and otherwise untouched"
+    );
     type_text(ui.window(), "6");
     assert_eq!(staged(&canvas), Some((1, Field::Feed, "56".to_string())));
 }

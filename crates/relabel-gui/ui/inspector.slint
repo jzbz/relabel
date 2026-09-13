@@ -233,10 +233,14 @@ component Slot inherits Rectangle {
                         Text {
                             text: root.spec.unit;
                             vertical-alignment: center;
-                            // At most as wide as the field it follows, and elided
-                            // past that: the whole unit is the description an
-                            // assistive technology reads.
-                            max-width: num.min-width;
+                            // Exactly as wide as the field it follows, whatever the
+                            // unit says, so the unit column is one width for every
+                            // kind and the pane is one width with it: the view
+                            // beside the pane must not change size inside the press
+                            // that selects (input.rs:1410-1441). Elided past that:
+                            // the whole unit is the description an assistive
+                            // technology reads.
+                            width: num.min-width;
                             overflow: elide;
                             accessible-role: AccessibleRole.none;
                         }
@@ -283,7 +287,8 @@ component Slot inherits Rectangle {
                     Text {
                         text: root.spec.unit;
                         vertical-alignment: center;
-                        max-width: word-edit.min-width;
+                        // Exactly as wide as the field, for the number's reason.
+                        width: word-edit.min-width;
                         overflow: elide;
                         accessible-role: AccessibleRole.none;
                     }
@@ -360,7 +365,23 @@ export component Inspector inherits Rectangle {
     // routinely wider than the window and would give away the column's width.
     horizontal-stretch: 0;
 
-    property <length> label-width: max(
+    // Every field's caption, one to a line, pushed once by Rust. The caption column
+    // is the widest of all of them rather than of the kind on show, so the pane is
+    // one width whatever is selected and with nothing selected: the view beside it
+    // must not change size inside the press that selects, or `send_exit_events`
+    // cancels that press (input.rs:1410-1441). Still the style's own metrics and the
+    // words, not a number chosen by eye, which was 12c's reason against a fixed width.
+    in property <string> captions;
+    measure := Text {
+        // Placed, so it is left out of this Rectangle's own size.
+        x: 0px;
+        y: 0px;
+        text: root.captions;
+        visible: false;
+        accessible-role: AccessibleRole.none;
+    }
+
+    property <length> label-width: max(measure.preferred-width,
         f0.label-natural, f1.label-natural, f2.label-natural, f3.label-natural,
         f4.label-natural, f5.label-natural, f6.label-natural, f7.label-natural,
         f8.label-natural, f9.label-natural, f10.label-natural, f11.label-natural,

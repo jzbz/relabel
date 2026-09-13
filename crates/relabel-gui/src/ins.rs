@@ -1139,6 +1139,17 @@ pub fn wire<H: InsHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>) {
     let slots: Rc<VecModel<H::Slot>> =
         Rc::new(VecModel::from(vec![H::Slot::of(&Slot::unused()); SLOTS]));
     host.set_ins_slots(ModelRc::from(slots.clone()));
+    // Every caption any kind shows, once, so the pane measures its caption column
+    // from all of them and keeps one width whatever is selected.
+    host.set_ins_captions(
+        Field::ALL
+            .iter()
+            .map(|f| f.label())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .as_str()
+            .into(),
+    );
 
     // Written one row at a time for `Canvas::publish`'s reason: `set_vec` emits a
     // model reset. The length never changes, so it never has to.

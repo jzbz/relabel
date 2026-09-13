@@ -90,7 +90,7 @@ fn a_drag_lands_on_the_same_dot_at_every_display_scale() {
     }
 }
 
-/// A drag is a difference of two rounded pointer positions, so a second drag
+/// A drag is a difference of two floored pointer positions, so a second drag
 /// continues from where the first left off instead of restarting from the press.
 #[test]
 fn two_drags_accumulate_rather_than_starting_again() {
@@ -102,7 +102,7 @@ fn two_drags_accumulate_rather_than_starting_again() {
 }
 
 /// An element that has not moved must not move: the grab offset is captured as
-/// a difference of rounded values precisely so that a press with no travel is
+/// a difference of floored values precisely so that a press with no travel is
 /// not a one-dot jump onto the grid.
 #[test]
 fn a_press_with_no_travel_leaves_the_element_where_it_was() {

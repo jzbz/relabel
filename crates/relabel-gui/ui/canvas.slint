@@ -48,6 +48,22 @@ export component LabelCanvas {
     in property <int> selected: -1;
     in property <int> zoom: 4;
 
+    // --- where it is seen from ---
+    // False in the canvas probe, which has no view round it: every frame is then its
+    // own node and its Tab point is the 12c one, exactly, and the probe's tests pin
+    // that.
+    in property <bool> viewed: false;
+    // The part of this canvas a view above shows, in this component's own lengths.
+    in property <length> seen-x;
+    in property <length> seen-y;
+    in property <length> seen-width;
+    in property <length> seen-height;
+    // True from a press on an element to its release or cancel. Written before the
+    // press moves the keyboard, so the selection that press makes can be told from
+    // Tab's: a view that moved inside a press would leave the grab offset measured
+    // against a canvas that is no longer there.
+    out property <bool> pointer-down: false;
+
     // --- what the operator does ---
     // Selection follows focus, so this fires for a click and for a Tab alike.
     callback select(id: int);
@@ -128,6 +144,21 @@ export component LabelCanvas {
             accessible-label: "Label canvas";
             accessible-item-count: root.rows.length;
 
+            // The view, in grid coordinates.
+            property <length> view-left: root.seen-x - self.x;
+            property <length> view-top: root.seen-y - self.y;
+            property <length> view-right: self.view-left + root.seen-width;
+            property <length> view-bottom: self.view-top + root.seen-height;
+            // The view shrunk by one device pixel on every side, for where a point is
+            // put and never for whether a frame is seen. `is_visible` tests a
+            // zero-sized item against its clip inclusively (i-slint-core
+            // item_tree.rs:397-408), and a point on the very edge, reached through two
+            // chains of float additions, can land a hair outside.
+            property <length> sight-left: self.view-left + 1phx;
+            property <length> sight-top: self.view-top + 1phx;
+            property <length> sight-right: self.view-right - 1phx;
+            property <length> sight-bottom: self.view-bottom - 1phx;
+
             Image {
                 x: 0phx;
                 y: 0phx;
@@ -149,10 +180,29 @@ export component LabelCanvas {
             }
 
             for row[i] in root.rows: frame := Rectangle {
-                x: row.x * root.dot;
-                y: row.y * root.dot;
-                width: row.w * root.dot;
-                height: row.h * root.dot;
+                property <length> fx: row.x * root.dot;
+                property <length> fy: row.y * root.dot;
+                property <length> fw: row.w * root.dot;
+                property <length> fh: row.h * root.dot;
+                // Whether any of the frame is in view. When none is, this node shrinks
+                // to a point just inside the nearest edge rather than leaving: Tab
+                // skips an item a plain clip hides (window.rs:1325-1328), the
+                // accessibility tree marks it hidden (accesskit.rs:576-577), and with
+                // the pan in the operator's hands that can be any element at all. The
+                // node keeps its role, index, sentence and set-value action, so a
+                // screen reader still lists it and can still move it.
+                //
+                // Against the view itself, not the inset one: a frame reaching a single
+                // device pixel into the view keeps that pixel and its press. Against the
+                // inset, the one dot slice 12 leaves on the label after a drag off its
+                // start was that pixel at 1x, collapsed, and took no press.
+                property <bool> in-sight: !root.viewed
+                    || (self.fx < grid.view-right && self.fx + self.fw > grid.view-left
+                        && self.fy < grid.view-bottom && self.fy + self.fh > grid.view-top);
+                x: self.in-sight ? self.fx : Math.max(grid.sight-left, Math.min(self.fx, grid.sight-right));
+                y: self.in-sight ? self.fy : Math.max(grid.sight-top, Math.min(self.fy, grid.sight-bottom));
+                width: self.in-sight ? self.fw : 0phx;
+                height: self.in-sight ? self.fh : 0phx;
 
                 // Chrome over the dots, never the dots themselves: the element's
                 // content is already in the image below, so the frame is an
@@ -200,8 +250,16 @@ export component LabelCanvas {
                 // keyboard route back to it. `grid`'s offset is taken off too, since
                 // it can put a point at the canvas's own edge a fraction outside.
                 focus := FocusScope {
-                    x: Math.max(0phx, -row.x * root.dot - grid.x);
-                    y: Math.max(0phx, -row.y * root.dot - grid.y);
+                    // Viewed, the first point of the frame that is in view, so the
+                    // element holding the keyboard never has a focus item outside the
+                    // view: a key press drops the keyboard altogether while it has
+                    // (window.rs:1076-1082). A collapsed node is already that point.
+                    // Unviewed, the formula above, which keeps a negative placement's
+                    // Tab stop on the canvas.
+                    x: !root.viewed ? Math.max(0phx, -row.x * root.dot - grid.x)
+                        : (frame.in-sight ? Math.max(0phx, grid.sight-left - frame.fx) : 0phx);
+                    y: !root.viewed ? Math.max(0phx, -row.y * root.dot - grid.y)
+                        : (frame.in-sight ? Math.max(0phx, grid.sight-top - frame.fy) : 0phx);
                     width: 0phx;
                     height: 0phx;
                     focus-gained(reason) => {
@@ -232,16 +290,36 @@ export component LabelCanvas {
 
                 grab := TouchArea {
                     // Inflated to a size a pointer can actually hit: a 1-dot
-                    // rule is four device pixels tall at 4x and nobody can
+                    // rule is one device pixel tall at 1x and nobody can
                     // click it. The arithmetic below does not care, because it
                     // reads the pointer's own position rather than this area's
                     // geometry, so the hit area is free to differ from the
                     // frame.
-                    property <length> min-grab: 10px;
-                    width: Math.max(parent.width, self.min-grab);
-                    height: Math.max(parent.height, self.min-grab);
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
+                    //
+                    // Padded only as far as `row.clear-*` allow, which stop short of
+                    // every frame drawn earlier. This row is asked about a press before
+                    // every earlier row (i-slint-core input.rs:1602-1613, :1659-1663),
+                    // so padding centred on the frame took presses on an earlier
+                    // element's own drawn frame: at 1x a rule one dot under a box took
+                    // the box's last row. Over a later frame it is harmless, since that
+                    // row is asked first.
+                    //
+                    // No hit area at all for a node that is only a point: it draws
+                    // nothing there, so it must take no press there. A node that
+                    // collapses in the middle of a drag keeps the grab (input.rs
+                    // handle_mouse_grab), and the pointer is read from absolute
+                    // positions below, so that drag still lands exactly.
+                    property <length> min-grab: frame.in-sight ? 10px : 0px;
+                    property <length> reach-x: Math.max(0px, (self.min-grab - parent.width) / 2);
+                    property <length> reach-y: Math.max(0px, (self.min-grab - parent.height) / 2);
+                    property <length> pad-left: Math.min(self.reach-x, row.clear-left * root.dot);
+                    property <length> pad-right: Math.min(self.reach-x, row.clear-right * root.dot);
+                    property <length> pad-up: Math.min(self.reach-y, row.clear-up * root.dot);
+                    property <length> pad-down: Math.min(self.reach-y, row.clear-down * root.dot);
+                    x: -self.pad-left;
+                    y: -self.pad-up;
+                    width: parent.width + self.pad-left + self.pad-right;
+                    height: parent.height + self.pad-up + self.pad-down;
                     mouse-cursor: row.locked ? MouseCursor.not-allowed : MouseCursor.move;
 
                     // Dots between the pointer and the element's origin, taken
@@ -249,7 +327,22 @@ export component LabelCanvas {
                     property <int> grab-x;
                     property <int> grab-y;
 
-                    // The pointer's position in canvas dots.
+                    // The dot the pointer is on, in canvas dots.
+                    //
+                    // Floored, so the element steps as the pointer enters the next
+                    // dot. Rounded, it stepped at the middle of a dot, and the dot the
+                    // operator took ran up to half a dot ahead of or behind the
+                    // pointer: eight device pixels at 16x.
+                    //
+                    // A sixteenth of a device pixel is added before the floor. A
+                    // pointer on a dot's first device pixel arrives here through two
+                    // chains of float additions and at a fractional display scale can
+                    // land a hair short of it, which a bare floor reads as the dot
+                    // before: a press at an element's centre and a ten-dot drag landed
+                    // one dot short at 1.5x, and one dot long at 1.25x (measured).
+                    function dot-of(from-grid: length) -> int {
+                        Math.floor((from-grid / 1phx + 0.0625) / root.zoom)
+                    }
                     //
                     // `absolute-position + mouse-x` rather than the documented
                     // `mouse-x - pressed-x` idiom, and this is the one thing in
@@ -264,18 +357,21 @@ export component LabelCanvas {
                     // sum is the pointer's position in the window whatever the
                     // element underneath it did.
                     function ptr-x() -> int {
-                        Math.round((self.absolute-position.x + self.mouse-x
-                                    - grid.absolute-position.x) / root.dot)
+                        self.dot-of(self.absolute-position.x + self.mouse-x
+                                    - grid.absolute-position.x)
                     }
                     function ptr-y() -> int {
-                        Math.round((self.absolute-position.y + self.mouse-y
-                                    - grid.absolute-position.y) / root.dot)
+                        self.dot-of(self.absolute-position.y + self.mouse-y
+                                    - grid.absolute-position.y)
                     }
 
                     pointer-event(event) => {
                         if (event.kind == PointerEventKind.down) {
+                            // Before the keyboard moves: the selection `focus()`
+                            // makes has to be seen as a press's and not as Tab's.
+                            root.pointer-down = true;
                             focus.focus();
-                            // A difference of two rounded values, so the
+                            // A difference of two floored values, so the
                             // element does not jump to the grid under the
                             // pointer at the press and does not drift over a
                             // long drag: at zero movement the placement below
@@ -284,10 +380,14 @@ export component LabelCanvas {
                             self.grab-y = self.ptr-y() - row.y;
                             root.begin-move(row.id);
                         }
+                        // Cleared before the release is reported, so the outcome of
+                        // the release is the first one a view may act on.
                         if (event.kind == PointerEventKind.up) {
+                            root.pointer-down = false;
                             root.end-move(true);
                         }
                         if (event.kind == PointerEventKind.cancel) {
+                            root.pointer-down = false;
                             root.end-move(false);
                         }
                     }

@@ -6,8 +6,10 @@
 //! gesture is in flight.
 
 use crate::doc::{Cmd, Doc, Effect, Outcome};
-use crate::preview::Pane;
+use crate::geom;
+use crate::preview::{NoDots, Pane};
 use crate::rows::{CanvasHost, CanvasRow};
+use relabel_render::preview::{Extent, Scale};
 use slint::{Model, ModelRc, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,6 +20,23 @@ use std::rc::Rc;
 /// A closure rather than a trait bound on `Canvas`, so the canvas needs to know
 /// nothing about the inspector's own trait and no existing probe changes.
 pub(crate) type PanePush<H> = Rc<dyn Fn(&H, &Doc)>;
+
+/// Why an outcome is being refreshed, as far as a view is concerned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cause {
+    /// Focus arrived on an element, by Tab, by an assistive technology or by a
+    /// caller invoking `select`. A request to see it, even when it was already the
+    /// selection.
+    Selection,
+    /// Anything else. Shown only when it changed the selection or moved the
+    /// selected element's frame.
+    Edit,
+}
+
+/// How the canvas tells a view an outcome has been drawn: the window, the
+/// document, the zoom the rows were drawn at, and why. A closure for `PanePush`'s
+/// reason: the canvas probes have no view and must not grow a view-shaped hole.
+pub(crate) type ViewTell<H> = Rc<dyn Fn(&H, &Doc, u32, Cause)>;
 
 /// The canvas's own state: the document, the rows on screen and the zoom.
 pub struct Canvas<H: CanvasHost> {
@@ -37,12 +56,16 @@ pub struct Canvas<H: CanvasHost> {
     /// inspector's own trait, `CanvasHost` does not grow a pane-shaped hole, and
     /// no existing probe changes.
     push_ins: Option<PanePush<H>>,
+    /// Told after every outcome, after the pane: a view reads the pane's effects.
+    view: Option<ViewTell<H>>,
 }
 
-/// Whole device pixels per dot. Four, because one dot of a 203 dpi head is an
-/// eighth of a millimetre and nobody can place that by eye at 1:1 - and because
-/// the zoom is also the nudge the arrow keys make visible. A zoom control is the
-/// next slice; the clamp is `preview::Scale`'s.
+/// Whole device pixels per dot that `canvas::wire` starts at, and that every canvas
+/// probe keeps for its life: its drag, grid and pixel tests state their distances
+/// at four. One dot of a 203 dpi head is an eighth of a millimetre, and at four an
+/// arrow nudge is a visible step. The application does not open here: it opens at
+/// Fit (`view::Opening::Fit`), which in its default window is two pixels to the dot
+/// for a 40 mm label at scale 1.
 pub const DEFAULT_ZOOM: u32 = 4;
 
 impl<H: CanvasHost> Canvas<H> {
@@ -53,6 +76,7 @@ impl<H: CanvasHost> Canvas<H> {
             zoom: DEFAULT_ZOOM,
             pane: Pane::default(),
             push_ins: None,
+            view: None,
         }
     }
 
@@ -72,6 +96,11 @@ impl<H: CanvasHost> Canvas<H> {
         self.push_ins = Some(push);
     }
 
+    /// Install the view's hook, which `refresh_because` calls last.
+    pub(crate) fn tell_view(&mut self, tell: ViewTell<H>) {
+        self.view = Some(tell);
+    }
+
     pub fn zoom(&self) -> u32 {
         self.zoom
     }
@@ -79,18 +108,7 @@ impl<H: CanvasHost> Canvas<H> {
     /// Push everything: the rows, the selection, the size and the dots. Called
     /// once at startup and after any edit that may have moved more than one row.
     pub fn publish(&mut self, host: &H) {
-        let rows: Vec<H::Row> = self.doc.shown().iter().map(H::Row::of).collect();
-        // Written one row at a time rather than through `set_vec`, which emits
-        // a model *reset*: a reset drops every repeater instance, and with them
-        // the keyboard focus, so an arrow key after an undo moved nothing at
-        // all. Only a change in how many rows there are needs the reset.
-        if self.rows.row_count() == rows.len() {
-            for (i, row) in rows.into_iter().enumerate() {
-                self.rows.set_row_data(i, row);
-            }
-        } else {
-            self.rows.set_vec(rows);
-        }
+        self.write_rows();
         host.set_rows(ModelRc::from(self.rows.clone()));
         host.set_selected(self.doc.selected().map_or(-1, |id| id as i32));
         host.set_zoom(self.zoom as i32);
@@ -101,16 +119,42 @@ impl<H: CanvasHost> Canvas<H> {
     }
 
     /// Set the zoom, in whole device pixels per dot.
-    pub fn set_zoom(&mut self, host: &H, zoom: u32) {
-        self.zoom = zoom;
-        self.pane.invalidate();
-        host.set_zoom(zoom as i32);
-        self.repaint(host);
+    ///
+    /// The stored and pushed zoom is `Scale::up(zoom).pixels_per_dot()`, and a zoom
+    /// at which this label has no `Extent` is refused with nothing changed. So `dot`
+    /// in `canvas.slint` and the plane under it cannot disagree, which a zoom stored
+    /// raw and clamped only inside the paint allowed: a zoom of 0 drew frames of no
+    /// size over a 1x plane, and 27 on a 40 mm label drew frames over no plane at all.
+    ///
+    /// No `Pane::invalidate`: `plane_stamp` mixes the scale in (relabel-render
+    /// preview.rs:595-597), so a real change of zoom already repaints.
+    ///
+    /// The canvas cannot see the pointer. A caller must not change the zoom while a
+    /// pointer holds an element, because the grab offset is in dots of the zoom at
+    /// the press; `view::wire` refuses there.
+    pub fn set_zoom(&mut self, host: &H, zoom: u32) -> Result<(), NoDots> {
+        let scale = Scale::up(zoom);
+        let (w, h) = crate::view::dims(self.doc.canvas_dots());
+        if Extent::new(w, h, scale).is_none() {
+            return Err(NoDots::TooLarge);
+        }
+        let zoom = scale.pixels_per_dot();
+        if zoom != self.zoom {
+            self.zoom = zoom;
+            host.set_zoom(zoom as i32);
+            self.repaint(host);
+        }
+        Ok(())
     }
 
-    /// What one outcome costs: at most one row written, one repaint, and the
-    /// pane's sixteen slots.
+    /// `refresh_because(host, out, Cause::Edit)`.
     pub(crate) fn refresh(&mut self, host: &H, out: Outcome) {
+        self.refresh_because(host, out, Cause::Edit);
+    }
+
+    /// What one outcome costs: at most one row written, one repaint, the pane's
+    /// sixteen slots, and then the view's hook, last.
+    pub(crate) fn refresh_because(&mut self, host: &H, out: Outcome, cause: Cause) {
         // Unconditional, and no longer the `Selection` arm's job: a commit flushed
         // by a selection yields `Row(a)`, and an arm that only drew the row would
         // leave the border on the element the operator just left. Setting the
@@ -121,16 +165,10 @@ impl<H: CanvasHost> Canvas<H> {
             // The selection was pushed above; the variant means only that there
             // is nothing to redraw.
             Effect::Selection => {}
-            Effect::Row(id) => {
-                if let Some(s) = self.doc.shown_one(id) {
-                    // The row is rebuilt whole in Rust and written with
-                    // set_row_data. Nothing in .slint assigns to a row, so the
-                    // compiler's read / rebuild / assign-whole-row rewrite never
-                    // happens at all.
-                    if let Some(i) = self.index_of(id) {
-                        self.rows.set_row_data(i, H::Row::of(&s));
-                    }
-                }
+            // Every row that changed, not only the one named: a frame that moved
+            // changes how far the padding of each element drawn after it may reach.
+            Effect::Row(_) => {
+                self.write_rows();
                 self.repaint(host);
             }
             Effect::Everything => self.publish(host),
@@ -146,13 +184,47 @@ impl<H: CanvasHost> Canvas<H> {
         if let Some(note) = out.note {
             host.set_status(note.as_str().into());
         }
+        // Last, and for every outcome: the selection and its frame are only final
+        // once the rows and the pane have been pushed, and the view decides from
+        // those whether anything needs bringing into view.
+        if let Some(tell) = self.view.clone() {
+            tell(host, &self.doc, self.zoom, cause);
+        }
     }
 
-    fn index_of(&self, id: relabel_render::document::ElementId) -> Option<usize> {
-        // By id, never by the index the gesture came from: the row order is the
-        // document's z-order and the moment anything can be added, deleted or
-        // raised, an index captured a frame ago addresses a different element.
-        self.doc.shown().iter().position(|s| s.id == id)
+    /// Every row as the document stands, with each frame's pointer clearances, in
+    /// z-order.
+    fn rows_now(&self) -> Vec<H::Row> {
+        let shown = self.doc.shown();
+        let frames: Vec<_> = shown.iter().map(|s| (s.x, s.y, s.w, s.h)).collect();
+        shown
+            .iter()
+            .zip(geom::clearances(&frames))
+            .map(|(s, clear)| H::Row::of(s, clear))
+            .collect()
+    }
+
+    /// Write every row that differs from the one on screen, by position, which is
+    /// z-order: the whole list is rebuilt, so a row captured a frame ago cannot
+    /// address a different element.
+    ///
+    /// Each row is rebuilt whole in Rust and written with `set_row_data`. Nothing in
+    /// .slint assigns to a row, so the compiler's read / rebuild / assign-whole-row
+    /// rewrite never happens at all. One row at a time rather than through `set_vec`,
+    /// which emits a model *reset*: a reset drops every repeater instance, and with
+    /// them the keyboard focus, so an arrow key after an undo moved nothing at all.
+    /// Only a change in how many rows there are needs the reset.
+    fn write_rows(&mut self) {
+        let rows = self.rows_now();
+        if self.rows.row_count() == rows.len() {
+            for (i, row) in rows.into_iter().enumerate() {
+                if self.rows.row_data(i).as_ref() != Some(&row) {
+                    self.rows.set_row_data(i, row);
+                }
+            }
+        } else {
+            self.rows.set_vec(rows);
+        }
     }
 
     fn repaint(&mut self, host: &H) {
@@ -171,6 +243,18 @@ impl<H: CanvasHost> Canvas<H> {
             }
         }
     }
+}
+
+/// The end of a pointer gesture, as `wire` installs it.
+///
+/// A function of its own because `view::wire` installs the handler again - Slint's
+/// `on_end_move` replaces a handler rather than chaining one - and has a refit to pay
+/// once this has returned and released the canvas. One code path either way, so the
+/// canvas probes and the shell run the same end of a drag.
+pub(crate) fn end_move<H: CanvasHost>(host: &H, canvas: &RefCell<Canvas<H>>, committed: bool) {
+    let mut c = canvas.borrow_mut();
+    let out = c.doc.apply(Cmd::EndMove { committed });
+    c.refresh(host, out);
 }
 
 /// Wire one canvas to one window, and return the state so that a caller - the
@@ -200,14 +284,30 @@ pub fn wire<H: CanvasHost>(host: &H, doc: Doc) -> Rc<RefCell<Canvas<H>>> {
         }};
     }
 
-    on!(on_select, |id| Cmd::Select(id.try_into().ok()));
+    // Not through `on!`: focus arriving on an element is a request to see it, even
+    // when the element was already the selection and the outcome changes nothing.
+    {
+        let (weak, canvas) = (host.as_weak(), canvas.clone());
+        host.on_select(move |id| {
+            let Some(host) = weak.upgrade() else { return };
+            let mut c = canvas.borrow_mut();
+            let out = c.doc.apply(Cmd::Select(id.try_into().ok()));
+            c.refresh_because(&host, out, Cause::Selection);
+        });
+    }
     on!(on_begin_move, |id| Cmd::BeginMove(id as u32));
     on!(on_move_to, |id, x, y| Cmd::MoveTo {
         id: id as u32,
         x,
         y
     });
-    on!(on_end_move, |committed| Cmd::EndMove { committed });
+    {
+        let (weak, canvas) = (host.as_weak(), canvas.clone());
+        host.on_end_move(move |committed| {
+            let Some(host) = weak.upgrade() else { return };
+            end_move(&host, &canvas, committed);
+        });
+    }
     on!(on_nudge, |id, dx, dy, coarse| Cmd::Nudge {
         id: id as u32,
         dx,

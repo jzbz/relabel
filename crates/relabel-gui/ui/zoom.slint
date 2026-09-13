@@ -1,0 +1,161 @@
+import { Palette } from "std-widgets.slint";
+
+// The zoom bar and the scroll bars round the canvas's view.
+
+// A button that is neither a Tab stop nor a taker of the keyboard.
+//
+// Hand-rolled rather than the std Button, whose zero-width FocusScope takes no focus
+// on a click (fluent/button.slint:105-107) but is a Tab stop: four stops before the
+// canvas surface, on the way to every element, for commands the keyboard already
+// reaches from anywhere by Ctrl and a key. Coloured from the style's Palette with a
+// resting border, because flat text read as a label in the dark scheme.
+component ZoomButton inherits Rectangle {
+    in property <string> text;
+    in property <string> name;
+    in property <string> keys;
+    callback clicked();
+    min-width: Math.max(32px, face.preferred-width + 16px);
+    min-height: 28px;
+    max-height: 28px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Palette.border;
+    background: touch.pressed ? Palette.alternate-background : Palette.control-background;
+    accessible-role: AccessibleRole.button;
+    accessible-label: root.name;
+    accessible-description: root.keys;
+    accessible-action-default => {
+        root.clicked();
+    }
+    face := Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: Palette.control-foreground;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        accessible-role: AccessibleRole.none;
+    }
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component ZoomBar {
+    in property <string> says;
+    callback fit();
+    callback one();
+    callback step(by: int);
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+        ZoomButton {
+            text: "Fit";
+            name: "Zoom to fit";
+            keys: "Control+0";
+            clicked => { root.fit(); }
+        }
+        ZoomButton {
+            text: "1:1";
+            name: "Zoom to one device pixel per dot";
+            keys: "Control+1";
+            clicked => { root.one(); }
+        }
+        ZoomButton {
+            text: "\u{2212}";
+            name: "Zoom out";
+            keys: "Control+Minus";
+            clicked => { root.step(-1); }
+        }
+        ZoomButton {
+            text: "+";
+            name: "Zoom in";
+            keys: "Control+Plus";
+            clicked => { root.step(1); }
+        }
+        Text {
+            text: root.says;
+            vertical-alignment: center;
+            accessible-role: AccessibleRole.text;
+            accessible-label: "Zoom";
+            accessible-value: root.says;
+            // A keyboard zoom has no other feedback, and it changes what is drawn.
+            accessible-live-region: AccessibleLiveness.polite;
+        }
+    }
+}
+
+// One axis of the view, in whole device pixels pushed from Rust. Outside the port,
+// so no press that starts on an element can reach it. The track does not move, so
+// mouse-x is safe to read here, unlike on the canvas.
+//
+// No accessible role: AccessibleRole has no scroll bar in 1.17.1, and no Tab stop:
+// the keyboard reaches every element by Tab, which brings it into view.
+export component Scroller {
+    in property <bool> horizontal;
+    // The smallest pan on this axis.
+    in property <int> lo;
+    // The pannable extent, device pixels.
+    in property <int> whole;
+    // The view, device pixels.
+    in property <int> shown;
+    // The pan.
+    in property <int> offset;
+    callback to(pan: int);
+
+    property <length> track: root.horizontal ? root.width : root.height;
+    // Drawn only while the label continues past the view on this axis. The room is
+    // the shell's to reserve either way, so a bar appearing never resizes the view.
+    property <bool> needed: root.whole > root.shown && root.shown > 0;
+    property <length> thumb-len: !root.needed ? root.track
+        : Math.max(Math.min(16px, root.track), root.track * root.shown / root.whole);
+    // The pan less `lo`, clamped into the scene: the keep clamp may hold the pan past
+    // the scene's end, and the thumb must still end at the track's.
+    property <int> from-lo: Math.max(0, Math.min(root.offset - root.lo, root.whole - root.shown));
+    property <length> thumb-at: !root.needed || root.track <= root.thumb-len ? 0px
+        : (root.track - root.thumb-len) * root.from-lo / (root.whole - root.shown);
+
+    thumb := Rectangle {
+        visible: root.needed;
+        x: root.horizontal ? root.thumb-at : 3px;
+        y: root.horizontal ? 3px : root.thumb-at;
+        width: root.horizontal ? root.thumb-len : root.width - 6px;
+        height: root.horizontal ? root.height - 6px : root.thumb-len;
+        border-radius: 3px;
+        // A mid grey, not a Palette colour: the bar sits on the window's own ground,
+        // which is light in one scheme and dark in the other, and this reads on both.
+        background: area.pressed ? #5a5a5a : #8a8a8a;
+    }
+
+    area := TouchArea {
+        enabled: root.needed;
+        // Where on the thumb the press took it, held for the gesture.
+        property <length> grab;
+        function along() -> length {
+            root.horizontal ? self.mouse-x : self.mouse-y
+        }
+        function follow() {
+            if (root.track > root.thumb-len) {
+                root.to(root.lo + Math.round((self.along() - self.grab) / (root.track - root.thumb-len)
+                    * (root.whole - root.shown)));
+            }
+        }
+        pointer-event(event) => {
+            if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                // On the thumb, it keeps the point it was grabbed at; elsewhere on the
+                // track, the thumb's middle comes to the pointer.
+                self.grab = self.along() >= root.thumb-at && self.along() <= root.thumb-at + root.thumb-len
+                    ? self.along() - root.thumb-at
+                    : root.thumb-len / 2;
+                self.follow();
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                self.follow();
+            }
+        }
+    }
+}
