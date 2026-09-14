@@ -86,14 +86,238 @@ fn a_wheel_over_an_element_pans_the_view_and_moves_nothing() {
     assert_eq!(canvas.borrow().doc().selected(), None, "nothing selected");
 }
 
+/// At 8x, where the view has room down, so Shift is what turns the wheel across; at 4x
+/// a plain wheel pans across too and the test could not tell them apart.
 #[test]
 fn shift_and_a_vertical_wheel_pans_across_and_a_horizontal_wheel_pans_across_on_its_own() {
-    let (ui, _canvas) = probe(reference_label(), 1.25, Opening::At(DEFAULT_ZOOM));
+    let (ui, _canvas) = probe(reference_label(), 1.25, Opening::At(8));
+    assert!(
+        ui.get_scene_h() - ui.get_view_px_h() >= 75,
+        "room down, so Shift is what turns the wheel across"
+    );
     let over = in_view(&ui, 20.0, 20.0);
     wheel(ui.window(), over, 0.0, -60.0, true, false);
     assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (75, 0));
     wheel(ui.window(), over, -60.0, 0.0, false, false);
     assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (150, 0));
+    wheel(ui.window(), over, 0.0, -60.0, false, false);
+    assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (150, 75));
+}
+
+/// The defect a real mouse found on a Wayland session: the reference label is far
+/// wider than it is tall, so at these zooms the view has no room down and a plain
+/// wheel panned nothing. Every wheel test before it that panned ran at 8x, held Shift,
+/// or sent travel across; the two at 4x held Ctrl and zoomed.
+#[test]
+fn a_plain_wheel_over_a_label_with_no_room_down_pans_across_and_back() {
+    for (scale, zoom, notch) in [(1.0, 3, 60), (1.0, 4, 60), (1.25, 4, 75), (1.25, 6, 75)] {
+        let (ui, _canvas) = probe(reference_label(), scale, Opening::At(zoom));
+        let over = in_view(&ui, 300.0, 200.0);
+        assert_eq!(
+            ui.get_scene_h(),
+            ui.get_view_px_h(),
+            "no room down at {zoom}x, scale {scale}"
+        );
+        assert!(
+            320 * zoom as i32 - ui.get_view_px_w() > notch,
+            "room across at {zoom}x, scale {scale}"
+        );
+        let t = thumbs(&ui);
+        assert!(
+            t.len() == 1 && t[0].size().width > t[0].size().height,
+            "only the bar across is drawn at {zoom}x, scale {scale}"
+        );
+        wheel(ui.window(), over, 0.0, -60.0, false, false);
+        assert_eq!(
+            (ui.get_pan_x(), ui.get_pan_y()),
+            (notch, 0),
+            "wheel down pans right at {zoom}x, scale {scale}"
+        );
+        wheel(ui.window(), over, 0.0, 60.0, false, false);
+        assert_eq!(
+            (ui.get_pan_x(), ui.get_pan_y()),
+            (0, 0),
+            "wheel up pans back left at {zoom}x, scale {scale}"
+        );
+    }
+}
+
+#[test]
+fn a_plain_wheel_turned_across_stops_at_the_label_end() {
+    let (ui, _canvas) = probe(reference_label(), 1.0, Opening::At(DEFAULT_ZOOM));
+    let over = in_view(&ui, 300.0, 200.0);
+    let end = 320 * 4 - ui.get_view_px_w();
+    for _ in 0..30 {
+        wheel(ui.window(), over, 0.0, -60.0, false, false);
+    }
+    assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (end, 0));
+    wheel(ui.window(), over, 0.0, -60.0, false, false);
+    assert_eq!(
+        (ui.get_pan_x(), ui.get_pan_y()),
+        (end, 0),
+        "at the end across the wheel moves nothing"
+    );
+    wheel(ui.window(), over, 0.0, 60.0, false, false);
+    assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (end - 60, 0));
+}
+
+/// Room down is a fact of the scene, the canvas and the view, never of the pan: a
+/// view at the bottom of its room still has room, so nothing is carried across.
+#[test]
+fn a_plain_wheel_over_a_view_with_room_down_pans_down_and_stops_at_the_bottom_rather_than_across() {
+    let (ui, _canvas) = probe(reference_label(), 1.0, Opening::At(6));
+    let over = in_view(&ui, 300.0, 200.0);
+    let room = 96 * 6 - ui.get_view_px_h();
+    assert!((1..60).contains(&room), "room {room}");
+    for _ in 0..room / 60 + 3 {
+        wheel(ui.window(), over, 0.0, -60.0, false, false);
+    }
+    assert_eq!(
+        (ui.get_pan_x(), ui.get_pan_y()),
+        (0, room),
+        "nothing carried across at the bottom"
+    );
+    wheel(ui.window(), over, 0.0, -60.0, true, false);
+    assert_eq!(
+        (ui.get_pan_x(), ui.get_pan_y()),
+        (60, room),
+        "Shift still pans across"
+    );
+}
+
+#[test]
+fn an_element_hanging_off_the_top_gives_the_view_room_down_and_the_wheel_keeps_to_it() {
+    let mut label = reference_label();
+    label.elements[0] = rect(1, frame(8, -60, 40, 64), Rot::D0, false);
+    let (ui, _canvas) = probe(label, 1.0, Opening::At(DEFAULT_ZOOM));
+    let over = in_view(&ui, 300.0, 200.0);
+    assert!(
+        ui.get_scene_h() > ui.get_view_px_h(),
+        "the bar down is drawn"
+    );
+    wheel(ui.window(), over, 0.0, -60.0, false, false);
+    assert_eq!(
+        (ui.get_pan_x(), ui.get_pan_y()),
+        (0, 0),
+        "at the end of its room down nothing turns across"
+    );
+    wheel(ui.window(), over, 0.0, 60.0, false, false);
+    assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (0, -60));
+}
+
+/// The toolkit's scroll event does not say whether travel came from a wheel or a
+/// trackpad (i-slint-backend-winit event_loop.rs:401-421), so a slow swipe straight
+/// down is turned as a wheel is, and its fractions are kept across.
+#[test]
+fn slow_trackpad_travel_straight_down_over_a_label_with_no_room_down_pans_across_by_the_distance_it_covered()
+ {
+    let (ui, _canvas) = probe(reference_label(), 1.0, Opening::At(DEFAULT_ZOOM));
+    let over = in_view(&ui, 300.0, 200.0);
+    for _ in 0..40 {
+        wheel(ui.window(), over, 0.0, -0.4, false, false);
+    }
+    assert!(
+        (ui.get_pan_x() - 16).abs() <= 1,
+        "forty trackpad events of 0.4 px straight down panned {} device px across where 16 \
+         were covered",
+        ui.get_pan_x()
+    );
+    assert_eq!(ui.get_pan_y(), 0);
+}
+
+/// A rule that took each event's longer axis would give 60 and then 120; one that
+/// turned mixed travel too would give 90.
+#[test]
+fn travel_with_any_part_across_is_spent_as_it_came_over_a_label_with_no_room_down() {
+    let (ui, _canvas) = probe(reference_label(), 1.0, Opening::At(DEFAULT_ZOOM));
+    let over = in_view(&ui, 300.0, 200.0);
+    wheel(ui.window(), over, -30.0, -60.0, false, false);
+    assert_eq!(
+        (ui.get_pan_x(), ui.get_pan_y()),
+        (30, 0),
+        "down-right pans right by its travel across"
+    );
+    wheel(ui.window(), over, 30.0, -60.0, false, false);
+    assert_eq!(
+        (ui.get_pan_x(), ui.get_pan_y()),
+        (0, 0),
+        "down-left pans left by its travel across, never right"
+    );
+}
+
+/// X11 and Windows send each axis of a swipe as an event of its own (winit
+/// x11/event_processor.rs:1148-1170, windows/event_loop.rs:1727-1765), and a Wayland
+/// swipe can alternate frames with nothing across and frames with a little. Travel
+/// turned across keeps a fraction of its own, so the small part across the other way
+/// neither wipes it nor is wiped by it: forty of each pair cover 16 px turned right and
+/// 4 px left, or 136 and 24 at speed.
+#[test]
+fn a_swipe_down_and_across_over_a_label_with_no_room_down_pans_across_by_its_net_travel() {
+    for (name, down, across, net) in [
+        (
+            "an axis an event, down and to the left",
+            (0.0, -0.4),
+            (0.1, 0.0),
+            12,
+        ),
+        (
+            "an axis an event, down and to the right",
+            (0.0, -0.4),
+            (-0.1, 0.0),
+            20,
+        ),
+        (
+            "frames with a little to the left",
+            (0.0, -0.4),
+            (0.1, -0.4),
+            12,
+        ),
+        (
+            "an axis an event, faster, down and to the left",
+            (0.0, -3.4),
+            (0.6, 0.0),
+            112,
+        ),
+    ] {
+        let (ui, _canvas) = probe(reference_label(), 1.0, Opening::At(DEFAULT_ZOOM));
+        let over = in_view(&ui, 300.0, 200.0);
+        ui.invoke_pan_to(300, 0);
+        assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (300, 0), "{name}");
+        for _ in 0..40 {
+            wheel(ui.window(), over, down.0, down.1, false, false);
+            wheel(ui.window(), over, across.0, across.1, false, false);
+        }
+        assert!(
+            (ui.get_pan_x() - 300 - net).abs() <= 1,
+            "{name}: panned {} device px across where {net} was the net travel",
+            ui.get_pan_x() - 300
+        );
+        assert_eq!(ui.get_pan_y(), 0, "{name}");
+    }
+}
+
+#[test]
+fn travel_across_is_never_turned_down_over_a_label_with_no_room_across() {
+    let mut label = relabel_render::Label::new(40, 300, relabel_render::target::Dpmm::DPI_203);
+    label.elements = vec![rect(1, frame(8, 8, 24, 40), Rot::D0, false)];
+    let (ui, _canvas) = probe(label, 1.0, Opening::At(DEFAULT_ZOOM));
+    let over = in_view(&ui, 100.0, 200.0);
+    assert_eq!(ui.get_scene_w(), ui.get_view_px_w(), "no room across");
+    assert!(ui.get_scene_h() > ui.get_view_px_h(), "room down");
+    wheel(ui.window(), over, -60.0, 0.0, false, false);
+    assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (0, 0), "a tilt");
+    wheel(ui.window(), over, 0.0, -60.0, true, false);
+    assert_eq!(
+        (ui.get_pan_x(), ui.get_pan_y()),
+        (0, 0),
+        "Shift and a wheel down"
+    );
+    wheel(ui.window(), over, 0.0, -60.0, false, false);
+    assert_eq!(
+        (ui.get_pan_x(), ui.get_pan_y()),
+        (0, 60),
+        "a plain wheel down"
+    );
 }
 
 #[test]

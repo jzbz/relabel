@@ -359,6 +359,35 @@ fn a_wheel_during_a_drag_neither_pans_nor_disturbs_the_drag() {
     assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (0, 0));
 }
 
+/// At 4x, where the view has no room down and a straight wheel would otherwise be
+/// turned across: the pressed element answers GrabMouse and keeps the wheel from the
+/// view (i-slint-core items/input_items.rs:193-199). The refusal of a held pointer
+/// before the turn in `pan-by` itself is pinned by
+/// `nothing_about_the_view_changes_while_an_element_is_held`.
+#[test]
+fn a_straight_wheel_during_a_drag_over_a_label_with_no_room_down_neither_pans_nor_disturbs_the_drag()
+ {
+    let (ui, canvas) = probe(reference_label(), 1.0, Opening::At(DEFAULT_ZOOM));
+    let w = ui.window();
+    let from = centre(&rows_of(&ui)[0]);
+    let expected = dot_at(&ui, from.x + 40.0, DEFAULT_ZOOM) - dot_at(&ui, from.x, DEFAULT_ZOOM);
+    down(w, from);
+    let mid = LogicalPosition::new(from.x + 20.0, from.y);
+    move_to(w, mid);
+    wheel(w, mid, 0.0, -120.0, false, false);
+    assert_eq!(
+        (ui.get_pan_x(), ui.get_pan_y()),
+        (0, 0),
+        "straight after the wheel"
+    );
+    let to = LogicalPosition::new(from.x + 40.0, from.y);
+    move_to(w, to);
+    up(w, to);
+    assert_eq!(feed(&canvas, 1), 8 + expected);
+    assert_eq!(expected, 10);
+    assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (0, 0));
+}
+
 #[test]
 fn nothing_about_the_view_changes_while_an_element_is_held() {
     let (ui, canvas) = probe(reference_label(), 1.0, Opening::At(DEFAULT_ZOOM));
@@ -372,6 +401,8 @@ fn nothing_about_the_view_changes_while_an_element_is_held() {
         assert_eq!(ui.get_status(), Refusal::Held.to_string(), "Ctrl+{key}");
     }
     ui.invoke_pan_by(300.0, 0.0);
+    ui.invoke_pan_by(0.0, 300.0);
+    wheel(w, from, 0.0, -60.0, false, false);
     ui.invoke_pan_to(300, 0);
     ui.invoke_zoom_wheel(60.0, 10.0, 10.0);
     assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (0, 0));

@@ -281,6 +281,53 @@ pub fn keep(pan: Pan, canvas: (i64, i64), view: (i64, i64)) -> Pan {
     }
 }
 
+/// Whether a view command can set more than one pan along one axis: the pans
+/// [`clamp`] allows run from `range_axis`'s low end kept to its high end kept, and
+/// `keep_axis` never reverses their order. For a view and a canvas each longer than
+/// `KEEP` pixels this is exactly when that axis's scroll bar is drawn (zoom.slint's
+/// `needed`). A fact of the scene, the canvas and the view, never of the pan: a view
+/// at the end of its room still has room.
+pub fn room_axis(scene_lo: i64, scene_len: i64, canvas_len: i64, view: i64) -> bool {
+    let (a, b) = range_axis(scene_lo, scene_len, view);
+    keep_axis(a, canvas_len, view) != keep_axis(b, canvas_len, view)
+}
+
+/// Scroll travel in device pixels as a pan spends it. Travel with nothing across and
+/// something down, over a view with no room down, pans across instead - down to the
+/// right, as Shift sends it - because a label is drawn far wider than it is tall and at
+/// most zooms has no room down, where a plain wheel otherwise panned nothing. Anything
+/// else is spent as it came: travel with any part across is never turned, travel across
+/// is never turned down, and nothing is carried from one axis to the other at an edge.
+///
+/// Keyed on the travel, not the device: the scroll event holds two deltas and the
+/// modifiers and nothing else (i-slint-common builtin_structs.rs:65-75), `TouchArea`
+/// drops the phase (i-slint-core items/input_items.rs:193-197), and a wheel's lines and
+/// a trackpad's pixels arrive as the same logical pixels (i-slint-backend-winit
+/// event_loop.rs:401-421). So a trackpad swipe with nothing across is turned too. Either
+/// sign of zero counts as nothing across: the scroll handler's own negation
+/// (shell.slint's `-e.delta-x`) makes the +0.0 of a wheel's absent axis a -0.0.
+///
+/// Where one event carries both axes (Wayland, macOS), a swipe that alternates frames
+/// with nothing across and frames with a little across moves unevenly, since only the
+/// first are turned: once the part across reaches a pixel a frame, one leaning left
+/// steps right and back in turn.
+pub fn wheel_travel(dx: f32, dy: f32, room_down: bool) -> Travel {
+    if dx == 0.0 && dy != 0.0 && !room_down {
+        Travel::Turned(dy)
+    } else {
+        Travel::AsItCame(dx, dy)
+    }
+}
+
+/// Scroll travel in device pixels as [`wheel_travel`] routes it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Travel {
+    /// Across and down, spent as they came.
+    AsItCame(f32, f32),
+    /// Travel down, spent across.
+    Turned(f32),
+}
+
 /// The pan that keeps the scene point under `at` there when the zoom goes from
 /// `old` to `new`.
 pub fn zoom_about(pan: Pan, old: u32, new: u32, at: (f64, f64)) -> Pan {
@@ -321,6 +368,12 @@ pub fn key_anchor(pan: Pan, frame: Option<PxRect>, view: (i64, i64)) -> (f64, f6
 pub struct Drift {
     x: f64,
     y: f64,
+    /// Travel down turned across, kept apart from `x`. Kept together, a swipe down and
+    /// a little to the left sent an axis an event (winit x11/event_processor.rs:1148-1170,
+    /// windows/event_loop.rs:1727-1765) reversed the one kept value every event, so each
+    /// part wiped the other's fraction and forty pairs of 0.4 px down and 0.1 px left
+    /// panned nothing, where 12 px net were covered.
+    turned: f64,
     /// The pan the kept travel was left at. A view anywhere else was moved by another
     /// command since, and a fraction of a pixel of the old place is no part of the new.
     at: Option<Pan>,
@@ -330,11 +383,28 @@ impl Drift {
     /// Whole device pixels in `dx` and `dy` plus what was kept, for a view now at
     /// `from`. A change of direction starts that axis again, as [`Wheel`] does.
     pub fn pixels(&mut self, from: Pan, dx: f32, dy: f32) -> (i64, i64) {
+        self.start_at(from);
+        (spend(&mut self.x, dx), spend(&mut self.y, dy))
+    }
+
+    /// [`Drift::pixels`] for travel as [`wheel_travel`] routes it, travel turned across
+    /// spending a kept fraction of its own.
+    pub fn routed(&mut self, from: Pan, travel: Travel) -> (i64, i64) {
+        match travel {
+            Travel::AsItCame(dx, dy) => self.pixels(from, dx, dy),
+            Travel::Turned(down) => {
+                self.start_at(from);
+                (spend(&mut self.turned, down), 0)
+            }
+        }
+    }
+
+    fn start_at(&mut self, from: Pan) {
         if self.at != Some(from) {
             self.x = 0.0;
             self.y = 0.0;
+            self.turned = 0.0;
         }
-        (spend(&mut self.x, dx), spend(&mut self.y, dy))
     }
 
     /// Where the view came to rest once the pixels were spent.
@@ -716,8 +786,11 @@ pub fn wire<H: ViewHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>, opening: Ope
             }
             let c = canvas.borrow();
             let mut s = seen.borrow_mut();
+            let (doc, zoom) = (c.doc(), c.zoom());
+            let whole = scene(doc, zoom);
+            let room_down = room_axis(whole.y, whole.h, canvas_px(doc, zoom).1, view_of(&host).1);
             let from = s.pan;
-            let (px, py) = s.drift.pixels(from, dx, dy);
+            let (px, py) = s.drift.routed(from, wheel_travel(dx, dy, room_down));
             let want = Pan {
                 x: from.x.saturating_add(px),
                 y: from.y.saturating_add(py),
@@ -1105,6 +1178,44 @@ mod tests {
     }
 
     #[test]
+    fn travel_turned_across_keeps_a_fraction_of_its_own_beside_the_travel_across() {
+        let mut d = Drift::default();
+        let mut pan = Pan::default();
+        for _ in 0..40 {
+            for travel in [Travel::Turned(0.4), Travel::AsItCame(-0.1, 0.0)] {
+                let (x, y) = d.routed(pan, travel);
+                assert_eq!(y, 0);
+                pan.x += x;
+                d.rest_at(pan);
+            }
+        }
+        assert_eq!(
+            pan.x, 12,
+            "16 turned right and 4 left, neither wiping the other"
+        );
+
+        let mut d = Drift::default();
+        let origin = Pan::default();
+        assert_eq!(d.routed(origin, Travel::Turned(0.75)), (0, 0));
+        d.rest_at(origin);
+        assert_eq!(
+            d.routed(origin, Travel::Turned(-0.5)),
+            (0, 0),
+            "turned travel that reverses starts again"
+        );
+        d.rest_at(origin);
+        assert_eq!(d.routed(origin, Travel::Turned(0.75)), (0, 0));
+        d.rest_at(origin);
+        assert_eq!(
+            d.routed(Pan { x: 40, y: 0 }, Travel::Turned(0.75)),
+            (0, 0),
+            "the view was moved by something else"
+        );
+        d.rest_at(Pan { x: 40, y: 0 });
+        assert_eq!(d.routed(Pan { x: 40, y: 0 }, Travel::Turned(0.5)), (1, 0));
+    }
+
+    #[test]
     fn pan_travel_that_is_not_a_number_pans_nothing_and_an_infinite_one_saturates() {
         let mut d = Drift::default();
         let origin = Pan::default();
@@ -1149,6 +1260,114 @@ mod tests {
                 h: 208
             }
         );
+    }
+
+    #[test]
+    fn room_on_an_axis_is_more_than_one_pan_a_view_command_can_set() {
+        assert!(!room_axis(0, 384, 384, 525), "the reference label at 4x");
+        assert!(room_axis(0, 576, 576, 525), "at 6x");
+        assert!(
+            room_axis(-240, 624, 384, 525),
+            "an element hanging 60 dots off the top at 4x"
+        );
+        assert!(!room_axis(0, 525, 525, 525));
+        assert!(room_axis(0, 526, 526, 525));
+
+        // Against the pans `clamp` allows.
+        for lo in -6..=0 {
+            for len in 1..=12 {
+                for canvas_len in 1..=12 {
+                    for view in -2..=12 {
+                        let scene = PxRect {
+                            x: 0,
+                            y: lo,
+                            w: 1,
+                            h: len,
+                        };
+                        let at = |y| clamp(Pan { x: 0, y }, scene, (1, canvas_len), (1, view)).y;
+                        assert_eq!(
+                            room_axis(lo, len, canvas_len, view),
+                            at(i64::MIN) != at(i64::MAX),
+                            "lo {lo}, len {len}, canvas {canvas_len}, view {view}"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Against the drawn bar: `push_scene` sets the extent to the range plus the
+        // view, and zoom.slint's `needed` draws the bar when the extent is longer than
+        // the view and the view is longer than 0.
+        for canvas in 3..=12 {
+            for view in 3..=16 {
+                for lo in -6..=0 {
+                    for end in canvas..=canvas + 6 {
+                        let len = end - lo;
+                        let (a, b) = range_axis(lo, len, view);
+                        let extent = b - a + view;
+                        assert_eq!(
+                            room_axis(lo, len, canvas, view),
+                            extent > view && view > 0,
+                            "lo {lo}, len {len}, canvas {canvas}, view {view}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scroll_travel_with_nothing_across_goes_across_only_where_there_is_no_room_down() {
+        use Travel::{AsItCame, Turned};
+        assert_eq!(
+            wheel_travel(0.0, 60.0, false),
+            Turned(60.0),
+            "wheel down pans right"
+        );
+        assert_eq!(wheel_travel(0.0, -60.0, false), Turned(-60.0));
+        assert_eq!(
+            wheel_travel(-0.0, 0.4, false),
+            Turned(0.4),
+            "negative zero is nothing across"
+        );
+        assert_eq!(
+            wheel_travel(0.0, 60.0, true),
+            AsItCame(0.0, 60.0),
+            "room down, even at its end"
+        );
+        assert_eq!(
+            wheel_travel(30.0, 60.0, false),
+            AsItCame(30.0, 60.0),
+            "any travel across is spent as it came"
+        );
+        assert_eq!(wheel_travel(-5.0, 20.0, false), AsItCame(-5.0, 20.0));
+        assert_eq!(
+            wheel_travel(60.0, 0.0, false),
+            AsItCame(60.0, 0.0),
+            "travel across is never turned down"
+        );
+        assert_eq!(wheel_travel(60.0, 0.0, true), AsItCame(60.0, 0.0));
+        assert_eq!(wheel_travel(0.0, 0.0, false), AsItCame(0.0, 0.0));
+        let nan = wheel_travel(0.0, f32::NAN, false);
+        assert!(matches!(nan, Turned(d) if d.is_nan()), "{nan:?}");
+    }
+
+    #[test]
+    fn the_reference_label_has_no_room_down_up_to_four_and_has_some_from_six_in_the_scale_one_view()
+    {
+        let room = |doc: &Doc, z: u32| {
+            let s = scene(doc, z);
+            room_axis(s.y, s.h, canvas_px(doc, z).1, 525)
+        };
+        let doc = rect_label(REFERENCE, &[(8, 8, 40, 24)]);
+        for z in [2, 3, 4] {
+            assert!(!room(&doc, z), "no room down at {z}x");
+        }
+        for z in [6, 8] {
+            assert!(room(&doc, z), "room down at {z}x");
+        }
+        let hanging = rect_label(REFERENCE, &[(8, -60, 40, 64)]);
+        assert!(room(&hanging, 4), "an element off the top gives room down");
     }
 
     #[test]

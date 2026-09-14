@@ -78,7 +78,9 @@ export component Designer {
     // Logical pixels of wheel travel, and the pointer in device pixels from the
     // view's top-left.
     callback zoom-wheel(travel: float, at-x: float, at-y: float);
-    // Device pixels.
+    // Device pixels of wheel or trackpad travel, turned across here only for Shift;
+    // with nothing across and no room down Rust turns it across too
+    // (view::wheel_travel).
     callback pan-by(dx: float, dy: float);
     callback pan-to(x: int, y: int);
     callback view-resized();
@@ -275,6 +277,9 @@ export component Designer {
                                     // the plain path below.
                                     root.pan-by(-e.delta-y / 1phx, 0);
                                 } else {
+                                    // Travel with nothing across, over a view with no
+                                    // room down, pans across in Rust
+                                    // (view::wheel_travel), beside the pan's range.
                                     root.pan-by(-e.delta-x / 1phx, -e.delta-y / 1phx);
                                 }
                                 return EventResult.accept;
