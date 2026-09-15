@@ -92,8 +92,11 @@ datamatrix = "0.3.3"
 parley = { version = "0.10", default-features = false, features = ["std"] }
 # Glyph outlines and hinting: the autohinter here is the only hinting measured
 # to keep a one-to-two-dot stem the same width across a glyph. See
-# relabel-render's text module. The version parley 0.10 resolves to.
-skrifa = "0.42.1"
+# relabel-render's text module. Newer than the 0.42 parley 0.10 and Slint 1.17
+# pin, so the graph holds two skrifa copies; that is safe because no skrifa type
+# crosses the parley boundary - text.rs builds its own FontRef from the raw font
+# bytes parley hands back. Re-measure the hinted stems when this moves.
+skrifa = "0.47.0"
 
 # Raster artwork: decoding what a user imports, and the PNG an image element
 # embeds. Pure Rust for every format enabled here; AVIF (a C decoder), TIFF
@@ -113,7 +116,7 @@ image = { version = "=0.25.10", default-features = false, features = [
 # releases.
 resvg = { version = "=0.47.0", default-features = false }
 # The embedded PNG travels in the label's JSON as base64 text.
-base64 = { version = "0.22.1", default-features = false, features = ["std"] }
+base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 
 # Test-only decoders, so a rendered symbol is read back by code that shares
 # nothing with the encoder that made it. rqrr is a port of quirc. rxing is a
