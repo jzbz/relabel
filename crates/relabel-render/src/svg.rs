@@ -1,12 +1,12 @@
 //! SVG artwork, rendered to dots by resvg - at import, and only then.
 //!
-//! resvg 0.47 was built for SVG someone chose to open, and its defaults show
+//! resvg 0.48 was built for SVG someone chose to open, and its defaults show
 //! it: it reads any local file an `<image>` names, relative to the working
-//! directory when no resource directory is set; it sizes a pattern tile or a
-//! filter region from the file with no cap, so a few hundred bytes can abort
-//! the process; and it reports what it could not draw only to a log. Rendering
-//! at import keeps all of that away from a shared label, which carries only
-//! the dots. Here, on a file the user picked, it is fenced in:
+//! directory when no resource directory is set; it sizes a pattern tile from
+//! the file with no cap, so a few hundred bytes can abort the process; and it
+//! reports what it could not draw only to a log. Rendering at import keeps all
+//! of that away from a shared label, which carries only the dots. Here, on a
+//! file the user picked, it is fenced in:
 //!
 //! - no file access at all: both image resolvers refuse, and no resource
 //!   directory is set;
@@ -23,9 +23,10 @@
 //! - at most 2 MiB of XML, 100 000 nodes, and 262 144 dots of output.
 //!
 //! Text is refused rather than drawn: drawing it needs resvg's `text` feature,
-//! a second shaping stack whose unhinted glyphs would not match relabel's own
-//! text, and a Zlib-only dependency. Converting text to outlines is one menu
-//! item in every editor that writes SVG.
+//! which lays text out a second way, over `fontdb`, with unhinted glyphs that
+//! would not match relabel's own text, and brings a Zlib-only dependency.
+//! Converting text to outlines is one menu item in every editor that writes
+//! SVG.
 //!
 //! Edges are crisp unless the file asks otherwise. An anti-aliased hairline
 //! half a dot wide is a row of mid-grey dots, and a threshold prints none of

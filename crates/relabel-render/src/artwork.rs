@@ -4,11 +4,11 @@
 //!
 //! Decoding is where the danger is. A few bytes of PNG header can claim a
 //! 100000 x 100000 image, and `image` 0.25.10 allocates what a header claims
-//! before it reads a pixel; an SVG can ask resvg for a filter region or a
-//! pattern tile large enough to abort the process. So all of that happens
-//! here, under explicit limits, on a file the user chose, and what lands in the
-//! label is a small PNG already sized for its frame. Drawing a label, one from
-//! someone else included, only ever unpacks that PNG ([`from_stored`]).
+//! before it reads a pixel; an SVG can ask resvg for a pattern tile large
+//! enough to abort the process. So all of that happens here, under explicit
+//! limits, on a file the user chose, and what lands in the label is a small PNG
+//! already sized for its frame. Drawing a label, one from someone else
+//! included, only ever unpacks that PNG ([`from_stored`]).
 //!
 //! # The pipeline
 //!

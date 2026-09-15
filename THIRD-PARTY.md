@@ -93,12 +93,13 @@ notice file reproduces for it.
 No crate in the graph ships an Apache-2.0 `NOTICE` file, so section 4(d) of
 that licence asks nothing today.
 
-Two Zlib crates ask nothing of a binary: Zlib requires its notice only in a
-source distribution.
+Three crates offer Zlib alone, and none asks anything of a binary: Zlib
+requires its notice only in a source distribution.
 
 - **`foldhash`** is compiled in, as `hashbrown`'s default hasher, which parley
-  and fontique ask for. It is the only compiled crate that offers Zlib
-  alone, so `deny.toml` admits it by name.
+  and fontique ask for. `deny.toml` admits it by name.
+- **`slotmap`** is compiled in with the GUI, under Slint's `fontdb` and
+  `taffy`, and is admitted by name with the rest of that stack (see below).
 - **`zlib-rs`** is an optional dependency of `flate2` that no feature enables.
   It is locked, never compiled.
 
@@ -106,17 +107,18 @@ source distribution.
 
 `relabel-render` imports raster and SVG artwork, so it ships `image` 0.25.10
 with its PNG, JPEG, BMP, GIF and WebP codecs - `png`, `zune-jpeg`, `gif`,
-`image-webp` and their kin - and `resvg` and `usvg` 0.47 with `roxmltree`,
-`svgtypes`, `simplecss`, `kurbo` and `base64`. Every one is MIT or offers MIT,
-so none needs more than the notice, and `cargo deny` passes with `deny.toml`
-unchanged.
+`image-webp` and their kin - `base64` for the PNG a label embeds, and `resvg`
+and `usvg` 0.48 with `roxmltree`, `svgtypes`, `simplecss` and `kurbo`. Every
+one is MIT or offers MIT, so none needs more than the notice, and `cargo deny`
+passes with `deny.toml` unchanged.
 
 What is left out matters as much: AVIF, whose decoder links a C library;
-resvg's `text`, which would bring a Zlib-only `slotmap` and a second shaping
-stack; and its `raster-images`. Two side effects are worth knowing. resvg asks
-for tiny-skia's default features, so tiny-skia's PNG codec is compiled in - the
-same `png` crate `image` brings. And `pico-args`, a command-line parser that
-resvg and usvg depend on for their own binaries, is compiled but never called.
+resvg's `text`, which would put `fontdb` and the Zlib-only `slotmap` into
+`relabel-render`'s own graph, not only the GUI's; and its `raster-images`. Two
+side effects are worth knowing. resvg asks for tiny-skia's default features, so
+tiny-skia's PNG codec is compiled in - the same `png` crate `image` brings. And
+`pico-args`, a command-line parser that resvg and usvg depend on for their own
+binaries, is compiled but never called.
 
 ## Arriving with work in progress
 

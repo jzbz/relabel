@@ -571,10 +571,10 @@ The job engine owns retries, the deadline, the copies/pages fallback for D110-cl
 | `slint` | 1.17 | `default-features = false` + `std`, `compat-1-2`, `accessibility`, `backend-winit`, `renderer-femtovg-wgpu`, `renderer-software`, `unstable-wgpu-29` | Identical to rpgp, for identical reasons: `backend-default` compiles in Qt whenever `qmake` is on PATH and then prefers it at runtime, and `renderer-femtovg` is OpenGL, deprecated on macOS. |
 | `slint-build` | 1.17 | | Build dependency. |
 | `tiny-skia` | 0.12 | | Pure-Rust 2D rasteriser, BSD-3-Clause, no C. **Already compiled** in a Slint 1.17 build via resvg → usvg, so it costs zero new crates. |
-| `parley` | **0.10** | | Shaping, line breaking and font fallback. Pinned to 0.10 rather than 0.11 **because that is the version Slint 1.17 already compiles** — bumping it means a second copy of parley, fontique and harfrust in the tree. Re-exports fontique, so no separate dependency. |
-| `skrifa` | **0.42** | | Glyph outlines into `tiny_skia::PathBuilder` via `OutlinePen`. Pinned for the same unification reason. |
+| `parley` | **0.11.1** | | Shaping, line breaking and font fallback. Newer than the 0.10 Slint 1.17 compiles, so the graph holds a second copy of parley, parley_data, fontique and harfrust; no type passes between the two, and Slint's parley features do not reach relabel-render's copy. Re-exports fontique, so no separate dependency. |
+| `skrifa` | **0.47** | | Glyph outlines into `tiny_skia::PathBuilder` via `OutlinePen`. Newer than the 0.42 Slint 1.17 compiles and the 0.44 parley 0.11 uses, so the graph holds three copies; no skrifa type crosses the parley boundary. |
 | `image` | 0.25.10 | `default-features = false`, `png`, `jpeg`, `bmp`, `gif`, `webp` | Import of user artwork, decoded once and stored as a grey PNG. Not for dithering: `imageops::colorops::dither` panics on anything narrower than two pixels (RENDER-DESIGN §4.7). Pure Rust for every one of these — only `avif-native` drags in libdav1d; `webp` is `image-webp`, pure Rust. |
-| `resvg` | 0.47.0 | `default-features = false` | SVG artwork, rendered at import only. Also in Slint's graph for `@image-url`. `text` stays off - SVG text is refused - and so does `raster-images`, whose decoders ignore `image`'s limits; `roxmltree` comes with usvg regardless. |
+| `resvg` | 0.48.1 | `default-features = false` | SVG artwork, rendered at import only. Slint's graph has its own resvg 0.47 for `@image-url`, over the same tiny-skia; no SVG type passes between the two. `text` stays off - SVG text is refused - and so does `raster-images`, whose decoders ignore `image`'s limits; `roxmltree` comes with usvg regardless. |
 | `barcoders` | 2.0 | | Code128 A/B/C, EAN-13/8, UPC-A, Code39, Code93, Code11, ITF/STF, Codabar. `encode()` returns a `Vec<u8>` of raw 0/1 modules with no rendering attached — exactly what a device-pixel blitter wants. Low activity but not abandoned. |
 | `qrcode` | 0.14 | `default-features = false` | Zero transitive dependencies with defaults off. Its defaults pull `image`, `svg`, `pic`, `eps`, none of which we want. |
 | `serde` | 1 | `derive` | The `.relabel` label document. |
@@ -611,7 +611,7 @@ Verified end to end by a working proof of concept that renders a 384×320 B21 la
 
 ```
 Label (document)
-  → parley 0.10 layout  →  skrifa 0.42 outlines  →  tiny_skia::PathBuilder
+  → parley 0.11 layout  →  skrifa 0.47 outlines  →  tiny_skia::PathBuilder
   → barcoders / qrcode  →  fill_rect at integer module size, anti_alias = false
   → image / resvg       →  scaled blit
   = tiny_skia::Pixmap (premultiplied RGBA)
@@ -841,5 +841,5 @@ Every place the research disagreed with itself, and what relabel does. Kept toge
 | 16 | `PrinterCheckLine 0x86` — client-sent or printer-sent? | Both exist. Client-sent every 200 rows on B21_V1/B21_L2B only; printer-sent `0xD3` is an unsolicited received-row count that relabel logs and, later, may use as a genuine drop check. |
 | 17 | Heartbeat layout by length or by model id? | By length, as niimbluelib does — but every flag it yields is display-only, never a gate. |
 | 18 | Advanced2 charge: enum or percent? Flag polarity? Temp units? | Unresolved. Displayed with hedged labels; never blocks a print. |
-| 19 | Which Slint text-stack crates come from `default`? | `parley 0.10`, `fontique 0.10`, `skrifa 0.42`, `harfrust 0.8` do. `swash`, `zeno` and the second `skrifa 0.44` arrive via the software renderer, femtovg and the compiler — not via `shared-parley`. Pin parley/skrifa regardless; that is what unification requires. |
+| 19 | Which Slint text-stack crates come from `default`? | `parley 0.10`, `fontique 0.10`, `skrifa 0.42`, `harfrust 0.8` do. `swash`, `zeno` and the second `skrifa 0.44` arrive via the software renderer, femtovg and the compiler — not via `shared-parley`. Pin parley/skrifa regardless; that is what unification requires. Since the dependency update, relabel-render uses parley 0.11.1 and skrifa 0.47, which no longer unify with Slint's; see `Cargo.toml`. |
 | 20 | Can `niimprint-rs` be reused? | No. It does not compile on macOS or Windows at all, and its single print flow matches no niimbluelib task. Write `relabel-proto` from scratch. |
