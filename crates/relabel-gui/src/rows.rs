@@ -39,6 +39,61 @@ pub fn keepout_ordinal(off_canvas: bool, k: Option<Keepout>) -> i32 {
 pub trait CanvasRow: Clone + PartialEq + 'static {
     /// `clear` is [`crate::geom::clearances`]'s answer for this frame.
     fn of(s: &Shown, clear: [i32; 4]) -> Self;
+    /// The element this row draws, which is what [`row_edits`] keys rows by.
+    fn id(&self) -> i32;
+}
+
+/// One structural change to the canvas model, applied in order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowEdit {
+    /// Remove the row now at this index.
+    Remove(usize),
+    /// Insert the row the new list holds at this index, at this index.
+    Insert(usize),
+}
+
+/// The removes and inserts that turn the rows on screen, listed by element id in
+/// z-order, into the rows wanted, keyed by id rather than by position.
+///
+/// Keyed because the repeater keeps an instance through a `row_added` or a
+/// `row_removed` at another index and only moves it (i-slint-core
+/// model/repeater.rs:443-506), so the row holding the keyboard still holds it and
+/// still draws the element it drew. By position, a delete above the focused row
+/// would rewrite that row with its neighbour's element, and a reset drops every
+/// instance and the focus with them (repeater.rs:508-511).
+///
+/// Ids absent from `want` go first, from the back so each index is still the one
+/// read. Then `want` is walked: an id already in place stays, a new one is inserted,
+/// and one found further on is removed there and inserted here. So an id common to
+/// both lists is only ever removed when the two lists order it differently, which
+/// nothing this build does can cause. Ids are unique within a list, which
+/// `Label::from_json` and the id allocator both hold to; any rows left over at the
+/// end are removed rather than trusted.
+pub fn row_edits(have: &[i32], want: &[i32]) -> Vec<RowEdit> {
+    let mut edits = Vec::new();
+    let mut now: Vec<i32> = have.to_vec();
+    for i in (0..now.len()).rev() {
+        if !want.contains(&now[i]) {
+            now.remove(i);
+            edits.push(RowEdit::Remove(i));
+        }
+    }
+    for (k, id) in want.iter().enumerate() {
+        if now.get(k) == Some(id) {
+            continue;
+        }
+        if let Some(j) = now[k.min(now.len())..].iter().position(|n| n == id) {
+            now.remove(k + j);
+            edits.push(RowEdit::Remove(k + j));
+        }
+        now.insert(k, *id);
+        edits.push(RowEdit::Insert(k));
+    }
+    while now.len() > want.len() {
+        now.pop();
+        edits.push(RowEdit::Remove(now.len()));
+    }
+    edits
 }
 
 /// The canvas's half of a window: the properties it is pushed and the callbacks
@@ -55,6 +110,7 @@ pub trait CanvasHost: slint::ComponentHandle + 'static {
     fn set_plane_px_w(&self, px: i32);
     fn set_plane_px_h(&self, px: i32);
     fn set_status(&self, status: slint::SharedString);
+    fn get_status(&self) -> slint::SharedString;
 
     fn on_select(&self, f: impl FnMut(i32) + 'static);
     fn on_begin_move(&self, f: impl FnMut(i32) + 'static);
@@ -89,6 +145,9 @@ macro_rules! impl_canvas_host {
                     clear_down: clear[3],
                 }
             }
+            fn id(&self) -> i32 {
+                self.id
+            }
         }
 
         impl $crate::rows::CanvasHost for $win {
@@ -120,6 +179,9 @@ macro_rules! impl_canvas_host {
             }
             fn set_status(&self, status: slint::SharedString) {
                 <$win>::set_status(self, status)
+            }
+            fn get_status(&self) -> slint::SharedString {
+                <$win>::get_status(self)
             }
             fn on_select(&self, f: impl FnMut(i32) + 'static) {
                 <$win>::on_select(self, f)
@@ -168,6 +230,10 @@ pub trait ViewHost: CanvasHost {
     /// can add. Read when needed rather than pushed, because the layout decides it.
     fn get_view_px_w(&self) -> i32;
     fn get_view_px_h(&self) -> i32;
+    /// How far past the selected frame's far edges a pan reaches for its grips, in
+    /// device pixels. Read when needed, like the view's size, because the display
+    /// scale decides it.
+    fn get_grip_reach_px(&self) -> i32;
     /// True from a press on an element to its release or cancel, written by the
     /// element's own TouchArea.
     fn get_pointer_down(&self) -> bool;
@@ -213,6 +279,9 @@ macro_rules! impl_view_host {
             }
             fn get_view_px_h(&self) -> i32 {
                 <$win>::get_view_px_h(self)
+            }
+            fn get_grip_reach_px(&self) -> i32 {
+                <$win>::get_grip_reach_px(self)
             }
             fn get_pointer_down(&self) -> bool {
                 <$win>::get_pointer_down(self)
@@ -326,6 +395,106 @@ macro_rules! impl_ins_host {
     };
 }
 
+/// One button of the edit bar, whichever compiled component it belongs to.
+pub trait ToolRow: Clone + 'static {
+    fn of(kind: crate::make::Kind) -> Self;
+}
+
+/// The grips struct, whichever compiled component it belongs to.
+pub trait GripsRow: Clone + 'static {
+    /// `None` is no grips: the id -1, which matches no selection.
+    fn of(grips: Option<&crate::geom::Grips>) -> Self;
+}
+
+/// The edit half of a window: the buttons it is pushed once, the grips it is pushed
+/// after every outcome, and the commands that add, delete and resize.
+///
+/// A trait of its own beside `InsHost` and `ViewHost`, for their reason: the canvas
+/// probes have no edit bar and compile untouched.
+pub trait EditHost: CanvasHost {
+    type Tool: ToolRow;
+    type Grips: GripsRow;
+
+    fn set_tools(&self, tools: slint::ModelRc<Self::Tool>);
+    fn set_grips(&self, grips: Self::Grips);
+
+    /// Answers whether an element was added, which decides whether the keyboard moves.
+    fn on_add(&self, f: impl FnMut(i32) -> bool + 'static);
+    /// Answers a kind token, or -1 for a key that is no kind's chord.
+    fn on_kind_of_key(&self, f: impl FnMut(slint::SharedString) -> i32 + 'static);
+    /// Answers whether nothing is selected afterwards, which decides whether the
+    /// keyboard moves.
+    fn on_delete_element(&self, f: impl FnMut(i32) -> bool + 'static);
+    fn on_begin_resize(&self, f: impl FnMut(i32, i32) + 'static);
+    fn on_resize_to(&self, f: impl FnMut(i32, i32, i32) + 'static);
+}
+
+/// Bind a compiled shell window and its two structs to [`crate::edit`]. Once for the
+/// application, once in each test file that wires the edit bar.
+#[macro_export]
+macro_rules! impl_edit_host {
+    ($win:ty, $tool:path, $grips:path) => {
+        impl $crate::rows::ToolRow for $tool {
+            fn of(kind: $crate::make::Kind) -> $tool {
+                $tool {
+                    token: kind.token(),
+                    text: kind.caption().into(),
+                    name: kind.button_name().into(),
+                    keys: kind.keys().as_str().into(),
+                }
+            }
+        }
+
+        impl $crate::rows::GripsRow for $grips {
+            fn of(grips: Option<&$crate::geom::Grips>) -> $grips {
+                // Field by field onto the default: a path fragment cannot open a
+                // struct literal in a match arm.
+                let mut out = <$grips as Default>::default();
+                out.id = -1;
+                if let Some(g) = grips {
+                    out.id = g.id as i32;
+                    out.x = g.x;
+                    out.y = g.y;
+                    out.w = g.w;
+                    out.h = g.h;
+                    out.locked = g.locked;
+                    out.room_e = g.room[0];
+                    out.room_s = g.room[1];
+                    out.room_se = g.room[2];
+                }
+                out
+            }
+        }
+
+        impl $crate::rows::EditHost for $win {
+            type Tool = $tool;
+            type Grips = $grips;
+
+            fn set_tools(&self, tools: slint::ModelRc<$tool>) {
+                <$win>::set_tools(self, tools)
+            }
+            fn set_grips(&self, grips: $grips) {
+                <$win>::set_grips(self, grips)
+            }
+            fn on_add(&self, f: impl FnMut(i32) -> bool + 'static) {
+                <$win>::on_add(self, f)
+            }
+            fn on_kind_of_key(&self, f: impl FnMut(slint::SharedString) -> i32 + 'static) {
+                <$win>::on_kind_of_key(self, f)
+            }
+            fn on_delete_element(&self, f: impl FnMut(i32) -> bool + 'static) {
+                <$win>::on_delete_element(self, f)
+            }
+            fn on_begin_resize(&self, f: impl FnMut(i32, i32) + 'static) {
+                <$win>::on_begin_resize(self, f)
+            }
+            fn on_resize_to(&self, f: impl FnMut(i32, i32, i32) + 'static) {
+                <$win>::on_resize_to(self, f)
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,5 +513,76 @@ mod tests {
             5,
             "off the label is its own fault, not a keep-out"
         );
+    }
+
+    /// `edits` applied to `have`, the way `Canvas::write_rows` applies them to the
+    /// model: an insert takes the wanted id at its own index.
+    fn applied(have: &[i32], want: &[i32], edits: &[RowEdit]) -> Vec<i32> {
+        let mut rows = have.to_vec();
+        for e in edits {
+            match *e {
+                RowEdit::Remove(i) => {
+                    rows.remove(i);
+                }
+                RowEdit::Insert(k) => rows.insert(k, want[k]),
+            }
+        }
+        rows
+    }
+
+    #[test]
+    fn row_edits_append_remove_and_restore() {
+        assert_eq!(row_edits(&[1, 2, 3], &[1, 2, 3, 4]), [RowEdit::Insert(3)]);
+        assert_eq!(row_edits(&[1, 2, 3], &[1, 3]), [RowEdit::Remove(1)]);
+        assert_eq!(row_edits(&[1, 3], &[1, 2, 3]), [RowEdit::Insert(1)]);
+        assert_eq!(row_edits(&[1, 2, 3], &[1, 2, 3]), []);
+    }
+
+    /// Every ordered selection of the ids 1 to 4, of every length.
+    fn arrangements() -> Vec<Vec<i32>> {
+        fn grow(prefix: Vec<i32>, out: &mut Vec<Vec<i32>>) {
+            for id in 1..=4 {
+                if !prefix.contains(&id) {
+                    let mut next = prefix.clone();
+                    next.push(id);
+                    grow(next, out);
+                }
+            }
+            out.push(prefix);
+        }
+        let mut out = Vec::new();
+        grow(Vec::new(), &mut out);
+        out
+    }
+
+    #[test]
+    fn row_edits_turn_any_have_into_any_want() {
+        let all = arrangements();
+        assert_eq!(all.len(), 65);
+        for have in &all {
+            for want in &all {
+                let edits = row_edits(have, want);
+                assert_eq!(&applied(have, want, &edits), want, "{have:?} to {want:?}");
+                let common: Vec<i32> = have.iter().copied().filter(|i| want.contains(i)).collect();
+                let in_want: Vec<i32> = want.iter().copied().filter(|i| have.contains(i)).collect();
+                if common != in_want {
+                    continue;
+                }
+                // Replayed, so each remove is checked against the id it removes.
+                let mut rows = have.clone();
+                for e in &edits {
+                    match *e {
+                        RowEdit::Remove(i) => {
+                            let gone = rows.remove(i);
+                            assert!(
+                                !want.contains(&gone),
+                                "{have:?} to {want:?} removed {gone}, which both keep in order"
+                            );
+                        }
+                        RowEdit::Insert(k) => rows.insert(k, want[k]),
+                    }
+                }
+            }
+        }
     }
 }

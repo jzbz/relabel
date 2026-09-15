@@ -8,7 +8,7 @@
 use crate::doc::{Cmd, Doc, Effect, Outcome};
 use crate::geom;
 use crate::preview::{NoDots, Pane};
-use crate::rows::{CanvasHost, CanvasRow};
+use crate::rows::{CanvasHost, CanvasRow, RowEdit, row_edits};
 use relabel_render::preview::{Extent, Scale};
 use slint::{Model, ModelRc, VecModel};
 use std::cell::RefCell;
@@ -41,12 +41,14 @@ pub(crate) type ViewTell<H> = Rc<dyn Fn(&H, &Doc, u32, Cause)>;
 /// The canvas's own state: the document, the rows on screen and the zoom.
 pub struct Canvas<H: CanvasHost> {
     doc: Doc,
-    /// One model for the life of the window, mutated with `set_row_data`.
+    /// One model for the life of the window, mutated row by row: `remove` and
+    /// `insert` keyed by element id, then `set_row_data`, and never `set_vec`.
     ///
-    /// Never replaced while a gesture is in flight: handing Slint a new
-    /// `ModelRc` destroys and recreates every repeater instance, including the
-    /// TouchArea holding the pointer grab, so the drag dies after its first
-    /// interpolated move. Measured: a twelve-dot drag moved one dot.
+    /// Never replaced and never reset: handing Slint a new `ModelRc` or a reset
+    /// destroys and recreates every repeater instance, including the TouchArea
+    /// holding the pointer grab, so the drag dies after its first interpolated
+    /// move (measured: a twelve-dot drag moved one dot), and the FocusScope holding
+    /// the keyboard, so an arrow after an undo moved nothing.
     rows: Rc<VecModel<H::Row>>,
     zoom: u32,
     pane: Pane,
@@ -56,7 +58,11 @@ pub struct Canvas<H: CanvasHost> {
     /// inspector's own trait, `CanvasHost` does not grow a pane-shaped hole, and
     /// no existing probe changes.
     push_ins: Option<PanePush<H>>,
-    /// Told after every outcome, after the pane: a view reads the pane's effects.
+    /// Told after every outcome, after the pane, when there is an edit bar and grips
+    /// to tell. A closure for `push_ins`'s reason.
+    push_edit: Option<PanePush<H>>,
+    /// Told after every outcome, after the pane and the grips: a view reads the
+    /// pane's effects.
     view: Option<ViewTell<H>>,
 }
 
@@ -76,6 +82,7 @@ impl<H: CanvasHost> Canvas<H> {
             zoom: DEFAULT_ZOOM,
             pane: Pane::default(),
             push_ins: None,
+            push_edit: None,
             view: None,
         }
     }
@@ -94,6 +101,11 @@ impl<H: CanvasHost> Canvas<H> {
     /// one outcome.
     pub(crate) fn tell_pane(&mut self, push: PanePush<H>) {
         self.push_ins = Some(push);
+    }
+
+    /// Install the grips' push, which `refresh_because` calls after the pane's.
+    pub(crate) fn tell_edit(&mut self, push: PanePush<H>) {
+        self.push_edit = Some(push);
     }
 
     /// Install the view's hook, which `refresh_because` calls last.
@@ -181,8 +193,14 @@ impl<H: CanvasHost> Canvas<H> {
         if let Some(push) = self.push_ins.clone() {
             push(host, &self.doc);
         }
+        // For the pane's reason: whether an outcome moved the selected frame, changed
+        // the selection or refused, the grips are pushed, and setting the same value
+        // again marks nothing dirty.
+        if let Some(push) = self.push_edit.clone() {
+            push(host, &self.doc);
+        }
         if let Some(note) = out.note {
-            host.set_status(note.as_str().into());
+            host.set_status(said_again(&host.get_status(), note).as_str().into());
         }
         // Last, and for every outcome: the selection and its frame are only final
         // once the rows and the pane have been pushed, and the view decides from
@@ -204,26 +222,37 @@ impl<H: CanvasHost> Canvas<H> {
             .collect()
     }
 
-    /// Write every row that differs from the one on screen, by position, which is
-    /// z-order: the whole list is rebuilt, so a row captured a frame ago cannot
-    /// address a different element.
+    /// Bring the rows on screen to the document, in z-order: rows whose element has
+    /// gone are removed and rows for new elements inserted, keyed by id through
+    /// [`row_edits`], and then every row that differs is written in place.
     ///
     /// Each row is rebuilt whole in Rust and written with `set_row_data`. Nothing in
     /// .slint assigns to a row, so the compiler's read / rebuild / assign-whole-row
-    /// rewrite never happens at all. One row at a time rather than through `set_vec`,
-    /// which emits a model *reset*: a reset drops every repeater instance, and with
-    /// them the keyboard focus, so an arrow key after an undo moved nothing at all.
-    /// Only a change in how many rows there are needs the reset.
+    /// rewrite never happens at all. Never through `set_vec`, which emits a model
+    /// *reset*: a reset drops every repeater instance, and with them the keyboard
+    /// focus, so an arrow key after an undo moved nothing at all. And not by position
+    /// when the count changes, which would write a deleted element's neighbour into
+    /// the instance that held the keyboard: a `row_removed` or `row_added` elsewhere
+    /// keeps that instance and moves it with its element (i-slint-core
+    /// model/repeater.rs:443-506). An inserted row carries its data already, so the
+    /// pass that follows finds nothing to write there.
     fn write_rows(&mut self) {
         let rows = self.rows_now();
-        if self.rows.row_count() == rows.len() {
-            for (i, row) in rows.into_iter().enumerate() {
-                if self.rows.row_data(i).as_ref() != Some(&row) {
-                    self.rows.set_row_data(i, row);
+        let have: Vec<i32> = self.rows.iter().map(|r| r.id()).collect();
+        let want: Vec<i32> = rows.iter().map(CanvasRow::id).collect();
+        for edit in row_edits(&have, &want) {
+            match edit {
+                RowEdit::Remove(i) => {
+                    self.rows.remove(i);
                 }
+                RowEdit::Insert(k) => self.rows.insert(k, rows[k].clone()),
             }
-        } else {
-            self.rows.set_vec(rows);
+        }
+        debug_assert_eq!(self.rows.row_count(), rows.len());
+        for (i, row) in rows.into_iter().enumerate() {
+            if self.rows.row_data(i).as_ref() != Some(&row) {
+                self.rows.set_row_data(i, row);
+            }
         }
     }
 
@@ -255,6 +284,24 @@ pub(crate) fn end_move<H: CanvasHost>(host: &H, canvas: &RefCell<Canvas<H>>, com
     let mut c = canvas.borrow_mut();
     let out = c.doc.apply(Cmd::EndMove { committed });
     c.refresh(host, out);
+}
+
+/// The status line for `note`, given what it holds now.
+///
+/// A note the line already holds is written as a different string. A live region is
+/// announced when its value changes (accesskit_atspi_common node.rs:567-579), and
+/// `Property::set` marks nothing dirty for an equal value (i-slint-core
+/// properties.rs:1023-1029), so a refusal repeated word for word - a second Delete
+/// with nothing selected, a second add while an element is held - was silent to a
+/// screen reader the second time. Clearing the line first is no cure inside one
+/// dispatch, for `ins::wire`'s reason. Alternating, so a third repeat differs from
+/// the second.
+fn said_again(shown: &str, note: String) -> String {
+    if shown == note {
+        format!("{note} (again)")
+    } else {
+        note
+    }
 }
 
 /// Wire one canvas to one window, and return the state so that a caller - the
@@ -322,4 +369,19 @@ pub fn wire<H: CanvasHost>(host: &H, doc: Doc) -> Rc<RefCell<Canvas<H>>> {
     on!(on_redo, || Cmd::Redo);
 
     canvas
+}
+
+#[cfg(test)]
+mod tests {
+    use super::said_again;
+
+    #[test]
+    fn a_note_said_again_differs_from_the_line_it_replaces_and_says_the_same_thing() {
+        let note = "nothing is selected to delete";
+        assert_eq!(said_again("", note.into()), note);
+        let second = said_again(note, note.into());
+        assert_eq!(second, "nothing is selected to delete (again)");
+        assert_eq!(said_again(&second, note.into()), note);
+        assert_eq!(said_again("undo brought back box 1", note.into()), note);
+    }
 }

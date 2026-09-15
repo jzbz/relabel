@@ -1,4 +1,4 @@
-import { ElRow } from "types.slint";
+import { ElRow, Grips } from "types.slint";
 
 // The label as dots, with a frame round every element the operator can move.
 //
@@ -47,6 +47,10 @@ export component LabelCanvas {
     // selectable but not movable has to live next to the element.
     in property <int> selected: -1;
     in property <int> zoom: 4;
+    // The selected element's drawn box and the room beyond its far edges, for the
+    // grips. Rust pushes it after every outcome; a probe that never pushes it keeps
+    // the id -1 and offers no grip.
+    in property <Grips> grips: { id: -1 };
 
     // --- where it is seen from ---
     // False in the canvas probe, which has no view round it: every frame is then its
@@ -81,6 +85,12 @@ export component LabelCanvas {
     callback set-say(id: int, value: string);
     callback undo();
     callback redo();
+    // Pointer down on a grip: open one undo step for the resize that follows. `grip`
+    // is 0 east, 1 south, 2 their corner (`geom::Grip::token`).
+    callback begin-resize(id: int, grip: int);
+    // Canvas dots, absolute: the exclusive far edges the grip has been dragged to.
+    // Sent on every move event, and ended by `end-move` like a move.
+    callback resize-to(id: int, right: int, bottom: int);
     // The keyboard arrived on the canvas surface rather than on an element: a
     // click on bare canvas, or `focus-canvas` below. A callback of its own because
     // it selects nothing, and a pane beside the canvas has no other way to learn
@@ -90,6 +100,15 @@ export component LabelCanvas {
 
     // One printer dot as a length.
     out property <length> dot: root.zoom * 1phx;
+    // Where the grips sit: `grip-gap` beyond their edge, `grip-size` square.
+    out property <length> grip-gap: 6px;
+    out property <length> grip-size: 8px;
+    // How far past the selected frame's far edges the view's pan reaches for the
+    // grips, in whole device pixels: the grips' far edge rounded up, and one more for
+    // the half pixel the dot grid's anchor can add (`grid` below). With the pan at the
+    // end of that reach a grip on the label's end lies inside the view's clip.
+    // `Math.ceil` answers an int (i-slint-compiler expression_tree.rs:199).
+    out property <int> grip-reach-px: Math.ceil((root.grip-gap + root.grip-size) / 1phx) + 1;
     // This component's own origin in *device* pixels, which at a fractional
     // display scale is a fractional number. Dividing a length by `1phx`
     // converts it, so nothing has to be told the scale factor from Rust and
@@ -100,6 +119,23 @@ export component LabelCanvas {
 
     width: root.dots-x * root.dot;
     height: root.dots-y * root.dot;
+
+    // The dot a point is on, in canvas dots, from its distance from the dot grid's
+    // origin. Here rather than in the element's TouchArea so a grip reads the pointer
+    // with the same arithmetic as a move.
+    //
+    // Floored, so the element steps as the pointer enters the next dot. Rounded, it
+    // stepped at the middle of a dot, and the dot the operator took ran up to half a
+    // dot ahead of or behind the pointer: eight device pixels at 16x.
+    //
+    // A sixteenth of a device pixel is added before the floor. A pointer on a dot's
+    // first device pixel arrives here through two chains of float additions and at a
+    // fractional display scale can land a hair short of it, which a bare floor reads
+    // as the dot before: a press at an element's centre and a ten-dot drag landed one
+    // dot short at 1.5x, and one dot long at 1.25x (measured).
+    function dot-of(from-grid: length) -> int {
+        Math.floor((from-grid / 1phx + 0.0625) / root.zoom)
+    }
 
     // The canvas-wide key handler. It surrounds the per-element FocusScopes,
     // so a key an element rejected arrives here.
@@ -316,10 +352,18 @@ export component LabelCanvas {
                     property <length> pad-right: Math.min(self.reach-x, row.clear-right * root.dot);
                     property <length> pad-up: Math.min(self.reach-y, row.clear-up * root.dot);
                     property <length> pad-down: Math.min(self.reach-y, row.clear-down * root.dot);
-                    x: -self.pad-left;
-                    y: -self.pad-up;
-                    width: parent.width + self.pad-left + self.pad-right;
-                    height: parent.height + self.pad-up + self.pad-down;
+                    // While this row holds the pointer, the whole of what is seen, for
+                    // the grips' reason below: a feed, head or length still being typed
+                    // is written at the press, which can take the frame away from the
+                    // pointer, and the toolkit then cancels the grab of the item the
+                    // pointer is no longer inside, so the move ended before it began
+                    // (measured).
+                    x: grid.grab-held == row.id ? grid.held-x - parent.x : -self.pad-left;
+                    y: grid.grab-held == row.id ? grid.held-y - parent.y : -self.pad-up;
+                    width: grid.grab-held == row.id ? grid.held-w
+                        : parent.width + self.pad-left + self.pad-right;
+                    height: grid.grab-held == row.id ? grid.held-h
+                        : parent.height + self.pad-up + self.pad-down;
                     mouse-cursor: row.locked ? MouseCursor.not-allowed : MouseCursor.move;
 
                     // Dots between the pointer and the element's origin, taken
@@ -327,22 +371,7 @@ export component LabelCanvas {
                     property <int> grab-x;
                     property <int> grab-y;
 
-                    // The dot the pointer is on, in canvas dots.
-                    //
-                    // Floored, so the element steps as the pointer enters the next
-                    // dot. Rounded, it stepped at the middle of a dot, and the dot the
-                    // operator took ran up to half a dot ahead of or behind the
-                    // pointer: eight device pixels at 16x.
-                    //
-                    // A sixteenth of a device pixel is added before the floor. A
-                    // pointer on a dot's first device pixel arrives here through two
-                    // chains of float additions and at a fractional display scale can
-                    // land a hair short of it, which a bare floor reads as the dot
-                    // before: a press at an element's centre and a ten-dot drag landed
-                    // one dot short at 1.5x, and one dot long at 1.25x (measured).
-                    function dot-of(from-grid: length) -> int {
-                        Math.floor((from-grid / 1phx + 0.0625) / root.zoom)
-                    }
+                    // The dot the pointer is on, in canvas dots, through `root.dot-of`.
                     //
                     // `absolute-position + mouse-x` rather than the documented
                     // `mouse-x - pressed-x` idiom, and this is the one thing in
@@ -357,39 +386,67 @@ export component LabelCanvas {
                     // sum is the pointer's position in the window whatever the
                     // element underneath it did.
                     function ptr-x() -> int {
-                        self.dot-of(self.absolute-position.x + self.mouse-x
+                        root.dot-of(self.absolute-position.x + self.mouse-x
                                     - grid.absolute-position.x)
                     }
                     function ptr-y() -> int {
-                        self.dot-of(self.absolute-position.y + self.mouse-y
+                        root.dot-of(self.absolute-position.y + self.mouse-y
                                     - grid.absolute-position.y)
                     }
 
-                    pointer-event(event) => {
-                        if (event.kind == PointerEventKind.down) {
+                    // Only the primary button opens a gesture, and any button's release
+                    // ends one. A TouchArea gives up its grab at the release of any
+                    // button (i-slint-core items/input_items.rs:154-177, and
+                    // input.rs:1397-1405 then drops it), so after a second button comes
+                    // up the rest of the drag reaches nothing here; the release is the
+                    // end of the hold, and ending the gesture there keeps what was
+                    // dragged as its own step and leaves nothing held that the toolkit
+                    // has let go. A second button's press opening a gesture of its own
+                    // dropped the first drag's step (measured).
+                    //
+                    // The pointer is taken by the caller, before anything here moves
+                    // the frame: `mouse-x` was measured from where this area stood when
+                    // the event arrived, so read against an area that has since moved,
+                    // it is somewhere else. The offsets are taken after the move is
+                    // opened, against the placement a typed value has landed on, as a
+                    // grip's are: a five-dot drag after typing a feed of 100 moves the
+                    // element to 105. This function assigns properties, so `row` is
+                    // not read into a local ahead of the callbacks, for `grip-event`'s
+                    // reason.
+                    function grab-event(kind: PointerEventKind, button: PointerEventButton,
+                                        at-x: length, at-y: length) {
+                        if (kind == PointerEventKind.down && button == PointerEventButton.left) {
                             // Before the keyboard moves: the selection `focus()`
                             // makes has to be seen as a press's and not as Tab's.
                             root.pointer-down = true;
+                            grid.grab-held = row.id;
                             focus.focus();
+                            root.begin-move(row.id);
                             // A difference of two floored values, so the
                             // element does not jump to the grid under the
                             // pointer at the press and does not drift over a
                             // long drag: at zero movement the placement below
                             // is exactly where the element already was.
-                            self.grab-x = self.ptr-x() - row.x;
-                            self.grab-y = self.ptr-y() - row.y;
-                            root.begin-move(row.id);
+                            self.grab-x = root.dot-of(at-x - grid.absolute-position.x) - row.x;
+                            self.grab-y = root.dot-of(at-y - grid.absolute-position.y) - row.y;
                         }
                         // Cleared before the release is reported, so the outcome of
                         // the release is the first one a view may act on.
-                        if (event.kind == PointerEventKind.up) {
+                        if (kind == PointerEventKind.up) {
+                            grid.grab-held = -1;
                             root.pointer-down = false;
                             root.end-move(true);
                         }
-                        if (event.kind == PointerEventKind.cancel) {
+                        if (kind == PointerEventKind.cancel) {
+                            grid.grab-held = -1;
                             root.pointer-down = false;
                             root.end-move(false);
                         }
+                    }
+                    pointer-event(event) => {
+                        self.grab-event(event.kind, event.button,
+                                        self.absolute-position.x + self.mouse-x,
+                                        self.absolute-position.y + self.mouse-y);
                     }
 
                     moved => {
@@ -399,6 +456,201 @@ export component LabelCanvas {
                                          self.ptr-y() - self.grab-y);
                         }
                     }
+                }
+            }
+
+            // The selected element's grips: its east edge, its south edge and their
+            // corner. Only the far edges, because the origin is the placement the
+            // operator set (`geom::Grip`).
+            //
+            // Declared after the rows, so they are hit-tested before every row
+            // (i-slint-core item_tree.rs:1379) and drawn over them. Each sits
+            // `grip-gap` beyond its edge, `grip-size` square at every zoom, and is
+            // offered only where `geom::grip_room` finds a square twenty pixels on a
+            // side, centred on the middle of its edge or beyond the corner, with no
+            // other element's ink in it. Six is more than the five the widest grab
+            // padding reaches (`min-grab` above), and twenty leaves six clear of the
+            // grip on every side, so a grip covers no element's ink and no element's
+            // padding. A stroked rectangle is ink only under its stroke, so a grip may
+            // lie on the paper inside one, over its frame, and a press on that grip
+            // resizes the selected element instead of moving the rectangle. A grip not
+            // offered is zero-sized rather than removed, and a zero-sized TouchArea
+            // takes no press (input.rs:1602-1613); a drag that shrinks it keeps its
+            // grab (input.rs:1308-1380).
+            //
+            // The view's pan reaches `grip-reach-px` past the selected frame's far
+            // edges (`view::scene`), so a grip on the label's end is never left outside
+            // the port's clip, where it could be neither seen nor pressed.
+            //
+            // While a grip holds the pointer its hit area is the whole of what is seen,
+            // and only the square drawn inside it stays at the edge. The press can move
+            // the edge: Rust writes a length still being typed before it opens the
+            // resize. Once the press has been handled the toolkit sends an exit to every
+            // item the pointer is no longer inside (input.rs:1522, :1424-1441), and a
+            // TouchArea answers an exit it holds the grab for with a cancel
+            // (items/input_items.rs:140-152), so a grip that moved away from the pointer
+            // inside its own press ended the resize before it began (measured).
+            //
+            // No accessibility node: the feed length and head length fields are the
+            // keyboard's and an assistive technology's way to resize.
+            property <length> box-x: root.grips.x * root.dot;
+            property <length> box-y: root.grips.y * root.dot;
+            property <length> box-w: root.grips.w * root.dot;
+            property <length> box-h: root.grips.h * root.dot;
+            // The frame's own `in-sight`, restated for the pushed box: a property of a
+            // repeated row cannot be read from outside the repeater.
+            property <bool> box-in-sight: !root.viewed
+                || (grid.box-x < grid.view-right && grid.box-x + grid.box-w > grid.view-left
+                    && grid.box-y < grid.view-bottom && grid.box-y + grid.box-h > grid.view-top);
+            property <bool> grips-on: root.grips.id >= 0 && root.grips.id == root.selected
+                && !root.grips.locked && grid.box-in-sight;
+            // The element and the dots between the pointer and the gripped edges, taken
+            // at the press and held for the gesture, as `grab-x` and `grab-y` are.
+            property <int> grip-id: -1;
+            property <int> grip-dx;
+            property <int> grip-dy;
+            // Which grip holds the pointer, by its token, or -1.
+            property <int> grip-held: -1;
+            // Which element's frame holds the pointer, by its id, or -1.
+            property <int> grab-held: -1;
+            // What a held grip's or frame's hit area covers: the view, or the whole
+            // canvas in a probe with no view round it.
+            property <length> held-x: root.viewed ? grid.view-left : 0px;
+            property <length> held-y: root.viewed ? grid.view-top : 0px;
+            property <length> held-w: root.viewed ? root.seen-width : root.width;
+            property <length> held-h: root.viewed ? root.seen-height : root.height;
+
+            // A grip's pointer event, with the pointer's position in the window, taken
+            // by the caller before anything here moves the grip. The move's arithmetic,
+            // not the design-mode resizer's: `absolute-position + mouse-x` for `grab`'s
+            // reason, since a grip travels with the edge it drags. Only the primary
+            // button opens a resize, and any button's release ends one, for `grab`'s
+            // reason.
+            //
+            // The resize is opened before the offsets are measured, because opening it
+            // writes a length still being typed and that moves the edge. Measured after,
+            // a ten-dot drag is ten dots longer than the length typed. This function
+            // assigns properties, so the compiler does not read `grips` into a local
+            // ahead of the callback (deduplicate_property_read.rs:102-106, :143-145, :164-166),
+            // which is the hazard `remove-selected` in shell.slint works round.
+            function grip-event(grip: int, kind: PointerEventKind, button: PointerEventButton,
+                                at-x: length, at-y: length) {
+                if (kind == PointerEventKind.down && button == PointerEventButton.left) {
+                    root.pointer-down = true;
+                    grid.grip-held = grip;
+                    grid.grip-id = root.grips.id;
+                    root.begin-resize(grid.grip-id, grip);
+                    grid.grip-dx = root.dot-of(at-x - grid.absolute-position.x) - (root.grips.x + root.grips.w);
+                    grid.grip-dy = root.dot-of(at-y - grid.absolute-position.y) - (root.grips.y + root.grips.h);
+                }
+                if (kind == PointerEventKind.up) {
+                    grid.grip-held = -1;
+                    root.pointer-down = false;
+                    root.end-move(true);
+                }
+                if (kind == PointerEventKind.cancel) {
+                    grid.grip-held = -1;
+                    root.pointer-down = false;
+                    root.end-move(false);
+                }
+            }
+            function grip-moved(at-x: length, at-y: length) {
+                root.resize-to(grid.grip-id,
+                               root.dot-of(at-x - grid.absolute-position.x) - grid.grip-dx,
+                               root.dot-of(at-y - grid.absolute-position.y) - grid.grip-dy);
+            }
+
+            grip-e := TouchArea {
+                property <length> at-x: grid.box-x + grid.box-w + root.grip-gap;
+                property <length> at-y: grid.box-y + grid.box-h / 2 - root.grip-size / 2;
+                property <length> size: grid.grips-on && root.grips.room-e * root.dot >= 20px ? root.grip-size : 0px;
+                x: grid.grip-held == 0 ? grid.held-x : self.at-x;
+                y: grid.grip-held == 0 ? grid.held-y : self.at-y;
+                width: grid.grip-held == 0 ? grid.held-w : self.size;
+                height: grid.grip-held == 0 ? grid.held-h : self.size;
+                mouse-cursor: MouseCursor.ew-resize;
+                pointer-event(event) => {
+                    grid.grip-event(0, event.kind, event.button,
+                                    self.absolute-position.x + self.mouse-x,
+                                    self.absolute-position.y + self.mouse-y);
+                }
+                moved => {
+                    if (self.pressed) {
+                        grid.grip-moved(self.absolute-position.x + self.mouse-x,
+                                        self.absolute-position.y + self.mouse-y);
+                    }
+                }
+                Rectangle {
+                    x: parent.at-x - parent.x;
+                    y: parent.at-y - parent.y;
+                    width: parent.size;
+                    height: parent.size;
+                    background: #ffffff;
+                    border-width: 1phx;
+                    border-color: #1a6dd4;
+                    accessible-role: none;
+                }
+            }
+            grip-s := TouchArea {
+                property <length> at-x: grid.box-x + grid.box-w / 2 - root.grip-size / 2;
+                property <length> at-y: grid.box-y + grid.box-h + root.grip-gap;
+                property <length> size: grid.grips-on && root.grips.room-s * root.dot >= 20px ? root.grip-size : 0px;
+                x: grid.grip-held == 1 ? grid.held-x : self.at-x;
+                y: grid.grip-held == 1 ? grid.held-y : self.at-y;
+                width: grid.grip-held == 1 ? grid.held-w : self.size;
+                height: grid.grip-held == 1 ? grid.held-h : self.size;
+                mouse-cursor: MouseCursor.ns-resize;
+                pointer-event(event) => {
+                    grid.grip-event(1, event.kind, event.button,
+                                    self.absolute-position.x + self.mouse-x,
+                                    self.absolute-position.y + self.mouse-y);
+                }
+                moved => {
+                    if (self.pressed) {
+                        grid.grip-moved(self.absolute-position.x + self.mouse-x,
+                                        self.absolute-position.y + self.mouse-y);
+                    }
+                }
+                Rectangle {
+                    x: parent.at-x - parent.x;
+                    y: parent.at-y - parent.y;
+                    width: parent.size;
+                    height: parent.size;
+                    background: #ffffff;
+                    border-width: 1phx;
+                    border-color: #1a6dd4;
+                    accessible-role: none;
+                }
+            }
+            grip-se := TouchArea {
+                property <length> at-x: grid.box-x + grid.box-w + root.grip-gap;
+                property <length> at-y: grid.box-y + grid.box-h + root.grip-gap;
+                property <length> size: grid.grips-on && root.grips.room-se * root.dot >= 20px ? root.grip-size : 0px;
+                x: grid.grip-held == 2 ? grid.held-x : self.at-x;
+                y: grid.grip-held == 2 ? grid.held-y : self.at-y;
+                width: grid.grip-held == 2 ? grid.held-w : self.size;
+                height: grid.grip-held == 2 ? grid.held-h : self.size;
+                mouse-cursor: MouseCursor.nwse-resize;
+                pointer-event(event) => {
+                    grid.grip-event(2, event.kind, event.button,
+                                    self.absolute-position.x + self.mouse-x,
+                                    self.absolute-position.y + self.mouse-y);
+                }
+                moved => {
+                    if (self.pressed) {
+                        grid.grip-moved(self.absolute-position.x + self.mouse-x,
+                                        self.absolute-position.y + self.mouse-y);
+                    }
+                }
+                Rectangle {
+                    x: parent.at-x - parent.x;
+                    y: parent.at-y - parent.y;
+                    width: parent.size;
+                    height: parent.size;
+                    background: #ffffff;
+                    border-width: 1phx;
+                    border-color: #1a6dd4;
+                    accessible-role: none;
                 }
             }
         }

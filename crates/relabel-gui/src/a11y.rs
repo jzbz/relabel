@@ -62,7 +62,7 @@ pub fn say(
 
 /// Said aloud, so it is a phrase rather than a code. The four are
 /// [`Keepout`]'s own order of how much the operator loses.
-fn keepout_phrase(k: Keepout) -> &'static str {
+pub(crate) fn keepout_phrase(k: Keepout) -> &'static str {
     match k {
         Keepout::Repeated => "a repeated panel prints over it",
         Keepout::Tail => "in the tail, which the fold hides",

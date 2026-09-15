@@ -2,14 +2,15 @@ import { Palette } from "std-widgets.slint";
 
 // The zoom bar and the scroll bars round the canvas's view.
 
-// A button that is neither a Tab stop nor a taker of the keyboard.
+// A button that is neither a Tab stop nor a taker of the keyboard. Exported for the
+// edit bar beside the zoom bar, whose buttons have the same reason.
 //
 // Hand-rolled rather than the std Button, whose zero-width FocusScope takes no focus
 // on a click (fluent/button.slint:105-107) but is a Tab stop: four stops before the
 // canvas surface, on the way to every element, for commands the keyboard already
 // reaches from anywhere by Ctrl and a key. Coloured from the style's Palette with a
 // resting border, because flat text read as a label in the dark scheme.
-component ZoomButton inherits Rectangle {
+export component ZoomButton inherits Rectangle {
     in property <string> text;
     in property <string> name;
     in property <string> keys;
@@ -78,6 +79,11 @@ export component ZoomBar {
         Text {
             text: root.says;
             vertical-alignment: center;
+            // The one part of the row that gives way, so the edit bar beside it and
+            // the four buttons keep their faces when the column is narrow. The value
+            // announced is still the whole readout.
+            horizontal-stretch: 1;
+            overflow: elide;
             accessible-role: AccessibleRole.text;
             accessible-label: "Zoom";
             accessible-value: root.says;

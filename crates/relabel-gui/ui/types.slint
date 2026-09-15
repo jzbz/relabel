@@ -75,3 +75,33 @@ export struct InsSlot {
     step: float,
     read-only: bool,
 }
+
+// One button of the edit bar, pushed once from `make::Kind`: the face, the name an
+// assistive technology announces, and the chord it announces as its description.
+// `token` is handed straight back in `add`, for `InsSlot.field`'s reason.
+export struct Tool {
+    token: int,
+    text: string,
+    name: string,
+    keys: string,
+}
+
+// The selected element's grips, pushed after every outcome.
+//
+// `x`, `y`, `w` and `h` are the element's box in canvas dots, as `ElRow` has it, and
+// `id` is -1 when nothing drawn is selected. The rooms are whole dots on a side of
+// the squares beyond the east edge, the south edge and their corner that no other
+// element's ink is in (`geom::grip_room`); a grip is offered only where its room is
+// at least twenty logical pixels, so it never covers another element's ink or its
+// padding.
+export struct Grips {
+    id: int,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    locked: bool,
+    room-e: int,
+    room-s: int,
+    room-se: int,
+}

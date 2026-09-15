@@ -12,6 +12,7 @@
 use crate::canvas::{Canvas, PanePush};
 use crate::doc::{Cmd, Doc};
 use crate::doc::{describe, kind_name};
+use crate::geom;
 use crate::rows::{InsHost, InsRow};
 use relabel_render::barcode::{MIN_MODULE_DOTS, Symbology};
 use relabel_render::code2d::DM_SIZES;
@@ -37,9 +38,10 @@ pub enum Field {
     Name,
     Feed,
     Head,
+    FeedLen,
+    HeadLen,
     Rot,
     Ink,
-    Extent,
     State,
     // Text.
     Text,
@@ -72,14 +74,16 @@ pub enum Field {
     ThicknessDots,
 }
 
-/// The seven fields every kind has, in pane and Tab order.
-const COMMON: [Field; 7] = [
+/// The eight fields every kind has, in pane and Tab order: the lengths beside the
+/// placement they grow from.
+const COMMON: [Field; 8] = [
     Field::Name,
     Field::Feed,
     Field::Head,
+    Field::FeedLen,
+    Field::HeadLen,
     Field::Rot,
     Field::Ink,
-    Field::Extent,
     Field::State,
 ];
 
@@ -96,13 +100,14 @@ static FAMILY_UNIT: LazyLock<String> =
 
 impl Field {
     /// Every field, in one order, which is also the token order.
-    pub const ALL: [Field; 30] = [
+    pub const ALL: [Field; 31] = [
         Field::Name,
         Field::Feed,
         Field::Head,
+        Field::FeedLen,
+        Field::HeadLen,
         Field::Rot,
         Field::Ink,
-        Field::Extent,
         Field::State,
         Field::Text,
         Field::Family,
@@ -151,9 +156,10 @@ impl Field {
             Field::Name => "name",
             Field::Feed => "feed",
             Field::Head => "head",
+            Field::FeedLen => "feed length",
+            Field::HeadLen => "head length",
             Field::Rot => "rotation",
             Field::Ink => "ink",
-            Field::Extent => "extent",
             Field::State => "state",
             Field::Text => "text",
             Field::Family => "family",
@@ -191,10 +197,9 @@ impl Field {
     pub fn unit(self) -> &'static str {
         match self {
             Field::Name => "any words",
-            Field::Feed | Field::Head => "dots",
+            Field::Feed | Field::Head | Field::FeedLen | Field::HeadLen => "dots",
             Field::Rot => "degrees",
             Field::Ink => "black or white",
-            Field::Extent => "feed by head",
             Field::State => "flags",
             Field::Text | Field::Data => "a template",
             Field::Family => FAMILY_UNIT.as_str(),
@@ -239,17 +244,18 @@ impl Field {
     }
 
     /// This field's key in the file, for a message that has to name something
-    /// the operator can find in it. `None` for the two rows that are sentences
-    /// rather than fields (`Extent`, `State`) and for `Artwork`, which summarises
-    /// `png`.
+    /// the operator can find in it. `None` for `State`, the row that is a sentence
+    /// rather than a field, and for `Artwork`, which summarises `png`.
     pub fn key(self) -> Option<&'static str> {
         Some(match self {
             Field::Name => "name",
             Field::Feed => "frame.feed",
             Field::Head => "frame.head",
+            Field::FeedLen => "frame.feed_len",
+            Field::HeadLen => "frame.head_len",
             Field::Rot => "rot",
             Field::Ink => "ink",
-            Field::Extent | Field::State | Field::Artwork => return None,
+            Field::State | Field::Artwork => return None,
             Field::Text => "text",
             Field::Family => "family",
             Field::Size | Field::DmSize => "size",
@@ -311,6 +317,8 @@ impl Field {
         match self {
             Field::Feed
             | Field::Head
+            | Field::FeedLen
+            | Field::HeadLen
             | Field::Rot
             | Field::Size
             | Field::LineHeight
@@ -320,16 +328,14 @@ impl Field {
             | Field::Threshold
             | Field::StrokeDots
             | Field::ThicknessDots => Shape::Number,
-            Field::Extent | Field::State | Field::Spec | Field::Artwork | Field::RadiusDots => {
-                Shape::Read
-            }
+            Field::State | Field::Spec | Field::Artwork | Field::RadiusDots => Shape::Read,
             _ => Shape::Word,
         }
     }
 
     /// The interval and the increment announced for a number field that is not a
-    /// placement. A placement's interval depends on the element and the canvas,
-    /// so [`common_slots`] is handed it.
+    /// placement or a length. Their intervals depend on the element and the canvas,
+    /// so [`common_slots`] is handed them.
     fn range(self) -> (f32, f32, f32) {
         match self {
             // A quarter turn is the only rotation this build draws exactly.
@@ -343,7 +349,7 @@ impl Field {
             }
             Field::Version => (1.0, 40.0, 1.0),
             Field::Threshold => (0.0, 255.0, 1.0),
-            Field::Feed | Field::Head => (0.0, 0.0, 1.0),
+            Field::Feed | Field::Head | Field::FeedLen | Field::HeadLen => (0.0, 0.0, 1.0),
             _ => (0.0, 0.0, 0.0),
         }
     }
@@ -402,8 +408,8 @@ impl Slot {
 
 /// How many slots the pane has.
 ///
-/// Fourteen is what the widest kind needs - seven common rows plus a Text
-/// element's seven - and two spare mean the next field added is a change to this
+/// Fifteen is what the widest kind needs - eight common rows plus a Text
+/// element's seven - and one spare means the next field added is a change to this
 /// file alone. Fixed, because a model whose length changed would emit a reset,
 /// and a reset drops the instance holding the keyboard focus.
 pub const SLOTS: usize = 16;
@@ -424,19 +430,27 @@ fn slot(e: &Element, f: Field, (min, max, step): (f32, f32, f32)) -> Slot {
     }
 }
 
-/// The seven rows every kind has, in pane and Tab order.
+/// The eight rows every kind has, in pane and Tab order.
 ///
 /// `reach` is the interval a placement may land in on each axis, from
 /// [`crate::geom::reach`] - the same call the editor clamps with, so the range a
-/// reader is told and the range that is enforced cannot drift.
-pub fn common_slots(e: &Element, reach: ((i32, i32), (i32, i32))) -> Vec<Slot> {
+/// reader is told and the range that is enforced cannot drift. `lens` is the same
+/// for the feed length and the head length, from [`crate::geom::len_reach`].
+pub fn common_slots(
+    e: &Element,
+    reach: ((i32, i32), (i32, i32)),
+    lens: ((i32, i32), (i32, i32)),
+) -> Vec<Slot> {
     let ((feed_lo, feed_hi), (head_lo, head_hi)) = reach;
+    let ((feed_len_lo, feed_len_hi), (head_len_lo, head_len_hi)) = lens;
     COMMON
         .into_iter()
         .map(|f| {
             let range = match f {
                 Field::Feed => (feed_lo as f32, feed_hi as f32, 1.0),
                 Field::Head => (head_lo as f32, head_hi as f32, 1.0),
+                Field::FeedLen => (feed_len_lo as f32, feed_len_hi as f32, 1.0),
+                Field::HeadLen => (head_len_lo as f32, head_len_hi as f32, 1.0),
                 other => other.range(),
             };
             slot(e, f, range)
@@ -509,9 +523,10 @@ pub fn read(e: &Element, f: Field) -> String {
         Field::Name => return c.name.clone(),
         Field::Feed => return c.frame.feed.to_string(),
         Field::Head => return c.frame.head.to_string(),
+        Field::FeedLen => return c.frame.feed_len.to_string(),
+        Field::HeadLen => return c.frame.head_len.to_string(),
         Field::Rot => return i32::from(c.rot).to_string(),
         Field::Ink => return ink_spelling(c.ink).to_string(),
-        Field::Extent => return format!("{} by {} dots", c.frame.feed_len, c.frame.head_len),
         Field::State => return state(c),
         _ => {}
     }
@@ -581,8 +596,8 @@ pub enum Wrote {
 /// format keeps what it does not understand on purpose and a pane that refused an
 /// unknown symbology would be deciding that for it.
 ///
-/// A placement is stored as typed here; clamping it is `Doc`'s, which is what
-/// owns the canvas it has to stay reachable on.
+/// A placement or a length is stored as typed here; clamping either is `Doc`'s,
+/// which is what owns the canvas it has to stay reachable on.
 pub fn write(e: &mut Element, f: Field, text: &str) -> Result<Wrote, String> {
     let kind = kind_name(e);
     if !COMMON.contains(&f) && !kind_fields(e).contains(&f) {
@@ -604,6 +619,14 @@ pub fn write(e: &mut Element, f: Field, text: &str) -> Result<Wrote, String> {
         Field::Head => {
             let v = number(f, text)?;
             return Ok(set(&mut common_of(e).frame.head, v, None));
+        }
+        Field::FeedLen => {
+            let v = number(f, text)?;
+            return Ok(set(&mut common_of(e).frame.feed_len, v, None));
+        }
+        Field::HeadLen => {
+            let v = number(f, text)?;
+            return Ok(set(&mut common_of(e).frame.head_len, v, None));
         }
         Field::Rot => {
             let v = Rot::from(number(f, text)?);
@@ -837,6 +860,9 @@ pub fn stepped(e: &Element, f: Field, by: i32) -> String {
     let by = i64::from(by);
     match f {
         Field::Feed | Field::Head => whole_step(&now, by, i64::from(i32::MIN), i64::from(i32::MAX)),
+        // From one dot to the longest a canvas is. The floor a negative origin
+        // raises is `Doc`'s to hold and to say, as a placement's clamp is.
+        Field::FeedLen | Field::HeadLen => whole_step(&now, by, 1, i64::from(geom::MAX_LEN)),
         // A quarter turn, unbounded: the document normalises any degree, so 270
         // and a quarter turn more is 0 rather than a refusal.
         Field::Rot => whole_step(&now, 90 * by, i64::MIN / 2, i64::MAX / 2),
@@ -1292,8 +1318,10 @@ mod tests {
 
     const REACH: ((i32, i32), (i32, i32)) = ((-95, 319), (-23, 95));
 
+    const LENS: ((i32, i32), (i32, i32)) = ((1, 65535), (1, 65535));
+
     fn all_slots(e: &Element) -> Vec<Slot> {
-        let mut s = common_slots(e, REACH);
+        let mut s = common_slots(e, REACH, LENS);
         s.extend(kind_slots(e));
         s
     }
@@ -1349,7 +1377,41 @@ mod tests {
             assert_eq!(shown, own, "the {} element", e.kind());
         }
         let common: Vec<_> = COMMON.iter().filter_map(|f| f.key()).collect();
-        assert_eq!(common, ["name", "frame.feed", "frame.head", "rot", "ink"]);
+        assert_eq!(
+            common,
+            [
+                "name",
+                "frame.feed",
+                "frame.head",
+                "frame.feed_len",
+                "frame.head_len",
+                "rot",
+                "ink"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_length_is_a_number_of_whole_dots() {
+        assert_eq!(Field::ALL.len(), 31);
+        let f = Field::FeedLen;
+        assert_eq!(
+            (f.label(), f.unit(), f.key(), f.shape()),
+            ("feed length", "dots", Some("frame.feed_len"), Shape::Number)
+        );
+        let f = Field::HeadLen;
+        assert_eq!(
+            (f.label(), f.unit(), f.key(), f.shape()),
+            ("head length", "dots", Some("frame.head_len"), Shape::Number)
+        );
+        let rect = el(
+            r#"{"type": "rect", "id": 6, "frame": {"feed": 8, "head": 8, "feed_len": 40, "head_len": 24}}"#,
+        );
+        assert_eq!(read(&rect, Field::FeedLen), "40");
+        assert_eq!(read(&rect, Field::HeadLen), "24");
+        assert_eq!(stepped(&rect, Field::FeedLen, -100), "1");
+        assert_eq!(stepped(&rect, Field::HeadLen, 1), "25");
+        assert_eq!(stepped(&rect, Field::HeadLen, 70_000), "65535");
     }
 
     #[test]
@@ -1360,7 +1422,7 @@ mod tests {
             .max()
             .expect("seven kinds");
         assert!(widest <= SLOTS, "{widest} rows for {SLOTS} slots");
-        assert_eq!(widest, 14, "the text element is the widest kind");
+        assert_eq!(widest, 15, "the text element is the widest kind");
     }
 
     #[test]

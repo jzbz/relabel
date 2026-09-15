@@ -340,3 +340,59 @@ pub fn click(probe: &impl slint::ComponentHandle, h: &ElementHandle) {
     w.dispatch_event(WindowEvent::PointerPressed { position, button });
     w.dispatch_event(WindowEvent::PointerReleased { position, button });
 }
+
+/// The ids of the label's elements in z-order, known and unknown alike, as numbers:
+/// an unknown element's id is read from its JSON, and one that has none is left out.
+pub fn ids_of(label: &Label) -> Vec<ElementId> {
+    label
+        .elements
+        .iter()
+        .filter_map(|e| match e {
+            ElementOrRaw::Known(k) => Some(k.common().id),
+            ElementOrRaw::Raw(v) => v
+                .get("id")
+                .and_then(|i| i.as_u64())
+                .and_then(|i| i.try_into().ok()),
+        })
+        .collect()
+}
+
+/// The file format's name for one element's kind: "text", "rect" and so on.
+pub fn kind_of(label: &Label, id: ElementId) -> &str {
+    label
+        .elements
+        .iter()
+        .filter_map(ElementOrRaw::known)
+        .find(|e| e.common().id == id)
+        .map(Element::kind)
+        .expect("the element is in the label")
+}
+
+/// One of the selected element's grips, by its name in canvas.slint: "grip-e",
+/// "grip-s" or "grip-se". They have no accessibility node, so they are found by
+/// element id, which is there only with debug info.
+pub fn grip_of(probe: &impl slint::ComponentHandle, name: &str) -> ElementHandle {
+    ElementHandle::find_by_element_id(probe, &format!("LabelCanvas::{name}"))
+        .next()
+        .unwrap_or_else(|| {
+            panic!("no grip is called {name:?}; the probe was compiled without debug info")
+        })
+}
+
+/// A toolbar button, by the name it announces.
+///
+/// Only a match that has a description, for `rows_of`'s trap in another shape: a
+/// button repeated from a model is found once per source element merged into its
+/// item, and only the first of those, `element_index` 0, answers any accessible
+/// property but its role (search_api.rs:701). Every button here describes its chord.
+pub fn button_of(probe: &impl slint::ComponentHandle, name: &str) -> ElementHandle {
+    let wanted = name.to_string();
+    ElementQuery::from_root(probe)
+        .match_accessible_role(AccessibleRole::Button)
+        .match_predicate(move |h| {
+            h.accessible_label().is_some_and(|l| l == wanted.as_str())
+                && h.accessible_description().is_some()
+        })
+        .find_first()
+        .unwrap_or_else(|| panic!("no button is called {name:?}"))
+}

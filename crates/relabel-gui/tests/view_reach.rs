@@ -540,7 +540,7 @@ fn a_keyboard_zoom_keeps_the_selected_element_where_it_was_on_screen() {
     let placed = view::zoom_about(pan, 4, 6, anchor);
     let expected = view::clamp(
         view::reveal(placed, view::frame_px(240, 40, 40, 24, 6), view),
-        view::scene(canvas.borrow().doc(), 6),
+        view::scene(canvas.borrow().doc(), 6, i64::from(ui.get_grip_reach_px())),
         (1920, 576),
         view,
     );

@@ -1,7 +1,8 @@
 import { LabelCanvas } from "canvas.slint";
 import { Inspector } from "inspector.slint";
 import { ZoomBar, Scroller } from "zoom.slint";
-import { ElRow, InsSlot } from "types.slint";
+import { EditBar } from "tools.slint";
+import { ElRow, InsSlot, Tool, Grips } from "types.slint";
 
 // The size the application opens at, which its probe is fixed at too, so the two
 // cannot drift. Wide enough for a 40 mm label at two device pixels to the dot beside
@@ -32,6 +33,10 @@ export component Designer {
     in property <[ElRow]> rows <=> canvas.rows;
     in property <int> selected <=> canvas.selected;
     in property <int> zoom <=> canvas.zoom;
+    in property <Grips> grips <=> canvas.grips;
+
+    // --- the edit bar, pushed once by crate::edit ---
+    in property <[Tool]> tools <=> edit-bar.tools;
 
     // --- the inspector ---
     in property <[InsSlot]> ins-slots <=> inspector.slots;
@@ -57,6 +62,9 @@ export component Designer {
     // Read by Rust when needed: a layout property is evaluated when read.
     out property <int> view-px-w: Math.floor(port.width / 1phx - 0.5);
     out property <int> view-px-h: Math.floor(port.height / 1phx - 0.5);
+    // How far past the selected frame's far edges a pan reaches for its grips
+    // (canvas.slint), read by Rust with the view's size.
+    out property <int> grip-reach-px: canvas.grip-reach-px;
     out property <bool> pointer-down: canvas.pointer-down;
 
     callback select(id: int);
@@ -67,6 +75,19 @@ export component Designer {
     callback set-say(id: int, value: string);
     callback undo();
     callback redo();
+    callback begin-resize(id: int, grip: int);
+    callback resize-to(id: int, right: int, bottom: int);
+
+    // A new element of the kind with this token. True when one was added, so the
+    // keyboard is moved only then: a refused add leaves it where the operator was.
+    callback add(kind: int) -> bool;
+    // The kind token whose chord this key's text is, or -1. Rust's, so the letters
+    // and the descriptions the buttons announce are spelled in one place.
+    callback kind-of-key(text: string) -> int;
+    // Delete this element, or say that nothing is selected when it is -1. True when
+    // nothing is selected afterwards, which is when the keyboard may have lost its
+    // row: see `remove-selected` for why the answer comes back rather than being read.
+    callback delete-element(id: int) -> bool;
 
     callback field-edited(field: int, value: string);
     callback field-commit();
@@ -94,6 +115,12 @@ export component Designer {
     changed view-px-h => {
         root.view-resized();
     }
+    // A change of scale that leaves the view's device size alone still changes the
+    // grips' reach, and so the scene: the bars are pushed again, so room down and the
+    // drawn bar cannot disagree.
+    changed grip-reach-px => {
+        root.view-resized();
+    }
 
     // Called from Rust after every outcome, never before `ins-slots` is written.
     public function show-fields() {
@@ -105,6 +132,66 @@ export component Designer {
     // ancestor chain (window.rs:1084-1104), and with no focus item it is empty.
     public function focus-canvas() {
         canvas.focus-canvas();
+    }
+
+    // Every route that adds an element: a button, its default action and a chord.
+    //
+    // The new element is selected and the keyboard goes to the canvas surface, where
+    // the shell's arrows move the selection, Delete deletes it and F6 enters its
+    // fields. After Rust has returned, so the document is not borrowed when the
+    // surface's arrival commits whatever a field was holding.
+    function add-kind(kind: int) {
+        if (root.add(kind)) {
+            canvas.focus-canvas();
+        }
+    }
+
+    // A chord's kind, as `kind-of-key` answered it. Any chord that names a kind is
+    // taken, added or not: a field ignores Control keys anyway, and a refusal is said
+    // on the status line.
+    function add-by-key(kind: int) -> bool {
+        if (kind < 0) {
+            return false;
+        }
+        root.add-kind(kind);
+        return true;
+    }
+
+    // An element's row holds the keyboard only while it is the selection, because
+    // selection follows focus. So an empty selection after a command is exactly when
+    // the row or the field that held the keyboard may be gone, and with no live focus
+    // item no capture runs and every chord in this window goes dead
+    // (i-slint-core window.rs:1076-1082). The canvas surface takes it back. From a
+    // capture the dying row is still referenced until the capture returns
+    // (window.rs:1084-1105); from a button its weak focus is simply dead; either way
+    // `focus()` lands.
+    //
+    // Whether the selection is empty comes back from the callback rather than being
+    // read from `selected` afterwards. The compiler reads a property that a function
+    // uses twice into one local at the top of the function, before the callback runs
+    // (i-slint-compiler passes/deduplicate_property_read.rs:97-122; only callback
+    // handlers are exempt, :15-19). Measured: the second read of `selected` here was
+    // the id just deleted, and the keyboard stayed on the freed row. `history` reads
+    // it once, after the call.
+    function remove-selected() {
+        if (root.delete-element(root.selected)) {
+            canvas.focus-canvas();
+        }
+    }
+
+    // Undo or redo, for `remove-selected`'s reason: undoing an add, or redoing a
+    // delete, takes away the selected element and its row. `selected` is read once
+    // and only after the command, so the read is the one Rust has just written; a
+    // second read added before the command would be hoisted above it.
+    function history(redo: bool) {
+        if (redo) {
+            root.redo();
+        } else {
+            root.undo();
+        }
+        if (root.selected < 0) {
+            canvas.focus-canvas();
+        }
     }
 
     VerticalLayout {
@@ -156,11 +243,7 @@ export component Designer {
                 // Missed here, the key reaches a field's own text-level redo
                 // instead of the document's.
                 if (event.modifiers.control && (event.text == "z" || event.text == "Z")) {
-                    if (event.modifiers.shift) {
-                        root.redo();
-                    } else {
-                        root.undo();
-                    }
+                    root.history(event.modifiers.shift);
                     return EventResult.accept;
                 }
                 // Ctrl+Y, Redo in that table on Windows. Taken on every platform:
@@ -168,7 +251,7 @@ export component Designer {
                 // otherwise run its own redo there too.
                 if (event.modifiers.control && !event.modifiers.shift
                     && (event.text == "y" || event.text == "Y")) {
-                    root.redo();
+                    root.history(true);
                     return EventResult.accept;
                 }
                 // The zoom, from anywhere in the window, for Ctrl+Z's reason. Both
@@ -194,6 +277,16 @@ export component Designer {
                     root.zoom-fit();
                     return EventResult.accept;
                 }
+                // Adding an element: Control+Shift and T, B, R, M, O or L, from
+                // anywhere for Ctrl+Z's reason, after every chord above so none of
+                // theirs can be taken for a kind's. A field inserts nothing for a
+                // Control key (items/text.rs:1057-1059). Not Q, because Command
+                // arrives as control on macOS (i-slint-backend-winit
+                // event_loop.rs:257-270) and Command+Shift+Q logs out there.
+                if (event.modifiers.control && event.modifiers.shift && !event.modifiers.alt
+                    && root.add-by-key(root.kind-of-key(event.text))) {
+                    return EventResult.accept;
+                }
                 return EventResult.reject;
             }
 
@@ -206,7 +299,24 @@ export component Designer {
             // while a field has the keyboard, where an arrow the field ignored is
             // not a request to move anything. Rust refuses a locked element.
             key-pressed(event) => {
-                if (inspector.has-keyboard || root.selected < 0) {
+                if (inspector.has-keyboard) {
+                    return EventResult.reject;
+                }
+                // Delete, and Backspace, which is what a Mac's delete key sends. Handled
+                // on the way up and never captured, for the arrows' reason: an editable
+                // field consumes both (items/text.rs:997-1002), and a read-only one
+                // ignores them and the guard above turns them down, so neither ever
+                // deletes an element from inside the pane. The rows and the canvas
+                // surface turn both down, so from there they arrive here. With nothing
+                // selected too, so Rust says so, as it does for the Delete element
+                // button: a key that does nothing and says nothing is a key that seems
+                // broken.
+                if ((event.text == Key.Delete || event.text == Key.Backspace)
+                    && !event.modifiers.control && !event.modifiers.alt) {
+                    root.remove-selected();
+                    return EventResult.accept;
+                }
+                if (root.selected < 0) {
                     return EventResult.reject;
                 }
                 if (event.text == Key.LeftArrow) {
@@ -235,12 +345,20 @@ export component Designer {
                     horizontal-stretch: 1;
                     spacing: 8px;
 
-                    // Above the view, so the bar takes its height from the canvas
-                    // column and none from the pane.
-                    bar := ZoomBar {
-                        fit => { root.zoom-fit(); }
-                        one => { root.zoom-one(); }
-                        step(by) => { root.zoom-step(by); }
+                    // Above the view, so the bars take their height from the canvas
+                    // column and none from the pane. One row, the edit bar first: the
+                    // zoom readout is the part that elides when the column is narrow.
+                    HorizontalLayout {
+                        spacing: 12px;
+                        edit-bar := EditBar {
+                            add(kind) => { root.add-kind(kind); }
+                            delete-selected => { root.remove-selected(); }
+                        }
+                        bar := ZoomBar {
+                            fit => { root.zoom-fit(); }
+                            one => { root.zoom-one(); }
+                            step(by) => { root.zoom-step(by); }
+                        }
                     }
 
                     // The canvas keeps a Rectangle of its own: it sets its width from
@@ -327,8 +445,10 @@ export component Designer {
                                     end-move(c) => { root.end-move(c); }
                                     nudge(id, dx, dy, c) => { root.nudge(id, dx, dy, c); }
                                     set-say(id, v) => { root.set-say(id, v); }
-                                    undo() => { root.undo(); }
-                                    redo() => { root.redo(); }
+                                    begin-resize(id, g) => { root.begin-resize(id, g); }
+                                    resize-to(id, r, b) => { root.resize-to(id, r, b); }
+                                    undo() => { root.history(false); }
+                                    redo() => { root.history(true); }
                                 }
                             }
                         }

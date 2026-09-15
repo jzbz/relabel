@@ -1,15 +1,18 @@
 //! The relabel desktop application.
 //!
-//! Two panes: the label as dots, with a frame round every element and placement
-//! by pointer or by keyboard, and beside it the selected element's fields. The
+//! Two panes: the label as dots, with a frame round every element, placement and
+//! size by pointer or by keyboard, and a bar to add and delete elements; and beside
+//! it the selected element's fields. The
 //! document lives in Rust; the `.slint` side holds flat models of rows and slots
 //! and no rules at all.
 
 pub mod a11y;
 pub mod canvas;
 pub mod doc;
+pub mod edit;
 pub mod geom;
 pub mod ins;
+pub mod make;
 pub mod preview;
 pub mod rows;
 pub mod view;
@@ -19,6 +22,7 @@ slint::include_modules!();
 impl_canvas_host!(AppWindow, ElRow);
 impl_ins_host!(AppWindow, InsSlot);
 impl_view_host!(AppWindow);
+impl_edit_host!(AppWindow, Tool, Grips);
 
 /// Open a label and show it.
 pub fn run_app(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -33,6 +37,7 @@ pub fn run_app(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>>
     let first = doc.orientation_note();
     let canvas = canvas::wire(&ui, doc);
     ins::wire(&ui, &canvas);
+    edit::wire(&ui, &canvas);
     // Opens fitted, and stays fitted until a zoom is chosen: the window manager's
     // first sizes are provisional, and a fit taken once here would be stale.
     view::wire(&ui, &canvas, view::Opening::Fit);

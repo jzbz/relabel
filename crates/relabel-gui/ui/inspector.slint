@@ -428,7 +428,12 @@ export component Inspector inherits Rectangle {
 
         VerticalLayout {
             padding: 8px;
-            spacing: 4px;
+            // Three rather than four: at four, a Text element's fifteen rows and the
+            // heading stood a few pixels taller than the column the default window
+            // leaves beside the status line, and the overflow moved the view's
+            // height with the selection. The window's size is what the view's pins
+            // and Fit are stated at, so the rows give the pixels back instead.
+            spacing: 3px;
             alignment: start;
 
             Text {
@@ -443,7 +448,7 @@ export component Inspector inherits Rectangle {
             }
 
             // Sixteen, because the widest kind - a Text element - needs
-            // fourteen, and two spare mean the next field added is a change to
+            // fifteen, and one spare means the next field added is a change to
             // one Rust file.
             f0 := Slot {
                 index: 0;

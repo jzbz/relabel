@@ -13,7 +13,9 @@
 //!   the list node every element's node sits under and a hidden node takes its
 //!   subtree with it.
 //! - Also here, whenever anything but a held pointer selects an element or moves the
-//!   selected one, the view pans the least distance that shows it.
+//!   selected one, the view pans the least distance that shows it, or, where a press
+//!   left the pan past the scene along an axis with no room, returns to the one pan
+//!   that axis allows.
 //!
 //! Never while a pointer holds an element: the drag's grab offset was measured
 //! against where the canvas was at the press.
@@ -199,8 +201,18 @@ pub fn frame_px(x: i32, y: i32, w: i32, h: i32, zoom: u32) -> PxRect {
     }
 }
 
-/// The canvas and every element frame at `zoom`: what a pan may show.
-pub fn scene(doc: &Doc, zoom: u32) -> PxRect {
+/// What a pan may show at `zoom`: the canvas, every element frame, and, while an
+/// unlocked element is selected, that frame's far edges carried out by `reach` device
+/// pixels, so its grips can be panned into view. The near edges are not carried out.
+///
+/// `reach` is the canvas's `grip-reach-px`: the grips' far edge past the frame in whole
+/// device pixels, plus one for the half pixel the dot grid's anchor can add. Without it
+/// the pan stopped at the canvas's edge, and the east and corner grips of an element on
+/// the label's end lay outside the view's clip, where they could be neither seen nor
+/// pressed (measured under Xvfb at 4 pixels to the dot). The scene follows the
+/// selection rather than widening for every element, so a Fit with nothing on the far
+/// edges selected gains no scroll bar.
+pub fn scene(doc: &Doc, zoom: u32, reach: i64) -> PxRect {
     let (cw, ch) = doc.canvas_dots();
     let z = i64::from(zoom);
     let (mut x0, mut y0) = (0, 0);
@@ -211,6 +223,10 @@ pub fn scene(doc: &Doc, zoom: u32) -> PxRect {
         y0 = y0.min(f.y);
         x1 = x1.max(f.x + f.w);
         y1 = y1.max(f.y + f.h);
+        if Some(s.id) == doc.selected() && !s.locked {
+            x1 = x1.max(f.x + f.w + reach);
+            y1 = y1.max(f.y + f.h + reach);
+        }
     }
     PxRect {
         x: x0,
@@ -269,6 +285,45 @@ pub fn clamp(pan: Pan, scene: PxRect, canvas: (i64, i64), view: (i64, i64)) -> P
     Pan {
         x: axis(pan.x, scene.x, scene.w, canvas.0, view.0),
         y: axis(pan.y, scene.y, scene.h, canvas.1, view.1),
+    }
+}
+
+/// [`clamp`] for a pan moving `from` one place toward `want`: along an axis with room
+/// ([`room_axis`]) the scene half never takes it further from the scene than `from`
+/// already is, and along an axis without it is [`clamp`].
+///
+/// A pan can lie past the scene without any view command having set it there, because
+/// a press never moves the view and the scene follows the selection: pressing another
+/// element after the pan reached past the canvas for the selected one's grips leaves
+/// the pan past the canvas. [`clamp`] from there pulled a wheel pan toward the label's
+/// end back by up to the reach, the opposite way to its travel, and pulled a selection
+/// already in view back too, though a selection moves the view the least distance that
+/// shows it.
+///
+/// Along an axis with no room the scene allows one pan and no scroll bar is drawn, so
+/// a pan kept past the scene there could be returned by nothing but a zoom or the other
+/// axis's bar, and a plain wheel, which turns across there, left the top of the canvas
+/// hidden. There the pan is clamped outright, and the next wheel, trackpad pan or
+/// selection returns the view to that one pan.
+pub fn clamp_from(
+    from: Pan,
+    want: Pan,
+    scene: PxRect,
+    canvas: (i64, i64),
+    view: (i64, i64),
+) -> Pan {
+    let axis = |f: i64, p: i64, lo: i64, len: i64, canvas_len: i64, v: i64| {
+        let (a, b) = range_axis(lo, len, v);
+        let (a, b) = if room_axis(lo, len, canvas_len, v) {
+            (a.min(f), b.max(f))
+        } else {
+            (a, b)
+        };
+        keep_axis(p.clamp(a, b), canvas_len, v)
+    };
+    Pan {
+        x: axis(from.x, want.x, scene.x, scene.w, canvas.0, view.0),
+        y: axis(from.y, want.y, scene.y, scene.h, canvas.1, view.1),
     }
 }
 
@@ -484,6 +539,12 @@ fn view_of<H: ViewHost>(host: &H) -> (i64, i64) {
     )
 }
 
+/// How far past the selected frame's far edges a pan reaches for its grips, in device
+/// pixels, read when needed like the view's size.
+fn reach_of<H: ViewHost>(host: &H) -> i64 {
+    i64::from(host.get_grip_reach_px().max(0))
+}
+
 fn canvas_px(doc: &Doc, zoom: u32) -> (i64, i64) {
     let (w, h) = doc.canvas_dots();
     let z = i64::from(zoom);
@@ -513,7 +574,7 @@ fn push_pan<H: ViewHost>(host: &H, pan: Pan) {
 /// panned 69 px, and no drag of the thumb could reach the label's origin. The extent
 /// depends on the view, so it is pushed again whenever the view's size settles.
 fn push_scene<H: ViewHost>(host: &H, doc: &Doc, zoom: u32) {
-    let s = scene(doc, zoom);
+    let s = scene(doc, zoom, reach_of(host));
     let view = view_of(host);
     let (x0, x1) = range_axis(s.x, s.w, view.0);
     let (y0, y1) = range_axis(s.y, s.h, view.1);
@@ -567,7 +628,12 @@ fn zoom_to<H: ViewHost>(
     {
         pan = reveal(pan, frame, view);
     }
-    s.pan = clamp(pan, scene(doc, new), canvas_px(doc, new), view);
+    s.pan = clamp(
+        pan,
+        scene(doc, new, reach_of(host)),
+        canvas_px(doc, new),
+        view,
+    );
     push_pan(host, s.pan);
     push_scene(host, doc, new);
     Ok(())
@@ -576,7 +642,12 @@ fn zoom_to<H: ViewHost>(
 /// A pan a view command asked for, clamped to the scene and then kept.
 fn pan_to<H: ViewHost>(host: &H, c: &Canvas<H>, s: &mut Seen, want: Pan) {
     let (doc, zoom, view) = (c.doc(), c.zoom(), view_of(host));
-    let pan = clamp(want, scene(doc, zoom), canvas_px(doc, zoom), view);
+    let pan = clamp(
+        want,
+        scene(doc, zoom, reach_of(host)),
+        canvas_px(doc, zoom),
+        view,
+    );
     if pan != s.pan {
         s.pan = pan;
         push_pan(host, pan);
@@ -641,10 +712,13 @@ pub fn wire<H: ViewHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>, opening: Ope
                 return;
             }
             let view = view_of(host);
+            // From the pan, so an element already in view leaves it where it is even
+            // when the pan lies past a scene the selection has just shrunk.
             let pan = match now {
-                Some((_, [x, y, w, h])) if cause == Cause::Selection || moved => clamp(
+                Some((_, [x, y, w, h])) if cause == Cause::Selection || moved => clamp_from(
+                    s.pan,
                     reveal(s.pan, frame_px(x, y, w, h, zoom), view),
-                    scene(doc, zoom),
+                    scene(doc, zoom, reach_of(host)),
                     canvas_px(doc, zoom),
                     view,
                 ),
@@ -733,7 +807,8 @@ pub fn wire<H: ViewHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>, opening: Ope
             if zoom_to(&host, &mut c, &mut s, z, Anchor::Origin).is_ok() {
                 s.choice = Zoom::Fit;
                 push_says(&host, s.choice, c.zoom());
-                let whole = scene(c.doc(), c.zoom());
+                // No reach: this sentence is about the label, not its grips.
+                let whole = scene(c.doc(), c.zoom(), 0);
                 if c.zoom() == 1 && (whole.w > view.0 || whole.h > view.1) {
                     refuse(&host, Refusal::StillLarger);
                 }
@@ -787,7 +862,8 @@ pub fn wire<H: ViewHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>, opening: Ope
             let c = canvas.borrow();
             let mut s = seen.borrow_mut();
             let (doc, zoom) = (c.doc(), c.zoom());
-            let whole = scene(doc, zoom);
+            // The scene `push_scene` drew the bars from, so room down is the bar.
+            let whole = scene(doc, zoom, reach_of(&host));
             let room_down = room_axis(whole.y, whole.h, canvas_px(doc, zoom).1, view_of(&host).1);
             let from = s.pan;
             let (px, py) = s.drift.routed(from, wheel_travel(dx, dy, room_down));
@@ -795,7 +871,13 @@ pub fn wire<H: ViewHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>, opening: Ope
                 x: from.x.saturating_add(px),
                 y: from.y.saturating_add(py),
             };
-            pan_to(&host, &c, &mut s, want);
+            // Relative travel never moves the view against itself, so it is clamped
+            // from where it started rather than by `pan_to`.
+            let pan = clamp_from(from, want, whole, canvas_px(doc, zoom), view_of(&host));
+            if pan != s.pan {
+                s.pan = pan;
+                push_pan(&host, pan);
+            }
             let now = s.pan;
             s.drift.rest_at(now);
         });
@@ -852,6 +934,7 @@ pub fn wire<H: ViewHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>, opening: Ope
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::doc::Cmd;
     use relabel_render::document::{Common, Element, ElementOrRaw, Label, RectDots, RectEl};
     use relabel_render::target::Dpmm;
 
@@ -1019,6 +1102,65 @@ mod tests {
         assert_eq!(
             clamp(Pan { x: -500, y: 0 }, scene, (1280, 384), (709, 525)).x,
             -156
+        );
+    }
+
+    #[test]
+    fn a_pan_already_past_the_scene_is_clamped_only_toward_it() {
+        let scene = PxRect {
+            x: 0,
+            y: 0,
+            w: 1280,
+            h: 384,
+        };
+        let (canvas, view) = ((1280, 384), (709, 525));
+        let at = |x| Pan { x, y: 0 };
+        assert_eq!(
+            clamp(at(586), scene, canvas, view),
+            at(571),
+            "clamp pulls it back"
+        );
+        assert_eq!(
+            clamp_from(at(586), at(596), scene, canvas, view),
+            at(586),
+            "further past"
+        );
+        assert_eq!(
+            clamp_from(at(586), at(586), scene, canvas, view),
+            at(586),
+            "staying"
+        );
+        assert_eq!(
+            clamp_from(at(586), at(576), scene, canvas, view),
+            at(576),
+            "back toward it"
+        );
+        assert_eq!(
+            clamp_from(at(586), at(-50), scene, canvas, view),
+            at(0),
+            "back past its start"
+        );
+        assert_eq!(
+            clamp_from(at(300), at(900), scene, canvas, view),
+            clamp(at(900), scene, canvas, view),
+            "from inside the scene it is clamp"
+        );
+        assert_eq!(
+            clamp_from(at(2000), at(2000), scene, canvas, view),
+            at(1278),
+            "the keep clamp still wins"
+        );
+        let down = |y| Pan { x: 0, y };
+        assert!(!room_axis(scene.y, scene.h, canvas.1, view.1));
+        assert_eq!(
+            clamp_from(down(10), down(10), scene, canvas, view),
+            down(0),
+            "no room down: the one pan"
+        );
+        assert_eq!(
+            clamp_from(down(10), down(20), scene, canvas, view),
+            clamp(down(20), scene, canvas, view),
+            "no room down: clamp"
         );
     }
 
@@ -1242,7 +1384,7 @@ mod tests {
     fn the_scene_is_the_canvas_and_every_frame_at_the_zoom() {
         let doc = rect_label(REFERENCE, &[(8, 8, 40, 24)]);
         assert_eq!(
-            scene(&doc, 4),
+            scene(&doc, 4, 15),
             PxRect {
                 x: 0,
                 y: 0,
@@ -1252,13 +1394,58 @@ mod tests {
         );
         let doc = rect_label(REFERENCE, &[(-30, 8, 40, 24), (300, 80, 40, 24)]);
         assert_eq!(
-            scene(&doc, 2),
+            scene(&doc, 2, 15),
             PxRect {
                 x: -60,
                 y: 0,
                 w: 340 * 2 + 60,
                 h: 208
             }
+        );
+    }
+
+    #[test]
+    fn the_scene_reaches_past_the_selected_elements_far_edges_by_the_grips() {
+        let px = |x, y, w, h| PxRect { x, y, w, h };
+        let mut doc = rect_label(REFERENCE, &[(0, 0, 320, 96)]);
+        assert_eq!(scene(&doc, 4, 15), px(0, 0, 1280, 384), "nothing selected");
+        doc.apply(Cmd::Select(Some(1)));
+        assert_eq!(scene(&doc, 4, 15), px(0, 0, 1295, 399));
+        assert_eq!(scene(&doc, 4, 0), px(0, 0, 1280, 384));
+        assert_eq!(range_axis(0, 1295, 709), (0, 586));
+        assert!(room_axis(0, 399, 384, 390));
+        assert!(!room_axis(0, 384, 384, 390));
+
+        let mut label = Label::new(320, 96, Dpmm::DPI_203);
+        let mut common = Common::new(
+            1,
+            RectDots {
+                feed: 0,
+                head: 0,
+                feed_len: 320,
+                head_len: 96,
+            },
+        );
+        common.locked = true;
+        label.elements = vec![ElementOrRaw::Known(Element::Rect(RectEl {
+            common,
+            stroke_dots: 0,
+            radius_dots: 0,
+        }))];
+        let mut locked = Doc::open(label, relabel_proto::PrintDirection::Left).expect("a label");
+        locked.apply(Cmd::Select(Some(1)));
+        assert_eq!(
+            scene(&locked, 4, 15),
+            px(0, 0, 1280, 384),
+            "a locked element has no grips"
+        );
+
+        let mut inside = rect_label(REFERENCE, &[(8, 8, 40, 24)]);
+        inside.apply(Cmd::Select(Some(1)));
+        assert_eq!(
+            scene(&inside, 4, 15),
+            px(0, 0, 1280, 384),
+            "grips that stay on the canvas"
         );
     }
 
@@ -1356,7 +1543,7 @@ mod tests {
     fn the_reference_label_has_no_room_down_up_to_four_and_has_some_from_six_in_the_scale_one_view()
     {
         let room = |doc: &Doc, z: u32| {
-            let s = scene(doc, z);
+            let s = scene(doc, z, 15);
             room_axis(s.y, s.h, canvas_px(doc, z).1, 525)
         };
         let doc = rect_label(REFERENCE, &[(8, 8, 40, 24)]);

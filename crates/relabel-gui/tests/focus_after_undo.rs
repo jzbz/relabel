@@ -1,9 +1,10 @@
 //! Does the keyboard still work after an undo?
 //!
-//! `Effect::Everything` calls `Canvas::publish`, which calls
+//! `Effect::Everything` calls `Canvas::publish`, which once called
 //! `VecModel::set_vec`, which calls `notify.reset()` - and a model reset clears
-//! every repeater instance (i-slint-core model/repeater.rs:506-509). The
+//! every repeater instance (i-slint-core model/repeater.rs:508-511). The
 //! per-element FocusScope holding the keyboard focus is one of those instances.
+//! `Canvas::write_rows` now edits the model by element id and never resets it.
 
 #[path = "support/mod.rs"]
 mod support;

@@ -1,0 +1,33 @@
+import { ZoomButton } from "zoom.slint";
+import { Tool } from "types.slint";
+
+// The edit bar: one button for each kind an operator can add, and one that deletes
+// the selection.
+//
+// The add buttons come from a model pushed once from `make::Kind`, so a face, the
+// name it announces and the chord it describes are spelled once, in Rust, beside
+// the letters the shell's capture sends back. ZoomButtons for the zoom bar's
+// reason: none is a Tab stop and none takes the keyboard, so Tab still goes from
+// the surface to the first element. The default action is the assistive
+// technology's route to each, and the only one to Delete element, because Slint
+// has no delete action (i-slint-compiler typeregister.rs:257-283).
+export component EditBar {
+    in property <[Tool]> tools;
+    callback add(token: int);
+    callback delete-selected();
+    HorizontalLayout {
+        spacing: 4px;
+        for tool in root.tools: ZoomButton {
+            text: tool.text;
+            name: tool.name;
+            keys: tool.keys;
+            clicked => { root.add(tool.token); }
+        }
+        ZoomButton {
+            text: "Delete";
+            name: "Delete element";
+            keys: "Delete";
+            clicked => { root.delete-selected(); }
+        }
+    }
+}

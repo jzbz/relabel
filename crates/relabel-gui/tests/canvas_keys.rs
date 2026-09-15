@@ -121,12 +121,18 @@ fn an_arrow_key_on_a_locked_element_refuses_and_says_which_element_it_was() {
     label.elements[0] = rect(1, frame(8, 8, 40, 24), Rot::D0, true);
     let (ui, canvas) = probe(label);
     focus_row(&ui, 0);
+    // The click's press is refused first, in the same words.
+    assert_eq!(ui.get_status().as_str(), "\u{2018}box 1\u{2019} is locked");
     key(&ui, Key::RightArrow, false);
     assert_eq!(
         frame_of(canvas.borrow().doc().label(), 1),
         frame(8, 8, 40, 24)
     );
-    assert_eq!(ui.get_status().as_str(), "\u{2018}box 1\u{2019} is locked");
+    // Said again as a different string, so the live region announces it again.
+    assert_eq!(
+        ui.get_status().as_str(),
+        "\u{2018}box 1\u{2019} is locked (again)"
+    );
 }
 
 #[test]

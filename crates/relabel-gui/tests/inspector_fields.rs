@@ -185,14 +185,14 @@ fn each_kind_publishes_its_own_fields_and_only_those() {
 fn the_fields_a_kind_does_not_have_are_in_neither_the_tree_nor_the_layout() {
     let (ui, canvas) = probe(every_kind_label());
     ui.invoke_select(7);
-    assert_eq!(fields_of(&ui).len(), 8, "a line has eight rows");
+    assert_eq!(fields_of(&ui).len(), 9, "a line has nine rows");
     assert!(find_field(&ui, "em size").is_none());
     assert!(find_field(&ui, "stroke").is_none());
     let status = status_of(&ui);
     let bottom = status.absolute_position().y + status.size().height;
     let window = ui.global::<DefaultWindow>().get_height();
     assert!(bottom <= window, "the status line ends at {bottom}");
-    // And the eight rows sit one under the other with nothing between them.
+    // And the nine rows sit one under the other with nothing between them.
     let ys: Vec<f32> = fields_of(&ui)
         .iter()
         .map(|h| h.absolute_position().y)
@@ -201,7 +201,7 @@ fn the_fields_a_kind_does_not_have_are_in_neither_the_tree_nor_the_layout() {
     for w in ys.windows(2) {
         assert!((w[1] - w[0] - pitch).abs() < 0.01, "{ys:?}");
     }
-    assert_eq!(slots(&canvas).len(), 8);
+    assert_eq!(slots(&canvas).len(), 9);
 }
 
 #[test]
@@ -211,7 +211,7 @@ fn the_pane_has_as_many_slots_as_the_widest_kind_needs() {
     ui.invoke_select(1);
     assert_eq!(
         fields_of(&ui).len(),
-        14,
+        15,
         "the text element is the widest kind"
     );
     assert_eq!(
@@ -226,20 +226,20 @@ fn a_slot_changes_shape_when_the_selection_changes_kind() {
     let (ui, _canvas) = probe(every_kind_label());
     ui.invoke_select(1);
     assert_eq!(
-        fields_of(&ui)[7].accessible_role(),
+        fields_of(&ui)[8].accessible_role(),
         Some(AccessibleRole::TextInput)
     );
     assert_eq!(
-        fields_of(&ui)[7].accessible_label().as_deref(),
+        fields_of(&ui)[8].accessible_label().as_deref(),
         Some("text")
     );
     ui.invoke_select(6);
-    let eighth = &fields_of(&ui)[7];
-    assert_eq!(eighth.accessible_role(), Some(AccessibleRole::Spinbox));
-    assert_eq!(eighth.accessible_label().as_deref(), Some("stroke"));
-    assert_eq!(eighth.accessible_value().as_deref(), Some("1"));
     let ninth = &fields_of(&ui)[8];
-    assert_eq!(ninth.accessible_role(), Some(AccessibleRole::Text));
+    assert_eq!(ninth.accessible_role(), Some(AccessibleRole::Spinbox));
+    assert_eq!(ninth.accessible_label().as_deref(), Some("stroke"));
+    assert_eq!(ninth.accessible_value().as_deref(), Some("1"));
+    let tenth = &fields_of(&ui)[9];
+    assert_eq!(tenth.accessible_role(), Some(AccessibleRole::Text));
     assert!(find_field(&ui, "text").is_none());
 }
 
@@ -249,11 +249,11 @@ fn a_row_that_is_shown_and_not_edited_offers_no_value_to_set() {
     ui.invoke_select(1);
     let before = canvas.borrow().doc().label().clone();
     let status = ui.get_status();
-    let extent = field_of(&ui, "extent");
-    assert_eq!(extent.accessible_role(), Some(AccessibleRole::Text));
-    assert_eq!(extent.accessible_value().as_deref(), Some("40 by 24 dots"));
-    extent.set_accessible_value("1 by 1 dots");
-    assert_eq!(extent.accessible_value().as_deref(), Some("40 by 24 dots"));
+    let state = field_of(&ui, "state");
+    assert_eq!(state.accessible_role(), Some(AccessibleRole::Text));
+    assert_eq!(state.accessible_value().as_deref(), Some("\u{2014}"));
+    state.set_accessible_value("locked");
+    assert_eq!(state.accessible_value().as_deref(), Some("\u{2014}"));
     assert_eq!(canvas.borrow().doc().label(), &before);
     assert_eq!(
         ui.get_status(),

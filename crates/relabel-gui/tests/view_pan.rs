@@ -423,6 +423,139 @@ fn a_pan_past_either_end_stops_at_the_scene() {
     );
 }
 
+/// The scene carries the selected element's far edges out by the grips' reach, so
+/// a selection on the label's lower edge, where the canvas all but fills the view
+/// down, gives the view room down and a plain wheel pans down to the grips.
+#[test]
+fn selecting_an_element_on_the_labels_lower_edge_gives_the_view_room_down_for_its_grips() {
+    let mut label = relabel_render::Label::new(320, 130, relabel_render::target::Dpmm::DPI_203);
+    label.elements = vec![rect(1, frame(8, 106, 40, 24), Rot::D0, false)];
+    let (ui, _canvas) = probe(label, 1.0, Opening::At(4));
+    let vh = ui.get_view_px_h();
+    assert!((520..535).contains(&vh), "view {vh}");
+    assert_eq!(ui.get_scene_h(), vh, "no room down before the selection");
+    ui.invoke_select(1);
+    assert_eq!(ui.get_scene_h(), 535);
+    assert!(
+        thumbs(&ui).iter().any(|t| t.size().height > t.size().width),
+        "the bar down is drawn"
+    );
+    wheel(
+        ui.window(),
+        in_view(&ui, 300.0, 200.0),
+        0.0,
+        -60.0,
+        false,
+        false,
+    );
+    assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (0, 535 - vh));
+}
+
+/// Element 1 on the label's end, its grips panned into view, and element 2 wholly in
+/// that view: 800 to 960 device pixels against 586 to 1295.
+fn panned_to_the_grips_of_element_1() -> InsProbe {
+    let mut label = reference_label();
+    label.elements = vec![
+        rect(1, frame(280, 30, 40, 24), Rot::D0, false),
+        rect(2, frame(200, 8, 40, 24), Rot::D0, false),
+    ];
+    let (ui, _canvas) = probe(label, 1.0, Opening::At(4));
+    ui.invoke_select(1);
+    ui.invoke_pan_to(i32::MAX, i32::MAX);
+    assert_eq!(ui.get_view_px_w(), 709);
+    assert_eq!(ui.get_pan_x(), 1295 - 709);
+    ui
+}
+
+/// Selecting element 2 by pointer shrinks the scene to the canvas, whose pans end at
+/// 571, and a press never moves the view, so the pan is left past the scene. A wheel or
+/// trackpad pan from there moves only toward the scene: toward the label's end it
+/// stays, and back it moves by its own travel.
+#[test]
+fn a_pan_left_past_the_scene_by_a_selection_never_moves_against_its_travel() {
+    let ui = panned_to_the_grips_of_element_1();
+    let w = ui.window();
+    let on_2 = in_view(&ui, (880 - 586) as f32, 80.0);
+    down(w, on_2);
+    up(w, on_2);
+    assert_eq!(ui.get_scene_w(), 1280, "element 2 is selected");
+    assert_eq!(ui.get_pan_x(), 586, "a press never moves the view");
+    ui.invoke_pan_by(10.0, 0.0);
+    assert_eq!(ui.get_pan_x(), 586, "toward the label's end");
+    ui.invoke_pan_by(-10.0, 0.0);
+    assert_eq!(ui.get_pan_x(), 576, "back toward the scene");
+}
+
+/// Element 1 on the lower edge of a label the view all but fits down, selected and its
+/// grips panned into view by a plain wheel, then element 2 pressed, which leaves the
+/// pan past the canvas down where the scene has no room and no bar down is drawn.
+fn panned_down_to_the_grips_of_element_1_and_element_2_pressed() -> InsProbe {
+    let mut label = relabel_render::Label::new(320, 130, relabel_render::target::Dpmm::DPI_203);
+    label.elements = vec![
+        rect(1, frame(8, 106, 40, 24), Rot::D0, false),
+        rect(2, frame(100, 8, 40, 24), Rot::D0, false),
+    ];
+    let (ui, _canvas) = probe(label, 1.0, Opening::At(4));
+    let vh = ui.get_view_px_h();
+    ui.invoke_select(1);
+    wheel(
+        ui.window(),
+        in_view(&ui, 300.0, 200.0),
+        0.0,
+        -60.0,
+        false,
+        false,
+    );
+    assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (0, 535 - vh));
+    let on_2 = in_view(&ui, 480.0, (80 - (535 - vh)) as f32);
+    down(ui.window(), on_2);
+    up(ui.window(), on_2);
+    assert_eq!(ui.get_scene_h(), vh, "element 2 is selected");
+    assert_eq!(ui.get_pan_y(), 535 - vh, "a press never moves the view");
+    assert!(
+        !thumbs(&ui).iter().any(|t| t.size().height > t.size().width),
+        "no bar down"
+    );
+    ui
+}
+
+/// A pan is clamped to the scene only toward it along an axis with room. Along one
+/// without, the scene allows one pan and no scroll bar is drawn that could return the
+/// view to it, so a plain wheel, which turns across there, clamps down outright.
+#[test]
+fn a_pan_left_past_the_scene_down_where_there_is_no_room_down_is_returned_by_the_next_wheel() {
+    let ui = panned_down_to_the_grips_of_element_1_and_element_2_pressed();
+    wheel(
+        ui.window(),
+        in_view(&ui, 300.0, 200.0),
+        0.0,
+        -60.0,
+        false,
+        false,
+    );
+    assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (60, 0));
+}
+
+/// The same along the reveal: a selection there returns the view down to the one pan
+/// the scene allows, though the element was already in view.
+#[test]
+fn a_pan_left_past_the_scene_down_where_there_is_no_room_down_is_returned_by_the_next_selection() {
+    let ui = panned_down_to_the_grips_of_element_1_and_element_2_pressed();
+    ui.invoke_select(2);
+    assert_eq!((ui.get_pan_x(), ui.get_pan_y()), (0, 0));
+}
+
+/// A selection moves the view the least distance that shows the element, so an element
+/// already in view leaves it where it is, even where the pan had reached past the
+/// canvas for the grips of the element selected before.
+#[test]
+fn selecting_an_element_in_view_leaves_a_pan_that_reached_for_the_last_ones_grips() {
+    let ui = panned_to_the_grips_of_element_1();
+    ui.invoke_select(2);
+    assert_eq!(ui.get_scene_w(), 1280, "element 2 is selected");
+    assert_eq!(ui.get_pan_x(), 586);
+}
+
 #[test]
 fn panning_is_not_an_undo_step_and_does_not_commit_a_typed_field() {
     let (ui, canvas) = probe(reference_label(), 1.0, Opening::At(DEFAULT_ZOOM));

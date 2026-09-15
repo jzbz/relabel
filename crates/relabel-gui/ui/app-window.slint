@@ -1,8 +1,8 @@
 import { Designer, DefaultWindow } from "shell.slint";
-import { ElRow, InsSlot } from "types.slint";
+import { ElRow, InsSlot, Tool, Grips } from "types.slint";
 
 // Only what the compiled root exports becomes a Rust type.
-export { ElRow, InsSlot, DefaultWindow }
+export { ElRow, InsSlot, Tool, Grips, DefaultWindow }
 
 // The application window: the designer shell and nothing else. Every property
 // and callback is the shell's, forwarded, so the window the operator uses and the
@@ -17,6 +17,8 @@ export component AppWindow inherits Window {
     in property <[ElRow]> rows <=> shell.rows;
     in property <int> selected <=> shell.selected;
     in property <int> zoom <=> shell.zoom;
+    in property <Grips> grips <=> shell.grips;
+    in property <[Tool]> tools <=> shell.tools;
     in property <[InsSlot]> ins-slots <=> shell.ins-slots;
     in property <string> ins-heading <=> shell.ins-heading;
     in property <bool> ins-shown <=> shell.ins-shown;
@@ -30,6 +32,7 @@ export component AppWindow inherits Window {
     in property <string> zoom-says <=> shell.zoom-says;
     out property <int> view-px-w <=> shell.view-px-w;
     out property <int> view-px-h <=> shell.view-px-h;
+    out property <int> grip-reach-px <=> shell.grip-reach-px;
     out property <bool> pointer-down <=> shell.pointer-down;
     in property <string> status <=> shell.status;
 
@@ -41,6 +44,11 @@ export component AppWindow inherits Window {
     callback set-say(id: int, value: string);
     callback undo();
     callback redo();
+    callback begin-resize(id: int, grip: int);
+    callback resize-to(id: int, right: int, bottom: int);
+    callback add(kind: int) -> bool;
+    callback kind-of-key(text: string) -> int;
+    callback delete-element(id: int) -> bool;
     callback field-edited(field: int, value: string);
     callback field-commit();
     callback field-stepped(field: int, by: int);
@@ -78,6 +86,11 @@ export component AppWindow inherits Window {
         set-say(id, v) => { root.set-say(id, v); }
         undo() => { root.undo(); }
         redo() => { root.redo(); }
+        begin-resize(id, g) => { root.begin-resize(id, g); }
+        resize-to(id, r, b) => { root.resize-to(id, r, b); }
+        add(k) => { return root.add(k); }
+        kind-of-key(t) => { return root.kind-of-key(t); }
+        delete-element(id) => { return root.delete-element(id); }
         field-edited(f, v) => { root.field-edited(f, v); }
         field-commit() => { root.field-commit(); }
         field-stepped(f, b) => { root.field-stepped(f, b); }

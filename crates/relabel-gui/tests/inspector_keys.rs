@@ -174,6 +174,8 @@ fn neither_the_pane_cycling_scope_nor_the_stepping_scope_costs_a_tab_stop() {
         (Field::Name, "b"),
         (Field::Feed, "40"),
         (Field::Head, "8"),
+        (Field::FeedLen, "40"),
+        (Field::HeadLen, "24"),
         (Field::Rot, "0"),
         (Field::Ink, "black"),
         (Field::StrokeDots, "0"),
@@ -221,8 +223,10 @@ fn the_up_and_down_arrows_step_a_number_field_by_its_own_unit() {
     key(&ui, Key::DownArrow);
     key(&ui, Key::DownArrow);
     assert_eq!(value(&ui, "feed"), "3");
-    key(&ui, Key::Tab);
-    key(&ui, Key::Tab);
+    // Past head, feed length and head length.
+    for _ in 0..4 {
+        key(&ui, Key::Tab);
+    }
     key(&ui, Key::UpArrow);
     assert_eq!(value(&ui, "rotation"), "90", "a quarter turn");
 }
