@@ -179,7 +179,9 @@ pub(crate) fn rasterise(
     let mut stats = Stats::default();
     let px: Vec<u8> = pm
         .data()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|p| {
             let y = luma601(p[0], p[1], p[2]);
             stats.add(y, 255);

@@ -408,7 +408,7 @@ fn magnify_grey(grey: &GreyMap, z: usize, out: &mut [u8]) {
             // three: the compiler does not know the run is one pixel long
             // there, and on the largest page in the registry that difference is
             // 2.0 ms against 6.7 ms.
-            for (&v, px) in src.iter().zip(full.chunks_exact_mut(3)) {
+            for (&v, px) in src.iter().zip(full.as_chunks_mut::<3>().0) {
                 px[0] = v;
                 px[1] = v;
                 px[2] = v;
@@ -596,14 +596,12 @@ fn stamp(seed: u64, w: u16, h: u16, scale: Scale, src: &[u8]) -> u64 {
     let shape =
         u64::from(w) << 48 | u64::from(h) << 32 | u64::from(scale.up) << 16 | u64::from(scale.down);
     let mut s = mix(seed, shape);
-    let mut word = [0u8; 8];
-    let mut chunks = src.chunks_exact(8);
-    for c in &mut chunks {
-        word.copy_from_slice(c);
+    let (words, rest) = src.as_chunks::<8>();
+    for &word in words {
         s = mix(s, u64::from_le_bytes(word));
     }
-    word = [0; 8];
-    word[..chunks.remainder().len()].copy_from_slice(chunks.remainder());
+    let mut word = [0u8; 8];
+    word[..rest.len()].copy_from_slice(rest);
     mix(mix(s, u64::from_le_bytes(word)), src.len() as u64)
 }
 

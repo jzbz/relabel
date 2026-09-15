@@ -268,7 +268,7 @@ impl Canvas {
     pub fn finish(self) -> GreyMap {
         let src = self.pixmap.data();
         let mut px = Vec::with_capacity(usize::from(self.w) * usize::from(self.h));
-        for chunk in src.chunks_exact(4) {
+        for chunk in src.as_chunks::<4>().0 {
             px.push(chunk[0]);
         }
         GreyMap {

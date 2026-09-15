@@ -151,7 +151,9 @@ pub fn jpeg_rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> Vec<u8> {
         let [r, g, b] = f(x, y);
         [r, g, b, 255]
     })
-    .chunks_exact(4)
+    .as_chunks::<4>()
+    .0
+    .iter()
     .flat_map(|p| [p[0], p[1], p[2]])
     .collect();
     let mut out = Vec::new();
