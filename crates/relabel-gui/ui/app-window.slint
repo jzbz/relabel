@@ -1,8 +1,8 @@
 import { Designer, DefaultWindow } from "shell.slint";
-import { ElRow, InsSlot, Tool, Grips } from "types.slint";
+import { ElRow, InsSlot, Tool, Grips, SizePreset } from "types.slint";
 
 // Only what the compiled root exports becomes a Rust type.
-export { ElRow, InsSlot, Tool, Grips, DefaultWindow }
+export { ElRow, InsSlot, Tool, Grips, SizePreset, DefaultWindow }
 
 // The application window: the designer shell and nothing else. Every property
 // and callback is the shell's, forwarded, so the window the operator uses and the
@@ -35,6 +35,9 @@ export component AppWindow inherits Window {
     out property <int> grip-reach-px <=> shell.grip-reach-px;
     out property <bool> pointer-down <=> shell.pointer-down;
     in property <string> status <=> shell.status;
+    in property <[Tool]> file-tools <=> shell.file-tools;
+    in property <[SizePreset]> new-presets <=> shell.new-presets;
+    in property <string> new-note <=> shell.new-note;
 
     callback select(id: int);
     callback begin-move(id: int);
@@ -59,6 +62,22 @@ export component AppWindow inherits Window {
     callback pan-by(dx: float, dy: float);
     callback pan-to(x: int, y: int);
     callback view-resized();
+    callback file-command(token: int);
+    callback file-of-key(text: string, shift: bool) -> int;
+    // No chord is a file command until Rust says which are. A callback with no
+    // handler answers 0 (i-slint-core callbacks.rs:34-42), which is New's token, so
+    // a window whose files are not wired - most test probes - would take every
+    // Control chord that reaches this far for New, the add chords among them.
+    // `file::wire` replaces this.
+    file-of-key(text, shift) => {
+        return -1;
+    }
+    callback unsaved-reply(answer: int);
+    callback new-feed-edited(text: string);
+    callback new-check(text: string) -> bool;
+    callback new-make(text: string);
+    callback new-preset(token: int);
+    callback new-cancel();
 
     public function show-fields() {
         shell.show-fields();
@@ -68,7 +87,22 @@ export component AppWindow inherits Window {
         shell.focus-canvas();
     }
 
-    title: "relabel";
+    public function show-unsaved(question: string) {
+        shell.show-unsaved(question);
+    }
+
+    public function show-new(printer: string, across: string, about: string, feed: string, hint: string) {
+        shell.show-new(printer, across, about, feed, hint);
+    }
+
+    public function close-file-popups() {
+        shell.close-file-popups();
+    }
+
+    // Computed in Rust (`filing::title`) and pushed after every outcome, so the
+    // unsaved mark follows every edit, undo and save.
+    in property <string> doc-title: "relabel";
+    title: root.doc-title;
     // From the shell's global, which the test probe is sized from too.
     preferred-width: DefaultWindow.width;
     preferred-height: DefaultWindow.height;
@@ -101,5 +135,13 @@ export component AppWindow inherits Window {
         pan-by(dx, dy) => { root.pan-by(dx, dy); }
         pan-to(x, y) => { root.pan-to(x, y); }
         view-resized() => { root.view-resized(); }
+        file-command(t) => { root.file-command(t); }
+        file-of-key(t, s) => { return root.file-of-key(t, s); }
+        unsaved-reply(a) => { root.unsaved-reply(a); }
+        new-feed-edited(t) => { root.new-feed-edited(t); }
+        new-check(t) => { return root.new-check(t); }
+        new-make(t) => { root.new-make(t); }
+        new-preset(t) => { root.new-preset(t); }
+        new-cancel() => { root.new-cancel(); }
     }
 }

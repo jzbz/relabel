@@ -398,6 +398,9 @@ macro_rules! impl_ins_host {
 /// One button of the edit bar, whichever compiled component it belongs to.
 pub trait ToolRow: Clone + 'static {
     fn of(kind: crate::make::Kind) -> Self;
+    /// A button that is not a kind's, such as the File bar's: its token, face, name
+    /// and chord, each spelled by the caller.
+    fn plain(token: i32, text: &str, name: &str, keys: &str) -> Self;
 }
 
 /// The grips struct, whichever compiled component it belongs to.
@@ -441,6 +444,14 @@ macro_rules! impl_edit_host {
                     text: kind.caption().into(),
                     name: kind.button_name().into(),
                     keys: kind.keys().as_str().into(),
+                }
+            }
+            fn plain(token: i32, text: &str, name: &str, keys: &str) -> $tool {
+                $tool {
+                    token,
+                    text: text.into(),
+                    name: name.into(),
+                    keys: keys.into(),
                 }
             }
         }
@@ -490,6 +501,136 @@ macro_rules! impl_edit_host {
             }
             fn on_resize_to(&self, f: impl FnMut(i32, i32, i32) + 'static) {
                 <$win>::on_resize_to(self, f)
+            }
+        }
+    };
+}
+
+/// One button of the New label pane, whichever compiled component it belongs to.
+pub trait PresetRow: Clone + 'static {
+    fn of(offer: &crate::fresh::Offer) -> Self;
+}
+
+/// The file half of a window: the File bar, the title, the question about unsaved
+/// work and the New label pane.
+///
+/// Over the other three halves rather than beside them, because a file command
+/// replaces the document every one of them shows and ends with the keyboard on the
+/// canvas surface. The File bar's buttons are the edit bar's struct, built with
+/// [`ToolRow::plain`].
+pub trait FileHost: InsHost + EditHost + ViewHost {
+    type Preset: PresetRow;
+
+    fn set_doc_title(&self, title: slint::SharedString);
+    fn set_file_tools(&self, tools: slint::ModelRc<Self::Tool>);
+    fn set_new_presets(&self, presets: slint::ModelRc<Self::Preset>);
+    fn set_new_note(&self, note: slint::SharedString);
+    fn get_new_note(&self) -> slint::SharedString;
+    fn invoke_show_unsaved(&self, question: slint::SharedString);
+    /// The printer, the head, the two together as the field's description, the
+    /// length along the feed the field starts at, and the hint below it.
+    fn invoke_show_new(
+        &self,
+        printer: slint::SharedString,
+        across: slint::SharedString,
+        about: slint::SharedString,
+        feed: slint::SharedString,
+        hint: slint::SharedString,
+    );
+    fn invoke_close_file_popups(&self);
+    fn invoke_focus_canvas(&self);
+
+    fn on_file_command(&self, f: impl FnMut(i32) + 'static);
+    /// Answers a File bar token, or -1 for a key that is no file command's chord.
+    fn on_file_of_key(&self, f: impl FnMut(slint::SharedString, bool) -> i32 + 'static);
+    fn on_unsaved_reply(&self, f: impl FnMut(i32) + 'static);
+    fn on_new_feed_edited(&self, f: impl FnMut(slint::SharedString) + 'static);
+    /// Answers whether the length can make a label, having said why not when not.
+    fn on_new_check(&self, f: impl FnMut(slint::SharedString) -> bool + 'static);
+    fn on_new_make(&self, f: impl FnMut(slint::SharedString) + 'static);
+    fn on_new_preset(&self, f: impl FnMut(i32) + 'static);
+    fn on_new_cancel(&self, f: impl FnMut() + 'static);
+}
+
+/// Bind a compiled shell window and its preset struct to [`crate::file`]. Once for
+/// the application, once in each test file that wires the files.
+#[macro_export]
+macro_rules! impl_file_host {
+    ($win:ty, $preset:path) => {
+        impl $crate::rows::PresetRow for $preset {
+            fn of(o: &$crate::fresh::Offer) -> $preset {
+                $preset {
+                    token: o.feed_tenths,
+                    text: o.text.as_str().into(),
+                    name: o.name.as_str().into(),
+                    says: o.says.as_str().into(),
+                }
+            }
+        }
+
+        impl $crate::rows::FileHost for $win {
+            type Preset = $preset;
+
+            fn set_doc_title(&self, title: slint::SharedString) {
+                <$win>::set_doc_title(self, title)
+            }
+            fn set_file_tools(
+                &self,
+                tools: slint::ModelRc<<$win as $crate::rows::EditHost>::Tool>,
+            ) {
+                <$win>::set_file_tools(self, tools)
+            }
+            fn set_new_presets(&self, presets: slint::ModelRc<$preset>) {
+                <$win>::set_new_presets(self, presets)
+            }
+            fn set_new_note(&self, note: slint::SharedString) {
+                <$win>::set_new_note(self, note)
+            }
+            fn get_new_note(&self) -> slint::SharedString {
+                <$win>::get_new_note(self)
+            }
+            fn invoke_show_unsaved(&self, question: slint::SharedString) {
+                <$win>::invoke_show_unsaved(self, question)
+            }
+            fn invoke_show_new(
+                &self,
+                printer: slint::SharedString,
+                across: slint::SharedString,
+                about: slint::SharedString,
+                feed: slint::SharedString,
+                hint: slint::SharedString,
+            ) {
+                <$win>::invoke_show_new(self, printer, across, about, feed, hint)
+            }
+            fn invoke_close_file_popups(&self) {
+                <$win>::invoke_close_file_popups(self)
+            }
+            fn invoke_focus_canvas(&self) {
+                <$win>::invoke_focus_canvas(self)
+            }
+            fn on_file_command(&self, f: impl FnMut(i32) + 'static) {
+                <$win>::on_file_command(self, f)
+            }
+            fn on_file_of_key(&self, f: impl FnMut(slint::SharedString, bool) -> i32 + 'static) {
+                <$win>::on_file_of_key(self, f)
+            }
+            fn on_unsaved_reply(&self, f: impl FnMut(i32) + 'static) {
+                <$win>::on_unsaved_reply(self, f)
+            }
+            fn on_new_feed_edited(&self, f: impl FnMut(slint::SharedString) + 'static) {
+                <$win>::on_new_feed_edited(self, f)
+            }
+            fn on_new_check(&self, f: impl FnMut(slint::SharedString) -> bool + 'static) {
+                <$win>::on_new_check(self, f)
+            }
+            fn on_new_make(&self, f: impl FnMut(slint::SharedString) + 'static) {
+                <$win>::on_new_make(self, f)
+            }
+            fn on_new_preset(&self, f: impl FnMut(i32) + 'static) {
+                <$win>::on_new_preset(self, f)
+            }
+            fn on_new_cancel(&self, f: impl FnMut() + 'static) {
+                <$win>::on_new_cancel(self, f)
             }
         }
     };

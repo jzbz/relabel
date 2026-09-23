@@ -189,8 +189,9 @@ pub struct Doc {
     /// still a rectangle, so the operator is told which it was.
     direction_assumed: bool,
     selected: Option<ElementId>,
-    undo: Vec<Label>,
-    redo: Vec<Label>,
+    /// Each earlier and later state with the revision it had.
+    undo: Vec<(Label, u64)>,
+    redo: Vec<(Label, u64)>,
     /// The pointer gesture being built into one undo step, if any.
     gesture: Option<Gesture>,
     /// Whether the pointer is down on an element, from the press to the release.
@@ -203,7 +204,15 @@ pub struct Doc {
     /// not handed to a different element while its old snapshot is still on the
     /// stack; wide, so the rise past the row id range is a fact and not a wrap.
     next_id: u64,
-    dirty: bool,
+    /// Which state the document is in. Every edit gives it a revision no state
+    /// has had, from `last_rev`, and an undo or a redo brings back the one the
+    /// state it restores had; so the document is dirty exactly when this is not
+    /// `saved_rev`, and a cancelled drag or an undo back to the save reads clean.
+    rev: u64,
+    /// The last revision handed out. Only ever rises.
+    last_rev: u64,
+    /// The revision that was last written to disk, or the one the label opened at.
+    saved_rev: u64,
     /// The one field an operator is part way through typing into, the element
     /// they typed it into, and the text. At most one, because only one field can
     /// hold the keyboard, and it exists only between two commands.
@@ -214,6 +223,8 @@ pub struct Doc {
 /// anything has changed since, and what the pointer is doing to its element.
 struct Gesture {
     before: Label,
+    /// The revision `before` had, which a cancel restores with it.
+    before_rev: u64,
     moved: bool,
     kind: Held,
 }
@@ -273,7 +284,9 @@ impl Doc {
             redo: Vec::new(),
             gesture: None,
             pressed: false,
-            dirty: false,
+            rev: 0,
+            last_rev: 0,
+            saved_rev: 0,
             staged: None,
         })
     }
@@ -330,8 +343,40 @@ impl Doc {
         self.selected
     }
 
+    /// Whether the document differs from what was last saved, or from what opened
+    /// if it has not been saved. Staged text is not in the document yet, so it does
+    /// not count here; [`Doc::unsaved`] counts it.
     pub fn dirty(&self) -> bool {
-        self.dirty
+        self.rev != self.saved_rev
+    }
+
+    /// Whether closing now would lose work: an edit since the save, or text typed
+    /// into a field and not yet finished.
+    pub fn unsaved(&self) -> bool {
+        self.dirty() || self.staged.is_some()
+    }
+
+    /// Which state the document is in, so a caller that let go of the keyboard -
+    /// to show a dialog, say - can tell afterwards whether anything changed.
+    pub fn revision(&self) -> u64 {
+        self.rev
+    }
+
+    /// The document as it stands has been written to disk.
+    ///
+    /// Only between commands, with nothing staged and the pointer up: the caller
+    /// commits staged text first, and a save waits for the release, so what was
+    /// written is the document and not a state part way through an edit.
+    pub fn mark_saved(&mut self) {
+        debug_assert!(self.staged.is_none(), "saved with text still staged");
+        debug_assert!(!self.pressed, "saved with the pointer down");
+        self.saved_rev = self.rev;
+    }
+
+    /// Give the document a revision no state has had: it has just been edited.
+    fn touch(&mut self) {
+        self.last_rev += 1;
+        self.rev = self.last_rev;
     }
 
     /// The canvas's own extent in canvas dots, which is what sizes the pane.
@@ -355,6 +400,25 @@ impl Doc {
         } else {
             axis.to_string()
         }
+    }
+
+    /// What the status line says when this document opens: which way round the
+    /// canvas is, what this build cannot draw, and whether the label can be saved
+    /// as it stands - a label a later version or a hand edit left unsaveable still
+    /// opens, and is refused only at the save, so the operator hears it first.
+    pub fn opening_note(&self) -> String {
+        let mut note = self.orientation_note();
+        match self.undrawable() {
+            0 => {}
+            1 => note.push_str("; 1 element this build cannot draw is kept as it is"),
+            n => note.push_str(&format!(
+                "; {n} elements this build cannot draw are kept as they are"
+            )),
+        }
+        if let Err(why) = self.label.writable() {
+            note.push_str(&format!("; it cannot be saved as it stands: {why}"));
+        }
+        note
     }
 
     /// Elements the canvas draws, in document z-order. Hidden elements and
@@ -435,7 +499,7 @@ impl Doc {
             } else {
                 self.redo.last()
             };
-            if top.is_some_and(|l| drawable_ids(l) != drawable_ids(&self.label)) {
+            if top.is_some_and(|(l, _)| drawable_ids(l) != drawable_ids(&self.label)) {
                 let word = if undo { "undo" } else { "redo" };
                 return Outcome::note(
                     Effect::Nothing,
@@ -675,12 +739,12 @@ impl Doc {
                 c.frame.head = head;
             }
         }
-        let before = self.label.clone();
+        let before = (self.label.clone(), self.rev);
         if let Some(e) = self.element_mut(id) {
             *e = next;
         }
         self.push_undo(before);
-        self.dirty = true;
+        self.touch();
         Outcome {
             effect: Effect::Row(id),
             note: both(note, moved),
@@ -772,10 +836,10 @@ impl Doc {
         } else {
             rect.head_len = landed;
         }
-        let before = self.label.clone();
+        let before = (self.label.clone(), self.rev);
         match self.write_rect(id, rect) {
             Some(effect) => {
-                let drawn = self.render_note(&before, id);
+                let drawn = self.render_note(&before.0, id);
                 self.push_undo(before);
                 Outcome {
                     effect,
@@ -835,6 +899,7 @@ impl Doc {
         }
         self.gesture = Some(Gesture {
             before: self.label.clone(),
+            before_rev: self.rev,
             moved: false,
             kind: Held::Move,
         });
@@ -883,6 +948,7 @@ impl Doc {
         let from = c.frame;
         self.gesture = Some(Gesture {
             before: self.label.clone(),
+            before_rev: self.rev,
             moved: false,
             kind: Held::Resize {
                 id,
@@ -933,6 +999,7 @@ impl Doc {
     fn end_move(&mut self, committed: bool) -> Outcome {
         let Some(Gesture {
             before,
+            before_rev,
             moved,
             kind,
         }) = self.gesture.take()
@@ -945,6 +1012,7 @@ impl Doc {
         }
         if !committed {
             self.label = before;
+            self.rev = before_rev;
             self.bounds = Bounds::of(&self.label);
             return Outcome::plain(Effect::Everything);
         }
@@ -954,7 +1022,7 @@ impl Doc {
             Held::Move => None,
             Held::Resize { id, clamp, .. } => both(clamp, self.render_note(&before, id)),
         };
-        self.push_undo(before);
+        self.push_undo((before, before_rev));
         Outcome {
             effect: Effect::Nothing,
             note,
@@ -965,11 +1033,12 @@ impl Doc {
     fn close_gesture(&mut self) {
         if let Some(Gesture {
             before,
+            before_rev,
             moved: true,
             ..
         }) = self.gesture.take()
         {
-            self.push_undo(before);
+            self.push_undo((before, before_rev));
         }
     }
 
@@ -1037,7 +1106,7 @@ impl Doc {
             f.feed_len,
             f.head_len
         );
-        let before = self.label.clone();
+        let before = (self.label.clone(), self.rev);
         self.label.elements.push(ElementOrRaw::Known(element));
         debug_assert!(
             {
@@ -1056,7 +1125,7 @@ impl Doc {
             "element id {id} was given twice"
         );
         self.push_undo(before);
-        self.dirty = true;
+        self.touch();
         self.selected = Some(id);
         Outcome {
             effect: Effect::Everything,
@@ -1082,10 +1151,10 @@ impl Doc {
             return Outcome::note(Effect::Nothing, format!("{name} is locked"));
         }
         let said = format!("deleted {}; undo brings it back", ins::heading(e));
-        let before = self.label.clone();
+        let before = (self.label.clone(), self.rev);
         self.label.elements.remove(i);
         self.push_undo(before);
-        self.dirty = true;
+        self.touch();
         if self.selected == Some(id) {
             self.selected = None;
         }
@@ -1115,7 +1184,7 @@ impl Doc {
             let name = describe(c.id, &c.name);
             return Outcome::note(Effect::Nothing, format!("{name} is locked"));
         }
-        let before = self.label.clone();
+        let before = (self.label.clone(), self.rev);
         match self.write_frame(id, feed, head) {
             Some(effect) => {
                 self.push_undo(before);
@@ -1147,7 +1216,7 @@ impl Doc {
             return None;
         }
         c.frame = rect;
-        self.dirty = true;
+        self.touch();
         Some(Effect::Row(id))
     }
 
@@ -1166,7 +1235,7 @@ impl Doc {
         } else {
             (&mut self.redo, &mut self.undo)
         };
-        let Some(other) = from.pop() else {
+        let Some((other, other_rev)) = from.pop() else {
             return Outcome::note(
                 Effect::Nothing,
                 if undo {
@@ -1176,9 +1245,9 @@ impl Doc {
                 },
             );
         };
-        to.push(std::mem::replace(&mut self.label, other));
+        to.push((std::mem::replace(&mut self.label, other), self.rev));
+        self.rev = other_rev;
         self.bounds = Bounds::of(&self.label);
-        self.dirty = true;
         // The selected element may be one that does not exist in the restored
         // document: an add undone, or a delete redone.
         if self.selected.is_some_and(|id| self.shown_one(id).is_none()) {
@@ -1188,7 +1257,9 @@ impl Doc {
         // at the pane or listening rather than watching the canvas. The label left
         // behind is the one just pushed.
         let word = if undo { "undo" } else { "redo" };
-        let left = if undo { &self.redo } else { &self.undo }.last();
+        let left = if undo { &self.redo } else { &self.undo }
+            .last()
+            .map(|(l, _)| l);
         let was = left.map(drawable_ids).unwrap_or_default();
         let now = drawable_ids(&self.label);
         let said = |verb: &str, ids: Vec<&ElementId>, label: &Label| match ids.as_slice() {
@@ -1207,7 +1278,11 @@ impl Doc {
         }
     }
 
-    fn push_undo(&mut self, before: Label) {
+    /// Push the state an edit started from, with its revision. A snapshot trimmed
+    /// off the bottom takes its revision with it, so the state it was can never be
+    /// reached again - and if it was the saved one, the document can never read
+    /// clean again by accident.
+    fn push_undo(&mut self, before: (Label, u64)) {
         self.undo.push(before);
         if self.undo.len() > UNDO_DEPTH {
             self.undo.remove(0);
@@ -2566,7 +2641,8 @@ mod tests {
         let mut doc = Doc::open(l, PrintDirection::Left).expect("a printable label");
         let mut restored = label();
         restored.elements.truncate(2);
-        doc.undo.push(restored);
+        // A state the document was never in, so a revision no state has had.
+        doc.undo.push((restored, u64::MAX));
         assert_eq!(
             undo_note(&mut doc).as_deref(),
             Some("undo brought back 2 elements")
@@ -2915,5 +2991,142 @@ mod tests {
                 doc.apply(Cmd::CommitField);
             }
         }
+    }
+
+    fn nudge(doc: &mut Doc) {
+        doc.apply(Cmd::Nudge {
+            id: 1,
+            dx: 1,
+            dy: 0,
+            coarse: false,
+        });
+    }
+
+    /// A drag that was cancelled put everything back, so nothing is left to save.
+    #[test]
+    fn a_cancelled_drag_leaves_the_document_clean() {
+        let mut doc = doc();
+        doc.apply(Cmd::Select(Some(1)));
+        doc.apply(Cmd::BeginMove(1));
+        doc.apply(Cmd::MoveTo { id: 1, x: 40, y: 8 });
+        assert!(doc.dirty(), "mid-drag the label has moved");
+        doc.apply(Cmd::EndMove { committed: false });
+        assert!(!doc.dirty());
+        assert!(!doc.unsaved());
+        assert_eq!(doc.revision(), 0);
+        assert_eq!(frame_of(&doc, 1), frame(8, 8, 40, 24));
+    }
+
+    /// Dirty means "not what was saved": an undo back to the saved state is clean,
+    /// and a redo away from it is not. The state before the save was never saved.
+    #[test]
+    fn undo_back_to_the_saved_revision_is_clean_and_redo_is_not() {
+        let mut doc = doc();
+        nudge(&mut doc);
+        doc.mark_saved();
+        assert!(!doc.dirty());
+        nudge(&mut doc);
+        assert!(doc.dirty());
+        doc.apply(Cmd::Undo);
+        assert!(!doc.dirty());
+        doc.apply(Cmd::Redo);
+        assert!(doc.dirty());
+        doc.apply(Cmd::Undo);
+        doc.apply(Cmd::Undo);
+        assert!(doc.dirty());
+    }
+
+    /// Text typed into a field and not finished is not in the document yet, so the
+    /// document is not dirty; it is still work a close would lose.
+    #[test]
+    fn staged_text_is_unsaved_but_not_yet_dirty() {
+        let mut doc = doc();
+        doc.apply(Cmd::Select(Some(1)));
+        stage(&mut doc, Field::Feed, "37");
+        assert!(!doc.dirty() && doc.unsaved());
+        doc.apply(Cmd::CommitField);
+        assert!(doc.dirty() && doc.unsaved());
+        doc.mark_saved();
+        assert!(!doc.unsaved());
+    }
+
+    /// Each state the document has been in keeps its own revision, through undo and
+    /// redo, and a new edit is never given one an older state had.
+    #[test]
+    fn revisions_travel_with_undo_and_redo() {
+        let mut doc = doc();
+        let r0 = doc.revision();
+        nudge(&mut doc);
+        let r1 = doc.revision();
+        assert_ne!(r1, r0);
+        doc.apply(Cmd::Undo);
+        assert_eq!(doc.revision(), r0);
+        doc.apply(Cmd::Redo);
+        assert_eq!(doc.revision(), r1);
+        doc.apply(Cmd::Undo);
+        nudge(&mut doc);
+        assert!(![r0, r1].contains(&doc.revision()), "{}", doc.revision());
+    }
+
+    /// The snapshot trimmed off the bottom of the stack takes its revision with it,
+    /// so no state reached afterwards can be mistaken for the saved one.
+    #[test]
+    fn a_saved_state_trimmed_off_the_undo_stack_never_reads_clean_again() {
+        let mut doc = doc();
+        doc.mark_saved();
+        for _ in 0..=UNDO_DEPTH {
+            nudge(&mut doc);
+        }
+        for _ in 0..UNDO_DEPTH {
+            doc.apply(Cmd::Undo);
+        }
+        assert!(doc.dirty());
+    }
+
+    /// What the status line says when a label opens: which way round it is, what
+    /// this build cannot draw, and whether it can be saved as it stands.
+    #[test]
+    fn the_opening_note_counts_what_cannot_be_drawn_or_saved() {
+        let mut l = label();
+        l.elements.push(ElementOrRaw::Raw(
+            serde_json::from_str(r#"{"type":"hologram","id":9}"#).expect("json"),
+        ));
+        let doc = Doc::open(l, PrintDirection::Left).expect("a printable label");
+        assert_eq!(
+            doc.opening_note(),
+            doc.orientation_note() + "; 1 element this build cannot draw is kept as it is"
+        );
+
+        let mut l = label();
+        for id in [8, 9] {
+            l.elements.push(ElementOrRaw::Raw(
+                serde_json::json!({ "type": "hologram", "id": id }),
+            ));
+        }
+        let doc = Doc::open(l, PrintDirection::Left).expect("a printable label");
+        assert!(
+            doc.opening_note()
+                .ends_with("; 2 elements this build cannot draw are kept as they are"),
+            "{}",
+            doc.opening_note()
+        );
+
+        let zero = Label::from_json(
+            r#"{"format": "relabel-label", "version": 1,
+                "media": {"feed_tenths_mm": 400, "head_tenths_mm": 120},
+                "canvas": {"feed": 320, "head": 96, "dpmm": {"num": 8, "den": 1}},
+                "elements": [{"type": "text", "id": 3, "text": "x", "size": 0.0,
+                  "frame": {"feed": 8, "head": 8, "feed_len": 40, "head_len": 24}}]}"#,
+        )
+        .expect("a label a save would refuse still loads");
+        let doc = Doc::open(zero, PrintDirection::Left).expect("a printable label");
+        let note = doc.opening_note();
+        assert!(
+            note.contains("; it cannot be saved as it stands: element") && note.contains("size"),
+            "{note}"
+        );
+
+        let doc = self::doc();
+        assert_eq!(doc.opening_note(), doc.orientation_note());
     }
 }

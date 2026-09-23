@@ -1,7 +1,7 @@
 import { Designer, DefaultWindow } from "../shell.slint";
-import { ElRow, InsSlot, Tool, Grips } from "../types.slint";
+import { ElRow, InsSlot, Tool, Grips, SizePreset } from "../types.slint";
 
-export { ElRow, InsSlot, Tool, Grips, DefaultWindow }
+export { ElRow, InsSlot, Tool, Grips, SizePreset, DefaultWindow }
 
 // The application's shell in a window of its own, compiled a second time with
 // debug info so that ElementHandle can see the element tree. It imports the
@@ -41,6 +41,9 @@ export component InsProbe inherits Window {
     out property <int> grip-reach-px <=> shell.grip-reach-px;
     out property <bool> pointer-down <=> shell.pointer-down;
     in property <string> status <=> shell.status;
+    in property <[Tool]> file-tools <=> shell.file-tools;
+    in property <[SizePreset]> new-presets <=> shell.new-presets;
+    in property <string> new-note <=> shell.new-note;
 
     callback select(id: int);
     callback begin-move(id: int);
@@ -65,6 +68,22 @@ export component InsProbe inherits Window {
     callback pan-by(dx: float, dy: float);
     callback pan-to(x: int, y: int);
     callback view-resized();
+    callback file-command(token: int);
+    callback file-of-key(text: string, shift: bool) -> int;
+    // No chord is a file command until Rust says which are. A callback with no
+    // handler answers 0 (i-slint-core callbacks.rs:34-42), which is New's token, so
+    // a window whose files are not wired - most test probes - would take every
+    // Control chord that reaches this far for New, the add chords among them.
+    // `file::wire` replaces this.
+    file-of-key(text, shift) => {
+        return -1;
+    }
+    callback unsaved-reply(answer: int);
+    callback new-feed-edited(text: string);
+    callback new-check(text: string) -> bool;
+    callback new-make(text: string);
+    callback new-preset(token: int);
+    callback new-cancel();
 
     public function show-fields() {
         shell.show-fields();
@@ -73,6 +92,23 @@ export component InsProbe inherits Window {
     public function focus-canvas() {
         shell.focus-canvas();
     }
+
+    public function show-unsaved(question: string) {
+        shell.show-unsaved(question);
+    }
+
+    public function show-new(printer: string, across: string, about: string, feed: string, hint: string) {
+        shell.show-new(printer, across, about, feed, hint);
+    }
+
+    public function close-file-popups() {
+        shell.close-file-popups();
+    }
+
+    // The testing backend ignores a window's title (testing_backend.rs:404-409), so
+    // a test reads this property instead; bound as the application's is.
+    in property <string> doc-title: "relabel";
+    title: root.doc-title;
 
     width: DefaultWindow.width;
     height: DefaultWindow.height;
@@ -106,5 +142,13 @@ export component InsProbe inherits Window {
         pan-by(dx, dy) => { root.pan-by(dx, dy); }
         pan-to(x, y) => { root.pan-to(x, y); }
         view-resized() => { root.view-resized(); }
+        file-command(t) => { root.file-command(t); }
+        file-of-key(t, s) => { return root.file-of-key(t, s); }
+        unsaved-reply(a) => { root.unsaved-reply(a); }
+        new-feed-edited(t) => { root.new-feed-edited(t); }
+        new-check(t) => { return root.new-check(t); }
+        new-make(t) => { root.new-make(t); }
+        new-preset(t) => { root.new-preset(t); }
+        new-cancel() => { root.new-cancel(); }
     }
 }

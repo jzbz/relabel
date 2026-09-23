@@ -57,6 +57,57 @@ fn nothing_a_later_version_wrote_is_lost() {
     assert_eq!(back, twice, "saving twice must be idempotent");
 }
 
+/// Every place inside a nested object where a later version can write a key
+/// this build does not know, each holding one: the ten the document's own
+/// structs would drop, a stranger's element and a top-level key beside them.
+const NESTED: &[&str] = &[
+    "/meta/x_meta",
+    "/meta/authored_for/x_authored_for",
+    "/media/x_media",
+    "/media/shape/x_shape",
+    "/media/tail/x_tail",
+    "/media/fold/x_fold",
+    "/canvas/x_canvas",
+    "/canvas/dpmm/x_dpmm",
+    "/canvas/inset/x_inset",
+    "/elements/0/frame/x_frame",
+    "/elements/1/frame/x_frame_2",
+    "/elements/2",
+    "/x_top",
+];
+
+/// The same promise one level down. The structs inside a label have no
+/// catch-all of their own, so a key a later version wrote inside `media` or an
+/// element's frame is kept beside the label and put back when it is saved -
+/// compared here as JSON values, not as two equally lossy labels.
+#[test]
+fn nested_unknown_keys_survive_a_save() {
+    let text = corpus("nested-unknowns.relabel");
+    let label = Label::from_json(&text).unwrap();
+    let saved = label.to_json().unwrap();
+    let (was, now): (serde_json::Value, serde_json::Value) = (
+        serde_json::from_str(&text).unwrap(),
+        serde_json::from_str(&saved).unwrap(),
+    );
+    for pointer in NESTED {
+        let want = was
+            .pointer(pointer)
+            .unwrap_or_else(|| panic!("{pointer} is not in the fixture"));
+        assert_eq!(
+            now.pointer(pointer),
+            Some(want),
+            "{pointer} was lost on save"
+        );
+    }
+    let back = Label::from_json(&saved).unwrap();
+    assert_eq!(back, label);
+    assert_eq!(
+        back.to_json().unwrap(),
+        saved,
+        "saving twice must be idempotent"
+    );
+}
+
 #[test]
 fn hostile_geometry_neither_panics_nor_wraps() {
     let l = Label::from_json(&corpus("hostile-numbers.relabel")).unwrap();
@@ -79,6 +130,7 @@ fn the_corpus_survives_a_save_and_reload() {
         "hostile-numbers.relabel",
         "images.relabel",
         "variables.relabel",
+        "nested-unknowns.relabel",
     ] {
         let l = Label::from_json(&corpus(name)).unwrap();
         let back = Label::from_json(&l.to_json().unwrap())

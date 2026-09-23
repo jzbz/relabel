@@ -38,7 +38,21 @@ slint = { version = "1.17", default-features = false, features = [
     "accessibility",
     "backend-winit",
     "renderer-software",
+    # Only for Window::window_handle(), which rfd's set_parent takes so a file
+    # dialog belongs to this window. Not unstable-winit-030.
+    "raw-window-handle-06",
 ] }
+# The platform's own file chooser: the xdg-desktop-portal on Linux (so a Flatpak
+# needs no filesystem grant), IFileDialog on Windows, a sheet on macOS - each with
+# the screen-reader support a Slint-drawn browser would have to rebuild. Default
+# features: nothing is compiled from C; on Linux it dlopens libdbus-1 at run time
+# (the library relabel-core links for BlueZ) and runs zenity when there is no
+# portal. gtk3 stays off: nine C -sys crates, and target-lexicon, whose licence
+# deny.toml refuses. Only the async API, inside slint::spawn_local: the sync one
+# blocks the event loop with no timeout (portal/mod.rs:129-144). The API is marked
+# unstable, and 0.17 rewrote the Linux backend: re-read
+# src/backend/xdg_desktop_portal on every bump.
+rfd = "0.17.2"
 
 [dev-dependencies]
 # The whole canvas is tested through this: mock_drag for the gesture and the

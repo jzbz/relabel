@@ -579,13 +579,12 @@ The job engine owns retries, the deadline, the copies/pages fallback for D110-cl
 | `qrcode` | 0.14 | `default-features = false` | Zero transitive dependencies with defaults off. Its defaults pull `image`, `svg`, `pic`, `eps`, none of which we want. |
 | `serde` | 1 | `derive` | The `.relabel` label document. |
 | `serde_json` | 1 | | Document format, and the `devices.json` parse in `build.rs`. |
-| `dirs` | 6 | | Config, saved printers, recent labels. |
-| `rfd` | 0.17 | | File dialogs. Defaults are xdg-portal + wayland + pollster — no GTK, no C on Linux. |
+| `dirs` | 7 | *(deferred)* | Config, saved printers, recent labels. Deferred to the slice that adds settings or recent files: until then a file dialog starts in the current file's folder or at the platform's own default. Take 7.0.0 then, which fixes the Windows `preference_dir` trap RENDER-DESIGN §2.4 records for 6, and admit the MPL-2.0 `option-ext` it brings through `dirs-sys`, which `deny.toml` refuses today. |
+| `rfd` | 0.17.2 | defaults (`xdg-portal`, `wayland`) | File dialogs: the xdg-desktop-portal on Linux, IFileDialog on Windows, a sheet on macOS. Nothing is compiled from C: on Linux it loads libdbus-1 with `dlopen` at run time and runs zenity when there is no portal. `gtk3` stays off, for its nine C `-sys` crates and a licence `deny.toml` refuses. Only the async API, inside `slint::spawn_local`, parented through Slint's `raw-window-handle-06`. |
 | `open` | 5 | | Hands a URL to `xdg-open` / `open`. |
 | `arboard` | 3 | `default-features = false`, `wayland-data-control` | Slint exposes no clipboard API. |
 | `yeslogic-fontconfig-sys` | 6 | `dlopen`, Linux/FreeBSD only | **Not used directly.** Named so feature unification turns `dlopen` on for fontique's copy, which removes the build-time `pkg_config::find_library("fontconfig").unwrap()` from the whole graph. The top-level `slint` crate re-exports no feature that does this, so a direct target-conditional dependency is the only manifest-level route. |
 | `winresource` | 0.1 | Windows build dep | Icon, version info and a DPI-aware manifest in the `.exe`; without it the resource section is empty. |
-| `tempfile` | 3 | dev | |
 | `libfuzzer-sys` / `arbitrary` | — | `fuzz/`, not a workspace member | Decoder fuzzing. |
 
 **No logging crate.** A protocol app's most valuable diagnostic is a hexdump of the last N frames with direction and timestamp, visible *in the app* when a user reports "it acks everything and nothing prints". That is a bounded ring in `Session` rendered by a Protocol Log pane — better than `env_logger` for the actual failure mode, and one fewer dependency.
@@ -598,6 +597,8 @@ The job engine owns retries, the deadline, the copies/pages fallback for D110-cl
 |---|---|---|
 | `libdbus` | `btleplug` → `dbus 0.9` (Linux) | BlueZ is a D-Bus service. `dbus/vendored` builds it from source via `cc` if a pure link is preferred. |
 | `libfontconfig` | `fontique` (Linux) | **Loaded at runtime via `dlopen`**, not linked — see the dependency note above. With no libfontconfig present, system-font enumeration is empty, which is one more reason to embed the label fonts. |
+| `libdbus` | `rfd` (Linux) | **Loaded at runtime via `dlopen`** by the file-chooser portal backend: the same library `btleplug` links, not a second one. |
+| `zenity` | `rfd` (Linux) | An external program, run only when the desktop has no file-chooser portal. With neither, no file dialog opens: a label is opened, or a new one started at a path, from the command line. |
 | `libudev` | avoided | `serialport` with `default-features = false`. |
 | `libwayland` | `winit` | Loaded at runtime on a Wayland session. |
 
@@ -666,7 +667,7 @@ What is connected and what it is doing.
 
 A canvas and an inspector. Deliberately modest: this is a label composer, not Illustrator.
 
-- **Label properties** — a preset picker driven by the model's media list, plus custom mm. Two dimensions labelled **across the head** and **along the feed**, never width/height, with the head-axis one showing its dot count, its rounding to a multiple of 8, and a warning when it exceeds the printhead.
+- **Label properties** — the New label pane, from the File bar or Control+N. Two dimensions labelled **across the head** and **along the feed**, never width/height. Across the head is a read-only readout of the whole print head in millimetres and dots, and stays one while nothing draws media narrower than the head (`Target::require_head`). Along the feed is one millimetre field, to a tenth, showing its dot count and refusing a length past the printer's longest label. The presets are the registry's default label for the model and, where that stock is 12 mm across, the measured 40 × 12 mm roll: `devices.json` has no media list to drive more. The printer is the open label's model, or a D110, said to be assumed, until relabel connects to one; a 300-dpi head that is not whole bytes is not offered.
 - **Canvas** — the full printhead width at 1:1 dots with a zoom, showing the media area and the padding beyond it as distinct tones so the user can see where the paper ends. Snap-to-dot, arrow-key nudge by one dot.
 - **Elements** — Text, Barcode, QR, DataMatrix, Rectangle, Line, added from a toolbar or with Control+Shift and a letter, resized by grips on the element's far edges or by the inspector's lengths, and deleted with Delete, Backspace or a toolbar button; Image arrives with artwork import, since an image without artwork draws nothing. Select on canvas, edit in the inspector.
 - **Inspector** — per type, and the primary keyboard path: every field is a named, announced, arrow-steppable text box, with drag on the canvas as the accelerator. Common to all seven element types: name, feed, head, feed length, head length, rotation in degrees, ink, and a read-only row for the element's state. Text: content (a template), font family, em size in dots, line height, alignment, weight, rasterisation. Barcode: symbology, data, module width in dots, bar height. QR: data, module size in dots, error-correction level, pinned version. DataMatrix: data, module size, symbol size. Image: source path, fit, halftone, threshold. Rectangle: stroke. Line: thickness. The document has no field for human-readable text, a quiet-zone override, a wide:narrow ratio, letter spacing, wrap, vertical alignment or shrink-to-fit, so the inspector offers none: see RENDER-DESIGN §7.4 for what was sketched against what was built. A value this build cannot draw is kept exactly as it was typed and said out loud, because the file format promises to round-trip it; a live validity indicator is the pane that shows preflight's own issues, not this one.

@@ -527,6 +527,21 @@ struct Seen {
     owed: bool,
 }
 
+impl Seen {
+    /// The view before anything has been chosen: the zoom the canvas holds, the
+    /// origin, and the selection as it stands.
+    fn fresh(doc: &Doc, zoom: u32) -> Seen {
+        Seen {
+            choice: Zoom::Fixed(zoom),
+            pan: Pan::default(),
+            last: selected_dots(doc),
+            wheel: Wheel::default(),
+            drift: Drift::default(),
+            owed: false,
+        }
+    }
+}
+
 /// A device-pixel count as the window's `int` properties hold it.
 fn narrow(px: i64) -> i32 {
     px.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
@@ -681,15 +696,15 @@ fn settle<H: ViewHost>(host: &H, c: &mut Canvas<H>, s: &mut Seen) {
 /// view command does nothing but say why while a pointer holds an element: the
 /// drag's grab offset is in dots of the zoom, and against the canvas's place, at the
 /// press.
-pub fn wire<H: ViewHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>, opening: Opening) {
-    let seen = Rc::new(RefCell::new(Seen {
-        choice: Zoom::Fixed(canvas.borrow().zoom()),
-        pan: Pan::default(),
-        last: selected_dots(canvas.borrow().doc()),
-        wheel: Wheel::default(),
-        drift: Drift::default(),
-        owed: false,
-    }));
+///
+/// Returns the view's state, for a caller that puts another document in the
+/// canvas and has to start the view afresh on it; a caller that never does can
+/// drop it.
+pub fn wire<H: ViewHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>, opening: Opening) -> Viewer<H> {
+    let seen = Rc::new(RefCell::new(Seen::fresh(
+        canvas.borrow().doc(),
+        canvas.borrow().zoom(),
+    )));
 
     // Called at the end of every `Canvas::refresh`, after the pane push. Rust sees
     // every way a selection is made or the selected element moves - Tab, an
@@ -912,17 +927,51 @@ pub fn wire<H: ViewHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>, opening: Ope
         });
     }
 
-    let mut c = canvas.borrow_mut();
-    let mut s = seen.borrow_mut();
+    open_at(
+        host,
+        &mut canvas.borrow_mut(),
+        &mut seen.borrow_mut(),
+        opening,
+    );
+    Viewer {
+        canvas: canvas.clone(),
+        seen,
+    }
+}
+
+/// The view's state, as [`wire`] hands it back.
+pub struct Viewer<H: ViewHost> {
+    canvas: Rc<RefCell<Canvas<H>>>,
+    seen: Rc<RefCell<Seen>>,
+}
+
+impl<H: ViewHost> Viewer<H> {
+    /// Start the view afresh on the document the canvas now holds, as it opens:
+    /// fitted, at the origin, with no wheel travel or pan drift carried over and no
+    /// resize owed. A label opened in place of another is a new view of a new
+    /// thing; the old zoom and pan describe a canvas that is gone.
+    ///
+    /// Borrows the canvas and the view's state, so it is called with neither
+    /// borrowed, after `Canvas::replace_doc` has returned.
+    pub fn reopen(&self, host: &H) {
+        let mut c = self.canvas.borrow_mut();
+        let mut s = self.seen.borrow_mut();
+        *s = Seen::fresh(c.doc(), c.zoom());
+        open_at(host, &mut c, &mut s, Opening::Fit);
+    }
+}
+
+/// The view as a document opens in it, at the opening zoom and the origin.
+fn open_at<H: ViewHost>(host: &H, c: &mut Canvas<H>, s: &mut Seen, opening: Opening) {
     match opening {
         Opening::Fit => {
             s.choice = Zoom::Fit;
             let view = view_of(host);
             let z = fit(c.doc().canvas_dots(), (narrow(view.0), narrow(view.1)));
-            let _ = zoom_to(host, &mut c, &mut s, z, Anchor::Origin);
+            let _ = zoom_to(host, c, s, z, Anchor::Origin);
         }
         Opening::At(z) => {
-            let _ = zoom_to(host, &mut c, &mut s, z, Anchor::Origin);
+            let _ = zoom_to(host, c, s, z, Anchor::Origin);
             s.choice = Zoom::Fixed(c.zoom());
         }
     }

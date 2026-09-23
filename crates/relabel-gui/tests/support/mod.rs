@@ -1,16 +1,20 @@
 //! Labels and handles the canvas tests share. Nothing here touches the
-//! toolkit except the two element-tree helpers at the bottom, which are about
-//! one trap each.
+//! toolkit except the element-tree helpers, each about one trap, and the two
+//! choosers the file tests stand in for a file dialog.
 
 // Shared by several test binaries, each of which uses part of it.
 #![allow(dead_code)]
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementQuery};
+use relabel_gui::choose::{Answer, Ask, Chooser, NoDialog, Picked};
 use relabel_render::document::{
     Common, Element, ElementId, ElementOrRaw, Label, RectDots, RectEl, Rot,
 };
 use relabel_render::target::Dpmm;
 use slint::platform::{Key, WindowEvent};
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 
 /// The 40 by 12 mm label at 203 dpi this project measures everything against:
 /// 320 dots along the feed, 96 across the head.
@@ -377,6 +381,106 @@ pub fn grip_of(probe: &impl slint::ComponentHandle, name: &str) -> ElementHandle
         .unwrap_or_else(|| {
             panic!("no grip is called {name:?}; the probe was compiled without debug info")
         })
+}
+
+/// A button, by the name it announces, or `None` when there is none: on a popup
+/// that has closed, say. Only a match that has a description, for [`button_of`]'s
+/// reason.
+pub fn find_button(probe: &impl slint::ComponentHandle, name: &str) -> Option<ElementHandle> {
+    let wanted = name.to_string();
+    ElementQuery::from_root(probe)
+        .match_accessible_role(AccessibleRole::Button)
+        .match_predicate(move |h| {
+            h.accessible_label().is_some_and(|l| l == wanted.as_str())
+                && h.accessible_description().is_some()
+        })
+        .find_first()
+}
+
+/// A group box, by the name it announces - a popup, since Slint has no dialog
+/// role - or `None` when it is not shown. By name, never the first group box: the
+/// inspector pane is one too.
+pub fn group_of(probe: &impl slint::ComponentHandle, label: &str) -> Option<ElementHandle> {
+    let wanted = label.to_string();
+    ElementQuery::from_root(probe)
+        .match_accessible_role(AccessibleRole::Groupbox)
+        .match_predicate(move |h| h.accessible_label().is_some_and(|l| l == wanted.as_str()))
+        .find_first()
+}
+
+/// A directory of the test's own under the build's scratch space, emptied first
+/// so a run never sees what an earlier one left. Never in the source tree.
+pub fn tmp_dir(test: &str) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(test);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).expect("clearing the test's directory");
+    }
+    std::fs::create_dir_all(&dir).expect("making the test's directory");
+    dir
+}
+
+/// A file dialog that answers at once, from a queue, and remembers every question.
+/// Once the queue is empty it answers as a cancelled dialog does.
+#[derive(Default)]
+pub struct Scripted {
+    answers: RefCell<VecDeque<Picked>>,
+    asked: RefCell<Vec<Ask>>,
+}
+
+impl Scripted {
+    pub fn new(answers: impl IntoIterator<Item = Picked>) -> Scripted {
+        Scripted {
+            answers: RefCell::new(answers.into_iter().collect()),
+            asked: RefCell::default(),
+        }
+    }
+
+    /// The next answer, after any already queued.
+    pub fn then(&self, picked: Picked) {
+        self.answers.borrow_mut().push_back(picked);
+    }
+
+    pub fn asked(&self) -> Vec<Ask> {
+        self.asked.borrow().clone()
+    }
+}
+
+impl Chooser for Scripted {
+    fn ask(&self, ask: Ask, answer: Answer) -> Result<(), NoDialog> {
+        self.asked.borrow_mut().push(ask);
+        // Taken before the answer runs, which asks again if the wiring asks again.
+        let picked = self.answers.borrow_mut().pop_front();
+        answer(picked.unwrap_or(Picked::Nothing));
+        Ok(())
+    }
+}
+
+/// A file dialog that stays open until the test answers it, as an operator's does
+/// while they go on editing behind it.
+#[derive(Default)]
+pub struct Held {
+    answer: RefCell<Option<Answer>>,
+    asked: RefCell<Vec<Ask>>,
+}
+
+impl Held {
+    pub fn asked(&self) -> Vec<Ask> {
+        self.asked.borrow().clone()
+    }
+
+    /// Answer the dialog held open.
+    pub fn release(&self, picked: Picked) {
+        let answer = self.answer.borrow_mut().take().expect("a dialog is open");
+        answer(picked);
+    }
+}
+
+impl Chooser for Held {
+    fn ask(&self, ask: Ask, answer: Answer) -> Result<(), NoDialog> {
+        self.asked.borrow_mut().push(ask);
+        *self.answer.borrow_mut() = Some(answer);
+        Ok(())
+    }
 }
 
 /// A toolbar button, by the name it announces.

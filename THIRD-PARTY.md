@@ -120,6 +120,29 @@ tiny-skia's PNG codec is compiled in - the same `png` crate `image` brings. And
 `pico-args`, a command-line parser that resvg and usvg depend on for their own
 binaries, is compiled but never called.
 
+## File dialogs, and the file format's key order
+
+`relabel-gui` opens and saves labels through the platform's own file dialog,
+with `rfd` 0.17.2 on its default features. What that adds differs by platform:
+`rfd` and `pollster` 0.4 on Linux, `rfd` alone on Windows, and `rfd` and
+`dispatch2` 0.3 on macOS. `rfd` is MIT, `pollster` offers MIT in the older
+`Apache-2.0/MIT` spelling, which cargo-about reads as a choice, and `dispatch2`
+offers MIT beside Zlib and Apache-2.0. `rfd` carries two MIT notices, its own
+("Copyright (c) 2022 Bartłomiej Maryńczak") and one for the portal
+window-identifier code it took from ashpd ("Copyright (c) 2020 Bilal
+Elmoussaoui"), which sits deeper than cargo-about looks, so `about.toml` names
+both files. `dispatch2` publishes no licence text anywhere, so it joins the
+crates `packaging/third-party-notices.sh` accepts the canonical text for.
+rfd's `gtk3` feature stays off: it would bring nine C `-sys` crates and
+`target-lexicon`, whose licence `deny.toml` refuses.
+
+`relabel-render` turns on `serde_json`'s `preserve_order`, so the keys a later
+version wrote keep the order the file had them. That links `indexmap` 2.14
+(Apache-2.0 OR MIT), which the build already compiled for a proc-macro but no
+desktop binary linked; its `hashbrown` already ships. It also turns on
+`float_roundtrip`, which links nothing. `cargo deny` passes with `deny.toml`
+unchanged.
+
 ## Arriving with work in progress
 
 - **Slint, for the GUI.** Arrived with `relabel-gui`. Offered as
@@ -219,6 +242,11 @@ system's `libdbus-1` at build time and loads it at run time. It is not built
 into relabel - the crate's `vendored` feature is off - and nothing ships it.
 Should a bundle ever carry it, an AppImage for instance, libdbus's own licence
 applies and belongs here; it has not been reviewed.
+
+On Linux, rfd's file-chooser backend loads `libdbus-1.so.3` with `dlopen` at
+run time - the library btleplug links - and runs the `zenity` program when the
+desktop has no file-chooser portal. Neither is built into relabel or shipped
+with it.
 
 ## Code copied into this repository
 

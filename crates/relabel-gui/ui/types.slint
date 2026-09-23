@@ -105,3 +105,14 @@ export struct Grips {
     room-s: int,
     room-se: int,
 }
+
+// One preset of the New label pane, pushed from `fresh::offers` each time the pane
+// opens: the face, the name an assistive technology announces, and the size in dots
+// it announces as its description. `token` is the length along the feed in tenths
+// of a millimetre, handed straight back in `preset`.
+export struct SizePreset {
+    token: int,
+    text: string,
+    name: string,
+    says: string,
+}

@@ -346,19 +346,23 @@ There is no `DateTime` element and no `Counter` element. Both are *variables* (�
 
 ### 2.4 Where files live
 
-`dirs` 6.0.0, read from source rather than from its docs, because two of its functions do not do what they are documented to do.
+**As built, a label lives wherever the operator puts it.** Open and Save as use the platform's own file dialog (`rfd`), which starts in the current file's folder when there is one and at the platform's own default otherwise; nothing remembers a folder between runs. rfd's zenity fallback, used on Linux where no file-chooser portal runs, passes only the file name and the filter (rfd 0.17.2 `backend/linux/zenity.rs`), so there Open starts at GTK's recent files and Save as in the working directory. The command line is the other route: `relabel label.relabel` opens a label, and `relabel new.relabel`, naming a file that does not exist in a folder that does, starts a new label whose file it is, so Control+S writes it there with no dialog. A path given there is made absolute first, so the dialogs start in its folder whatever the working directory.
+
+**Per-user folders are deferred** to the slice that adds settings or recent files, and so is `dirs`. The table below is the plan for them. Take `dirs` 7.0.0 then, not 6.0.0: 7.0.0 fixes the first of the two traps below and leaves the second as it was. Both are read from source rather than from the docs, because two of 6.0.0's functions do not do what they are documented to do.
 
 | What | Call | Linux | macOS | Windows |
 |---|---|---|---|---|
 | `config.json` | `dirs::config_dir()` | `~/.config/relabel` | `~/Library/Application Support/relabel` | `%APPDATA%\relabel` |
 | Printers, presets, user fonts | `dirs::data_dir()` | `~/.local/share/relabel` | same as config | `%APPDATA%\relabel` |
 | Thumbnails, plane cache | `dirs::cache_dir()` | `~/.cache/relabel` | `~/Library/Caches/relabel` | `%LOCALAPPDATA%\relabel` |
-| `.relabel` documents | see below | `~/Documents/relabel` | same | same |
+| `.relabel` documents | none | the dialog starts in the current file's folder, else the platform's default | same | same |
 
 Two traps, both found by reading:
 
-- **Never call `dirs::preference_dir()`.** Its doc table at `dirs-6.0.0/src/lib.rs:148-158` claims `{FOLDERID_RoamingAppData}` on Windows; `dirs-6.0.0/src/win.rs:13` calls `dirs_sys::known_folder_local_app_data()`. Use `config_dir()`.
-- **`document_dir()` returns `None` on a Linux box without xdg-user-dirs.** `lin.rs:22` is `dirs_sys::user_dir("DOCUMENTS")`, which reads `$XDG_CONFIG_HOME/user-dirs.dirs` through `read_all(..).unwrap_or(Vec::new())` and then removes from an empty map. Containers and minimal installs hit this.
+- **Never call `dirs::preference_dir()` from 6.0.0.** Its doc table at `dirs-6.0.0/src/lib.rs:148-158` claims `{FOLDERID_RoamingAppData}` on Windows; `dirs-6.0.0/src/win.rs:13` calls `dirs_sys::known_folder_local_app_data()`. `dirs-7.0.0/src/win.rs:13` calls the roaming one, as documented. Use `config_dir()` either way.
+- **`document_dir()` returns `None` on a Linux box without xdg-user-dirs**, in 6.0.0 and 7.0.0 alike. `lin.rs:20` is `dirs_sys::user_dir("DOCUMENTS")`, which reads `$XDG_CONFIG_HOME/user-dirs.dirs` through `read_all(..).unwrap_or(Vec::new())` and then removes from an empty map. Containers and minimal installs hit this.
+
+A default label folder, when it arrives, is only where a dialog starts, never a mandatory location, and the portal may ignore it:
 
 ```rust
 fn default_label_dir() -> PathBuf {
@@ -369,19 +373,28 @@ fn default_label_dir() -> PathBuf {
 }
 ```
 
-and that is a *default offered in the file dialog*, never a mandatory location. Every `dirs` function returns `Option<PathBuf>` and `dirs-sys-0.5.0/src` contains no `unwrap`, `expect` or `panic!`.
+Every `dirs` function returns `Option<PathBuf>` and `dirs-sys-0.5.0/src` contains no `unwrap`, `expect` or `panic!`.
 
-Saves are atomic: temp file **in the destination directory**, then rename, so the rename stays on one filesystem. That promotes `tempfile` from a dev-dependency to a real one for the GUI. A label editor that corrupts a file on a crash mid-save is unforgivable and the fix is fifteen lines.
+**A save replaces the file whole or not at all, with std alone** (`relabel-gui` `disk.rs`, in rpgp's `write_staged` shape). The label is written to `NAME.part` beside the target, so the rename stays on one filesystem, opened with `create_new` so it is always a file this save made; a `.part` already there, another program's or an earlier save's, is stepped round as `NAME (1).part` and on, never removed. The staging file is then renamed onto the target: rename(2) on Unix, MoveFileExW with MOVEFILE_REPLACE_EXISTING on Windows, each of which replaces the target in one step. A label `Label::writable` refuses writes nothing, and is refused before a dialog opens. The old file's permission bits are copied, so a label kept at 0640 stays 0640. A symbolic link is followed, so the link stays a link and the file it points at is replaced; a link that points nowhere is refused by name. A read-only file is refused rather than replaced - "it is read-only; Save as saves a copy" - although the rename would succeed in a folder the operator can write to. That is read-only by its mode bits, or to this operator: a regular file is also opened for writing, without truncating, and a refusal is taken as read-only, so a colleague's 0644 label in a folder shared with a group is not renamed over when no editor could have written it. The staging file is removed on every way out, a panic included, so only a process that ends without unwinding leaves one behind. `sync_all` is called and its error ignored. rpgp does not sync an output at all, because on macOS `sync_all` is F_FULLFSYNC, which fails outright on SMB, FAT and exFAT volumes and would turn a good output there into a reported failure. A save here replaces the only copy of the operator's work, so the sync is worth having where it works, and where it fails it says nothing about the bytes just written, which the last write already checked for a full disk. The folder is not synced, so a power cut just after a save can bring back the file as it was before. What the rename costs: the file is a new one, so a hard link to the old one keeps the old text, and extended attributes and ACLs are not carried over. Two windows saving one file at once each write their own part file, and the later rename wins. A read is capped at 64 MiB, drops one leading byte order mark, and requires UTF-8. None of this needs `tempfile`, which the plan had promoted from a dev-dependency: `File::create_new` and `std::path::absolute` are in std at the workspace's rust-version, 1.92. A clean document whose file exists is not written again, so a hand-written file that has not been touched is never re-serialised.
 
-For `THIRD-PARTY.md`: `dirs` 6 and `dirs-sys` 0.5 are MIT OR Apache-2.0, but `dirs-sys` depends on **`option-ext` 0.2.0, which is MPL-2.0** — file-level copyleft, fine to link from MIT, and the same class as `serialport`. Both are listed in `THIRD-PARTY.md` against the day they enter the graph.
+**With no file dialog.** On Linux, rfd asks the xdg-desktop-portal over D-Bus, loading libdbus-1 with `dlopen` at run time, and runs zenity when there is no portal. With neither it answers "nothing chosen" within a couple of milliseconds, exactly as it does for a cancel, so an empty answer within 150 ms (`choose::NO_DIALOG_WITHIN`) is taken as no dialog at all and said so - "no file dialog could be shown here (it needs a file-chooser portal or zenity)" - with the command-line route that still works, while a slower one is a cancel: "no file was chosen". The heuristic only chooses the words; neither answer touches the document.
+
+**Known gaps.** The question about unsaved work stands in front of every close the window is asked for: its close button, Alt+F4, and anything else the platform turns into a close request. It does not stand in front of these, none of which raises one, and there is no autosave, so unsaved work is lost on each:
+
+- **Command+Q on macOS.** The winit backend installs an application menu whose Quit item (i-slint-backend-winit `muda.rs:393-413`) sends `terminate:`, and winit answers that by exiting (`winit-0.30.13/src/platform_impl/macos/app_state.rs:166-171`). Turning the menu off takes a direct dependency on the winit backend for `with_default_menu_bar(false)`; recorded as a gap instead, and read from source rather than run.
+- **Windows logoff and shutdown.** winit 0.30.13 handles no `WM_QUERYENDSESSION`.
+- **SIGTERM**, which nothing handles.
+- **A crash.**
+
+For `THIRD-PARTY.md`: `dirs` 6 and 7 and `dirs-sys` 0.5 are MIT OR Apache-2.0, but `dirs-sys` depends on **`option-ext` 0.2.0, which is MPL-2.0** — file-level copyleft, fine to link from MIT, and the same class as `serialport`. Both are listed in `THIRD-PARTY.md` against the day they enter the graph, and `deny.toml` refuses MPL-2.0 until then.
 
 ### 2.5 Serialisation and evolution
 
-One pretty-printed JSON file, extension `.relabel`, LF endings, trailing newline, so labels diff in git. `serde_json`'s `Map` is a `BTreeMap` unless `preserve_order` is on, so key order is deterministic with the default features already in the workspace.
+One pretty-printed JSON file, extension `.relabel`, LF endings, trailing newline, so labels diff in git. `relabel-render` turns on `serde_json`'s `preserve_order`, so every `Map` is an `IndexMap` in the order the file had it: a `Raw` element's keys are written as the file had them, and the unknown keys a label carries, at the top level and inside nested objects, are written in the order the file had them, after the keys this build writes, rather than sorted. A struct's own keys are written in field order either way, so a label with nothing unknown in it saves exactly as it did before, and key order is still deterministic. It also turns on `float_roundtrip`: a number a later version wrote, in an unknown key or a `Raw` element, is held as an `f64` and written back, and the default parser is not correctly rounded at extreme exponents, so 1.0715660391465826e-75 came back one step away on the first save. Correct rounding costs about twice the parse time of a float; the geometry is integers (§2.1) and never depended on it. Both features unify into every `serde_json` linked into a binary, `relabel-cli`'s and the GUI's; the host copy that build scripts and proc-macros use, for `relabel-proto`'s build script and Slint's `i-slint-core-macros`, stays apart under resolver 3, without either.
 
 The evolution rules, in order of how much damage breaking them does:
 
-1. **Never `deny_unknown_fields`.** A v1 build that round-trips a file written by a v1.3 build must not silently delete the fields it did not recognise. `#[serde(flatten)] unknown: Map<String, Value>` on `Label` is what preserves them.
+1. **Never `deny_unknown_fields`.** A v1 build that round-trips a file written by a v1.3 build must not silently delete the fields it did not recognise. `#[serde(flatten)] unknown: Map<String, Value>` on `Label`, and on every element, is what preserves them at the top level. The nested objects - `meta` and its `authored_for`, `media` and its `shape`, `tail` and `fold`, `canvas` and its `dpmm` and `inset`, and every element's frame, ten places in all - have no catch-all of their own, so `Label::from_json` reads their unknown keys out of the raw `Value` before deserialising drops them, into a private record beside the label, judged against a fixed list of the keys each struct writes; a unit test pins every list to what its struct actually writes, so a field added later cannot be taken for a stranger. A shape's list follows its kind: only a rounded rectangle has a `radius`, so on a rectangle or a circle one is a stranger's key and is kept. `to_json` uses the plain serialiser unless that record has somewhere to go; then it reads the serialiser's own text back into a `Value`, puts the keys back after the struct's own and never over one, and pretty-prints. Read back rather than built with `to_value`, which would write a size of 12.1 as 12.100000381469727: measured over 76 million `f32`s with `float_roundtrip` on, every value from 1e-5 to 1e13 comes back as the same text, and outside that range only the notation changes - 0.000001 comes back as 1e-6 - never the value. A place the label no longer has - a tail set to none, a deleted element, a shape replaced by an unknown kind - takes its keys with it. Two labels compare equal when everything a save would write is equal. The frozen fixture `tests/corpus/v1/nested-unknowns.relabel` carries an object-valued unknown key at all ten places, and a save keeps every one.
 2. **Unknown element types need a different mechanism, and `#[serde(other)]` is not it.** `serde_derive-1.0.229/src/internals/check.rs:187` errors with `"#[serde(other)] must be on a unit variant"`, `:178` with `"must be on the last variant"`, and `:169` with `"cannot appear on untagged enum"`. It can only discard the payload. The `#[serde(untagged)] ElementOrRaw` above is the only shape that carries a future element through a round-trip. Validate that a `Raw` at least has a string `"type"` key, because untagged enums otherwise give useless error messages on genuinely corrupt input.
 3. **`version` is a major number.** Additive fields get `#[serde(default)]` and do not bump it. `fn migrate(version: u32, raw: Value) -> Result<Value, LoadError>` is a chain, and `tests/corpus/v1/*.relabel` fixtures are never deleted. That corpus is what actually keeps saved files working; the migration function is just the code that reads it.
 4. **No `uuid`.** The file path is the identity. `uuid` 1.26.0 is already in `Cargo.lock` via btleplug but *without* `v4` (`v4 = ["rng"]`, `rng = ["dep:getrandom"]`), so document ids would drag `getrandom` in for nothing. niimblue needs an id because it keys browser `localStorage`; a file-based app does not. An imported niimblue `id` is kept as an opaque round-trip string.
@@ -1401,16 +1414,15 @@ qrcode = { version = "0.14.1", default-features = false }
 # THIRD-PARTY.md: its flagset dependency is Apache-2.0 ONLY, not dual.
 datamatrix = "0.3"
 
-# Config, saved printers, recent labels, the learned roll catalogue. NOTE for
-# THIRD-PARTY.md: dirs-sys pulls option-ext 0.2.0, which is MPL-2.0 - the same
-# weak-copyleft class as serialport, and listed there beside it.
-dirs = "6"
-
-# Atomic saves: temp file in the destination directory, then rename. Promoted
-# from dev-dependency; a label editor that corrupts a file on a crash mid-save
-# is unforgivable and the fix is fifteen lines.
-tempfile = "3"
+# Config, saved printers, recent labels, the learned roll catalogue. Deferred
+# to the slice that adds settings or recent files, and 7 rather than 6 then
+# (section 2.4). NOTE for THIRD-PARTY.md: dirs-sys pulls option-ext 0.2.0,
+# which is MPL-2.0 - the same weak-copyleft class as serialport, and listed
+# there beside it.
+dirs = "7"
 ```
+
+No `tempfile`: the atomic save is std alone (section 2.4).
 
 ### 8.1 Versions that must diverge, and what it costs
 

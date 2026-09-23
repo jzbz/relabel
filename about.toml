@@ -137,6 +137,20 @@ path = "COPYING"
 license = "MIT"
 checksum = "c962ee4d1d05ddc138b202b2540219ebc57893fcf97b364852094a9a94ce1365"
 
+# rfd carries a second MIT notice, for the portal window-identifier code taken
+# from ashpd, four directories down where max-depth = 2 does not reach. Both
+# files are named so both copyright lines are reproduced.
+[rfd.clarify]
+license = "MIT"
+[[rfd.clarify.files]]
+path = "LICENSE"
+license = "MIT"
+checksum = "65fc947f4bac882a2cd104ef73c246b1b037059df9f2b3a58b7f77f0b9e56071"
+[[rfd.clarify.files]]
+path = "src/backend/xdg_desktop_portal/window_identifier/LICENSE"
+license = "MIT"
+checksum = "ae26bc7b1bc91fb8648f6a298decbb1a77090a56c9d04e2c23b8365e5f54acb5"
+
 # The windows-rs crates ship `license-mit` and `license-apache-2.0`, names
 # cargo-about's file walker never visits, so each is named explicitly.
 [windows.clarify]

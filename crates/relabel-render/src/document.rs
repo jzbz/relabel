@@ -18,9 +18,12 @@
 //! # Forward compatibility is a feature, not an accident
 //!
 //! A build that opens a file written by a later version must give it back
-//! unharmed. Two mechanisms do that, and both are load-bearing: unknown
-//! top-level keys are captured by a flattened map rather than rejected, and
-//! unknown *element types* survive as [`ElementOrRaw::Raw`]. The obvious
+//! unharmed. Three mechanisms do that, and all are load-bearing: unknown
+//! top-level keys, and unknown keys on an element, are captured by a flattened
+//! map rather than rejected; unknown *element types* survive as
+//! [`ElementOrRaw::Raw`]; and unknown keys inside the nested objects - `meta`,
+//! `media`, `canvas` and the pieces of each, and every element's frame - are
+//! kept beside the label and put back when it is saved. The obvious
 //! `#[serde(other)]` cannot do the second job - it is only allowed on a unit
 //! variant, so it discards the payload it was supposed to preserve.
 
@@ -28,6 +31,7 @@ use crate::halftone::Halftone;
 use crate::target::Dpmm;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 
 /// The file's own name for itself, checked before anything else is parsed.
 pub const FORMAT_TAG: &str = "relabel-label";
@@ -830,7 +834,10 @@ impl ElementOrRaw {
 }
 
 /// A whole label.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+///
+/// Two labels are equal when everything a save would write is equal; see the
+/// `PartialEq` impl.
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Label {
     /// Checked before anything else, so foreign JSON fails at the first field
     /// rather than after a confusing partial parse.
@@ -852,6 +859,240 @@ pub struct Label {
     /// worse than not understanding it.
     #[serde(flatten)]
     pub unknown: Map<String, Value>,
+    /// The same, for the objects nested inside the label, whose structs have
+    /// no catch-all of their own. Private, and filled only by
+    /// [`from_json`](Label::from_json): what it holds is a later version's,
+    /// and nothing here has any business editing it.
+    #[serde(skip)]
+    strangers: Strangers,
+}
+
+/// Equal when everything a save writes is equal. A nested stranger counts only
+/// where the save would put it back, so a label that lost an element or its
+/// tail compares equal to the one its save reloads as, although it still
+/// holds the strangers that went with them.
+impl PartialEq for Label {
+    fn eq(&self, other: &Label) -> bool {
+        // Destructured, so a field added later cannot be left out of the
+        // comparison without the compiler saying so.
+        let Label {
+            format,
+            version,
+            meta,
+            media,
+            canvas,
+            elements,
+            repeat,
+            data,
+            unknown,
+            strangers: _,
+        } = self;
+        *format == other.format
+            && *version == other.version
+            && *meta == other.meta
+            && *media == other.media
+            && *canvas == other.canvas
+            && *elements == other.elements
+            && *repeat == other.repeat
+            && *data == other.data
+            && *unknown == other.unknown
+            && self.strangers.live(self).eq(other.strangers.live(other))
+    }
+}
+
+/// A place inside a label where a later version can write a key that the
+/// struct this build reads it into has nowhere to keep.
+///
+/// Declared children first, which is the order they are put back in: an
+/// object that is written whole only because it carries a stranger - a zero
+/// inset, a plain rectangular shape - then lands among its parent's own keys,
+/// ahead of the parent's strangers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Place {
+    AuthoredFor,
+    Meta,
+    Shape,
+    Tail,
+    Fold,
+    Media,
+    Dpmm,
+    Inset,
+    Canvas,
+    /// An element's frame, by the element's id. Only a known element's: a
+    /// stranger's element is kept whole as [`ElementOrRaw::Raw`].
+    Frame(ElementId),
+}
+
+/// The keys each nested struct writes when every field is present, so a key
+/// outside its list is a stranger's and one inside it never is - even where
+/// the struct leaves it out of a save, as a zero inset, a rectangle or an
+/// empty title are. A unit test pins each list to what its struct writes.
+const META_KEYS: &[&str] = &["title", "created", "modified", "app", "authored_for"];
+const AUTHORED_FOR_KEYS: &[&str] = &["model", "head_px", "dpi"];
+const MEDIA_KEYS: &[&str] = &["feed_tenths_mm", "head_tenths_mm", "shape", "tail", "fold"];
+/// A rectangle's or a circle's keys. Only a rounded rectangle has a radius, so
+/// on either of the others `radius` is a stranger's key like any other.
+const SHAPE_KEYS: &[&str] = &["kind"];
+const ROUNDED_RECT_KEYS: &[&str] = &["kind", "radius"];
+const TAIL_KEYS: &[&str] = &["at_start", "len_dots", "axis"];
+const FOLD_KEYS: &[&str] = &["at_dots", "parts", "axis"];
+const CANVAS_KEYS: &[&str] = &["feed", "head", "dpmm", "inset"];
+const DPMM_KEYS: &[&str] = &["num", "den"];
+const INSET_KEYS: &[&str] = &["feed_start", "feed_end", "head_start", "head_end"];
+/// An element's frame, a [`RectDots`].
+const FRAME_KEYS: &[&str] = &["feed", "head", "feed_len", "head_len"];
+
+impl Place {
+    /// The keys this place's struct knows, for `object` as the file wrote it: a
+    /// shape's depend on its kind.
+    fn known(self, object: &Map<String, Value>) -> &'static [&'static str] {
+        match self {
+            Place::AuthoredFor => AUTHORED_FOR_KEYS,
+            Place::Meta => META_KEYS,
+            Place::Shape => match object.get("kind").and_then(Value::as_str) {
+                Some("rounded_rect") => ROUNDED_RECT_KEYS,
+                _ => SHAPE_KEYS,
+            },
+            Place::Tail => TAIL_KEYS,
+            Place::Fold => FOLD_KEYS,
+            Place::Media => MEDIA_KEYS,
+            Place::Dpmm => DPMM_KEYS,
+            Place::Inset => INSET_KEYS,
+            Place::Canvas => CANVAS_KEYS,
+            Place::Frame(_) => FRAME_KEYS,
+        }
+    }
+
+    /// Whether the label still has this place to write. A tail set to `None`,
+    /// a deleted element or a shape replaced by a stranger's takes its
+    /// strangers with it.
+    fn holds(self, label: &Label) -> bool {
+        match self {
+            Place::AuthoredFor => label.meta.authored_for.is_some(),
+            Place::Shape => matches!(label.media.shape, MediaShape::Known(_)),
+            Place::Tail => label.media.tail.is_some(),
+            Place::Fold => label.media.fold.is_some(),
+            Place::Frame(id) => label.index_of(id).is_some(),
+            Place::Meta | Place::Media | Place::Dpmm | Place::Inset | Place::Canvas => true,
+        }
+    }
+
+    /// This place's object in the plain serialiser's output for `label`. A
+    /// zero inset and a rectangular shape are left out of that output, so one
+    /// that carries a stranger is written in whole here.
+    fn object_in<'v>(self, label: &Label, v: &'v mut Value) -> Option<&'v mut Map<String, Value>> {
+        let found = match self {
+            Place::Meta => v.get_mut("meta"),
+            Place::AuthoredFor => v.get_mut("meta")?.get_mut("authored_for"),
+            Place::Media => v.get_mut("media"),
+            Place::Shape => {
+                let MediaShape::Known(shape) = &label.media.shape else {
+                    return None;
+                };
+                let whole = serde_json::to_value(shape).ok()?;
+                let media = v.get_mut("media")?.as_object_mut()?;
+                Some(media.entry("shape").or_insert(whole))
+            }
+            Place::Tail => v.get_mut("media")?.get_mut("tail"),
+            Place::Fold => v.get_mut("media")?.get_mut("fold"),
+            Place::Canvas => v.get_mut("canvas"),
+            Place::Dpmm => v.get_mut("canvas")?.get_mut("dpmm"),
+            Place::Inset => {
+                let whole = serde_json::to_value(label.canvas.inset).ok()?;
+                let canvas = v.get_mut("canvas")?.as_object_mut()?;
+                Some(canvas.entry("inset").or_insert(whole))
+            }
+            Place::Frame(id) => v
+                .get_mut("elements")?
+                .get_mut(label.index_of(id)?)?
+                .get_mut("frame"),
+        };
+        found?.as_object_mut()
+    }
+}
+
+/// The keys a later version wrote inside the label's nested objects, by the
+/// place each was found.
+#[derive(Clone, Debug, Default)]
+struct Strangers(BTreeMap<Place, Map<String, Value>>);
+
+impl Strangers {
+    /// Read from the document before it is deserialised, which drops them.
+    fn of(raw: &Value) -> Strangers {
+        let meta = raw.get("meta");
+        let media = raw.get("media");
+        let canvas = raw.get("canvas");
+        let shape = media.and_then(|m| m.get("shape"));
+        // A shape of a kind this build does not know is kept whole already,
+        // by MediaShape::Unknown.
+        let shape = shape.filter(|s| {
+            s.get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|k| KNOWN_SHAPE_KINDS.contains(&k))
+        });
+        let mut places = vec![
+            (Place::AuthoredFor, meta.and_then(|m| m.get("authored_for"))),
+            (Place::Meta, meta),
+            (Place::Shape, shape),
+            (Place::Tail, media.and_then(|m| m.get("tail"))),
+            (Place::Fold, media.and_then(|m| m.get("fold"))),
+            (Place::Media, media),
+            (Place::Dpmm, canvas.and_then(|c| c.get("dpmm"))),
+            (Place::Inset, canvas.and_then(|c| c.get("inset"))),
+            (Place::Canvas, canvas),
+        ];
+        let elements = raw.get("elements").and_then(Value::as_array);
+        for el in elements.into_iter().flatten() {
+            let known = el
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|k| KNOWN_KINDS.contains(&k));
+            let id = el.get("id").and_then(Value::as_u64);
+            if let (true, Some(Ok(id))) = (known, id.map(ElementId::try_from)) {
+                places.push((Place::Frame(id), el.get("frame")));
+            }
+        }
+        let mut found = BTreeMap::new();
+        for (place, object) in places {
+            let Some(object) = object.and_then(Value::as_object) else {
+                continue;
+            };
+            let theirs: Map<String, Value> = object
+                .iter()
+                .filter(|(k, _)| !place.known(object).contains(&k.as_str()))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            if !theirs.is_empty() {
+                found.insert(place, theirs);
+            }
+        }
+        Strangers(found)
+    }
+
+    /// The strangers a save of `label` puts back, in the order it puts them.
+    fn live<'a>(
+        &'a self,
+        label: &'a Label,
+    ) -> impl Iterator<Item = (Place, &'a Map<String, Value>)> + 'a {
+        self.0
+            .iter()
+            .filter(|(place, _)| place.holds(label))
+            .map(|(place, keys)| (*place, keys))
+    }
+
+    /// Put the strangers back into the plain serialiser's output for `label`,
+    /// after the keys its struct wrote and never over one of them.
+    fn graft(&self, label: &Label, v: &mut Value) {
+        for (place, keys) in self.live(label) {
+            // Every place that holds is in that output, or is made there.
+            let Some(object) = place.object_in(label, v) else {
+                continue;
+            };
+            for (k, x) in keys {
+                object.entry(k.clone()).or_insert_with(|| x.clone());
+            }
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1024,6 +1265,7 @@ impl Label {
             repeat: Repeat::None,
             data: None,
             unknown: Map::new(),
+            strangers: Strangers::default(),
         }
     }
 
@@ -1061,7 +1303,10 @@ impl Label {
         }
 
         let raw = migrate(version as u32, raw)?;
-        let label: Label = serde_json::from_value(raw)?;
+        // Before deserialising, which consumes the value and drops them.
+        let strangers = Strangers::of(&raw);
+        let mut label: Label = serde_json::from_value(raw)?;
+        label.strangers = strangers;
         // An untagged enum will happily accept any object as `Raw`, so a
         // corrupt element would otherwise become a silent placeholder.
         if label.elements.iter().any(|e| e.kind().is_none()) {
@@ -1115,15 +1360,37 @@ impl Label {
     /// Refuses rather than writing a file this same build could not read back.
     /// That is the worst outcome the format has, so it is checked here even
     /// though it means `to_json` can fail for reasons other than I/O.
+    ///
+    /// A label with no nested strangers is the plain serialiser's text. One
+    /// with them is that text read back into a [`Value`], grafted and written
+    /// again. Read back, not built with `to_value`: a `Value` built from the
+    /// label holds each `f32` as the `f64` it widens to (serde_json-1.0.151
+    /// number.rs:323-335) and writes a size of 12.1 as 12.100000381469727,
+    /// where one read from text holds the shortest digits the serialiser
+    /// chose, and both widths go through one shortest-digits formatter
+    /// (ser.rs:1691-1723). Measured over 76 million `f32`s with
+    /// `float_roundtrip` on, every one from 1e-5 to 1e13 - every size and line
+    /// height a label uses - comes back as the same text; outside that range
+    /// only the notation can change (1e-6 for 0.000001), never the value. The
+    /// `preserve_order` feature keeps the document's key order through that
+    /// `Value`.
     pub fn to_json(&self) -> Result<String, LoadError> {
-        self.check_writable()?;
+        self.writable()?;
         let mut s = serde_json::to_string_pretty(self)?;
+        if self.strangers.live(self).next().is_some() {
+            let mut v: Value = serde_json::from_str(&s)?;
+            self.strangers.graft(self, &mut v);
+            s = serde_json::to_string_pretty(&v)?;
+        }
         s.push('\n');
         Ok(s)
     }
 
-    /// Everything that would produce an unloadable file.
-    fn check_writable(&self) -> Result<(), LoadError> {
+    /// Why [`to_json`](Label::to_json) would refuse this label, if it would:
+    /// everything that would produce an unloadable file. An editor asks before
+    /// it opens a save dialog, and says so when a label that will not save
+    /// is opened.
+    pub fn writable(&self) -> Result<(), LoadError> {
         // A key in an escape-hatch map that collides with a real field emits
         // that key twice, and the reload fails on the duplicate. Not reachable
         // by deserialising - serde consumes known names first - but entirely
@@ -1183,5 +1450,112 @@ impl Label {
             ElementOrRaw::Raw(v) => v.get("type").and_then(Value::as_str),
             ElementOrRaw::Known(_) => None,
         })
+    }
+
+    /// Where the known element with this id sits in `elements`.
+    fn index_of(&self, id: ElementId) -> Option<usize> {
+        self.elements
+            .iter()
+            .position(|e| e.known().is_some_and(|e| e.common().id == id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The keys a value writes, sorted.
+    fn written(v: impl Serialize) -> Vec<String> {
+        let v = serde_json::to_value(v).unwrap();
+        let mut keys: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        keys.sort_unstable();
+        keys
+    }
+
+    fn sorted(list: &[&str]) -> Vec<String> {
+        let mut keys: Vec<String> = list.iter().map(|k| k.to_string()).collect();
+        keys.sort_unstable();
+        keys
+    }
+
+    /// Each list is exactly what its struct writes with every field present,
+    /// so a field added to a struct and not to its list fails here, rather
+    /// than being taken for a stranger's and written twice.
+    #[test]
+    fn every_nested_known_key_list_is_what_its_struct_writes() {
+        let authored_for = AuthoredFor {
+            model: Some("D110".into()),
+            head_px: 96,
+            dpi: 203,
+        };
+        let meta = Meta {
+            title: "t".into(),
+            created: Some("c".into()),
+            modified: Some("m".into()),
+            app: Some("a".into()),
+            authored_for: Some(authored_for.clone()),
+        };
+        let tail = Tail {
+            at_start: true,
+            len_dots: 40,
+            axis: Axis::Head,
+        };
+        let fold = Fold {
+            at_dots: 180,
+            parts: 2,
+            axis: Axis::Head,
+        };
+        let shape = KnownShape::RoundedRect { radius: 8 };
+        let media = Media {
+            feed_tenths_mm: 400,
+            head_tenths_mm: 120,
+            shape: MediaShape::Known(shape),
+            tail: Some(tail.clone()),
+            fold: Some(fold.clone()),
+        };
+        let inset = Insets {
+            feed_start: 1,
+            feed_end: 2,
+            head_start: 3,
+            head_end: 4,
+        };
+        let canvas = Canvas {
+            feed: 320,
+            head: 96,
+            dpmm: Dpmm::DPI_203,
+            inset,
+        };
+        let frame = RectDots {
+            feed: 1,
+            head: 2,
+            feed_len: 3,
+            head_len: 4,
+        };
+        for (what, keys, list) in [
+            ("meta", written(&meta), META_KEYS),
+            ("authored_for", written(&authored_for), AUTHORED_FOR_KEYS),
+            ("media", written(&media), MEDIA_KEYS),
+            ("shape", written(shape), ROUNDED_RECT_KEYS),
+            ("tail", written(&tail), TAIL_KEYS),
+            ("fold", written(&fold), FOLD_KEYS),
+            ("canvas", written(canvas), CANVAS_KEYS),
+            ("dpmm", written(Dpmm::DPI_203), DPMM_KEYS),
+            ("inset", written(inset), INSET_KEYS),
+            ("frame", written(frame), FRAME_KEYS),
+        ] {
+            assert_eq!(keys, sorted(list), "{what}");
+        }
+        // Each shape's list is the one its kind picks, read the way `of` reads
+        // it: from the object as written.
+        for other in [KnownShape::Rect, KnownShape::Circle, shape] {
+            let Value::Object(object) = serde_json::to_value(other).unwrap() else {
+                unreachable!("a shape is written as an object");
+            };
+            assert_eq!(
+                written(other),
+                sorted(Place::Shape.known(&object)),
+                "{other:?}"
+            );
+        }
     }
 }

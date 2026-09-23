@@ -1,13 +1,10 @@
-//! The window, from a path on the command line. A file dialog is the next
-//! slice; an argument is testable and needs no fourth dependency.
+//! The window, on the label named on the command line or on a new one; files are
+//! opened and saved through the platform's own dialog (choose.rs).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() -> std::process::ExitCode {
-    let Some(path) = std::env::args_os().nth(1) else {
-        eprintln!("usage: relabel <label.json>");
-        return std::process::ExitCode::FAILURE;
-    };
-    match relabel_gui::run_app(std::path::Path::new(&path)) {
+    let path = std::env::args_os().nth(1).map(std::path::PathBuf::from);
+    match relabel_gui::run_app(path.as_deref()) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("relabel: {e}");

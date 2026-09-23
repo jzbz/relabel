@@ -87,6 +87,7 @@ no_text='block2|objc2|objc2-encode|objc2-foundation|objc2-core-bluetooth'
 no_text="$no_text|objc-sys|objc2-app-kit|objc2-cloud-kit|objc2-core-data"
 no_text="$no_text|objc2-core-foundation|objc2-core-graphics|objc2-core-image"
 no_text="$no_text|objc2-core-text|objc2-core-video|objc2-quartz-core|dispatch"
+no_text="$no_text|dispatch2"
 no_text="$no_text|accesskit|accesskit_atspi_common|accesskit_consumer"
 no_text="$no_text|accesskit_macos|accesskit_unix|accesskit_windows|accesskit_winit"
 no_text="$no_text|lyon_algorithms|lyon_extra|lyon_geom|lyon_path"

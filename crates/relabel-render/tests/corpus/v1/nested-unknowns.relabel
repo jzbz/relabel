@@ -1,0 +1,30 @@
+{
+  "format": "relabel-label",
+  "version": 1,
+  "meta": {
+    "title": "corpus: keys a later version wrote inside nested objects",
+    "authored_for": { "model": "D110", "head_px": 96, "dpi": 203, "x_authored_for": { "firmware": "5.14" } },
+    "x_meta": { "workspace": "shelf tags", "tags": ["aisle 4"] }
+  },
+  "media": {
+    "feed_tenths_mm": 400,
+    "head_tenths_mm": 120,
+    "shape": { "kind": "rounded_rect", "radius": 8, "x_shape": { "corners": [8, 8, 0, 0] } },
+    "tail": { "at_start": true, "len_dots": 40, "x_tail": { "adhesive": false } },
+    "fold": { "at_dots": 180, "parts": 2, "x_fold": { "perforated": true } },
+    "x_media": { "stock": "a roll from 2027", "gsm": 80.5 }
+  },
+  "canvas": {
+    "feed": 320,
+    "head": 96,
+    "dpmm": { "num": 8, "den": 1, "x_dpmm": { "measured": 7.98 } },
+    "inset": { "feed_start": 0, "feed_end": 0, "head_start": 0, "head_end": 0, "x_inset": { "from": "blind zones" } },
+    "x_canvas": { "grid_dots": 8 }
+  },
+  "elements": [
+    { "type": "rect", "id": 1, "frame": { "feed": 48, "head": 16, "feed_len": 60, "head_len": 8, "x_frame": { "anchor": "centre" } }, "stroke_dots": 2 },
+    { "type": "text", "id": 2, "frame": { "feed": 48, "head": 32, "feed_len": 120, "head_len": 24, "x_frame_2": { "baseline": 20.25 } }, "text": "PORT 4", "size": 12.1, "line_height": 1.2 },
+    { "type": "hologram", "id": 3, "wavelength_nm": 632, "depth": { "layers": 3 } }
+  ],
+  "x_top": { "name": "something from 2027" }
+}

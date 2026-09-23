@@ -61,6 +61,10 @@ pub struct Canvas<H: CanvasHost> {
     /// Told after every outcome, after the pane, when there is an edit bar and grips
     /// to tell. A closure for `push_ins`'s reason.
     push_edit: Option<PanePush<H>>,
+    /// Told after every outcome, after the grips, when there is a window title to
+    /// keep: whether the work is unsaved can change with any outcome, a typed digit
+    /// included. A closure for `push_ins`'s reason.
+    push_file: Option<PanePush<H>>,
     /// Told after every outcome, after the pane and the grips: a view reads the
     /// pane's effects.
     view: Option<ViewTell<H>>,
@@ -83,6 +87,7 @@ impl<H: CanvasHost> Canvas<H> {
             pane: Pane::default(),
             push_ins: None,
             push_edit: None,
+            push_file: None,
             view: None,
         }
     }
@@ -106,6 +111,11 @@ impl<H: CanvasHost> Canvas<H> {
     /// Install the grips' push, which `refresh_because` calls after the pane's.
     pub(crate) fn tell_edit(&mut self, push: PanePush<H>) {
         self.push_edit = Some(push);
+    }
+
+    /// Install the title's push, which `refresh_because` calls after the grips'.
+    pub(crate) fn tell_file(&mut self, push: PanePush<H>) {
+        self.push_file = Some(push);
     }
 
     /// Install the view's hook, which `refresh_because` calls last.
@@ -159,6 +169,30 @@ impl<H: CanvasHost> Canvas<H> {
         Ok(())
     }
 
+    /// Put another document in this one's place: a label opened or a new one made.
+    ///
+    /// Every row goes, from the end, and the new document's rows come in fresh, so no
+    /// row instance survives to carry the keyboard, a hover or a half-finished drag
+    /// into a document it does not belong to; removed one at a time rather than by
+    /// `set_vec` or a reset, for `rows`' reason. The pane forgets what it drew, since
+    /// two labels can share a stamp and not a picture, and a zoom this label has no
+    /// `Extent` at comes down to the largest it has. The caller refits the view.
+    pub(crate) fn replace_doc(&mut self, host: &H, doc: Doc) {
+        while self.rows.row_count() > 0 {
+            self.rows.remove(self.rows.row_count() - 1);
+        }
+        self.doc = doc;
+        self.pane.invalidate();
+        self.zoom = self.zoom.min(crate::view::top(self.doc.canvas_dots()));
+        self.refresh(
+            host,
+            Outcome {
+                effect: Effect::Everything,
+                note: None,
+            },
+        );
+    }
+
     /// `refresh_because(host, out, Cause::Edit)`.
     pub(crate) fn refresh(&mut self, host: &H, out: Outcome) {
         self.refresh_because(host, out, Cause::Edit);
@@ -197,6 +231,9 @@ impl<H: CanvasHost> Canvas<H> {
         // the selection or refused, the grips are pushed, and setting the same value
         // again marks nothing dirty.
         if let Some(push) = self.push_edit.clone() {
+            push(host, &self.doc);
+        }
+        if let Some(push) = self.push_file.clone() {
             push(host, &self.doc);
         }
         if let Some(note) = out.note {
@@ -296,7 +333,7 @@ pub(crate) fn end_move<H: CanvasHost>(host: &H, canvas: &RefCell<Canvas<H>>, com
 /// screen reader the second time. Clearing the line first is no cure inside one
 /// dispatch, for `ins::wire`'s reason. Alternating, so a third repeat differs from
 /// the second.
-fn said_again(shown: &str, note: String) -> String {
+pub(crate) fn said_again(shown: &str, note: String) -> String {
     if shown == note {
         format!("{note} (again)")
     } else {

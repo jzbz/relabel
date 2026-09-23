@@ -863,3 +863,257 @@ fn a_damaged_binding_cannot_be_written_either() {
     let saved = l.to_json().unwrap();
     assert_eq!(Label::from_json(&saved).unwrap(), l);
 }
+
+/// The frozen fixture that holds a key a later version wrote at every nested
+/// place, loaded and saved once.
+fn nested_unknowns() -> (Label, String) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/corpus/v1/nested-unknowns.relabel");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let label = Label::from_json(&text).unwrap();
+    let saved = label.to_json().unwrap();
+    (label, saved)
+}
+
+/// A save that has to put strangers back goes through a `Value`, which would
+/// write an `f32` as the `f64` it widens to and sort every key. It re-reads the
+/// plain serialiser's own text instead, so the floats are the digits that
+/// serialiser wrote, and `preserve_order` keeps the document's order.
+#[test]
+fn a_save_with_strangers_keeps_floats_and_key_order() {
+    let (_, saved) = nested_unknowns();
+    assert!(saved.contains("\"size\": 12.1,"), "{saved}");
+    assert!(saved.contains("\"line_height\": 1.2,"), "{saved}");
+    assert!(!saved.contains("12.100000381469727"), "{saved}");
+    assert!(
+        saved.starts_with("{\n  \"format\": \"relabel-label\",\n  \"version\": 1,\n  \"meta\": {"),
+        "{saved}"
+    );
+    // The stranger's element in the order its file wrote it, not alphabetical.
+    let at = |key: &str| {
+        saved
+            .find(key)
+            .unwrap_or_else(|| panic!("{key} is not saved"))
+    };
+    let hologram = [
+        "\"type\": \"hologram\"",
+        "\"id\": 3",
+        "\"wavelength_nm\"",
+        "\"depth\"",
+    ]
+    .map(at);
+    assert!(hologram.is_sorted(), "{saved}");
+}
+
+/// With nothing to put back, a save is the plain serialiser's text, byte for
+/// byte: the graft never touches a label that does not need it, and strangers
+/// at the top level, on an element or in an open enum ride the structs' own
+/// catch-alls as they always did.
+#[test]
+fn a_label_without_strangers_saves_through_the_plain_serialiser() {
+    let mut plain = label();
+    plain
+        .elements
+        .push(ElementOrRaw::Known(Element::Rect(RectEl {
+            common: Common::new(
+                1,
+                RectDots {
+                    feed: 4,
+                    head: 4,
+                    feed_len: 100,
+                    head_len: 40,
+                },
+            ),
+            stroke_dots: 2,
+            radius_dots: 0,
+        })));
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/corpus/v1/from-the-future.relabel");
+    let future = Label::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+    for l in [plain, future] {
+        assert_eq!(
+            l.to_json().unwrap(),
+            serde_json::to_string_pretty(&l).unwrap() + "\n"
+        );
+    }
+}
+
+/// A stranger is a key outside a struct's list of the keys it knows, not a key
+/// its save leaves out. A zero inset, a rectangle and an empty title are all
+/// omitted when written; spelled out in a file they are known keys, and the
+/// save leaves them out as it would have anyway.
+#[test]
+fn an_explicit_default_is_not_a_stranger() {
+    let json = r#"{
+      "format": "relabel-label",
+      "version": 1,
+      "meta": { "title": "" },
+      "media": { "feed_tenths_mm": 400, "head_tenths_mm": 120, "shape": { "kind": "rect" } },
+      "canvas": {
+        "feed": 320, "head": 96, "dpmm": { "num": 8, "den": 1 },
+        "inset": { "feed_start": 0, "feed_end": 0, "head_start": 0, "head_end": 0 }
+      },
+      "elements": []
+    }"#;
+    let mut l = Label::from_json(json).unwrap();
+    let saved = l.to_json().unwrap();
+    for gone in ["inset", "shape", "title"] {
+        assert!(!saved.contains(gone), "{gone} in {saved}");
+    }
+    l.canvas.inset.feed_start = 8;
+    let back = Label::from_json(&l.to_json().unwrap()).unwrap();
+    assert_eq!(back.canvas.inset.feed_start, 8);
+}
+
+/// A later version's numbers are its own: a save writes back the same value it
+/// read, in a raw element, a top-level unknown key and a key kept inside a
+/// nested object alike. serde_json's default parser is not correctly rounded
+/// at extreme exponents, and without `float_roundtrip` each of these came back
+/// one step away.
+#[test]
+fn a_later_versions_numbers_come_back_as_the_same_values() {
+    let numbers = [
+        "1.0715660391465826e-75",
+        "-1.603964615428183e+143",
+        "2.2250738585072014e-308",
+        "9.109383701528e-31",
+    ];
+    let json = format!(
+        r#"{{
+      "format": "relabel-label",
+      "version": 1,
+      "meta": {{ "title": "t", "x_meta": {n2} }},
+      "media": {{ "feed_tenths_mm": 400, "head_tenths_mm": 120 }},
+      "canvas": {{ "feed": 320, "head": 96, "dpmm": {{ "num": 8, "den": 1 }} }},
+      "elements": [
+        {{ "type": "hologram", "id": 1, "k": {n0}, "frame": {{ "feed": 0, "head": 0, "feed_len": 8, "head_len": 8, "x_frame": {n3} }} }}
+      ],
+      "x_top": {n1}
+    }}"#,
+        n0 = numbers[0],
+        n1 = numbers[1],
+        n2 = numbers[2],
+        n3 = numbers[3],
+    );
+    let saved = Label::from_json(&json).unwrap().to_json().unwrap();
+    for n in numbers {
+        // Written the way serde_json writes the value itself: shortest, with its
+        // own exponent style. std's parse is correctly rounded.
+        let written = serde_json::to_string(&n.parse::<f64>().unwrap()).unwrap();
+        assert!(saved.contains(&written), "{n} as {written} in {saved}");
+    }
+}
+
+/// Only a rounded rectangle has a radius. On a rectangle or a circle `radius` is
+/// a later version's key like any other, and a save keeps it; on a rounded
+/// rectangle it is the struct's own, and the label's value is the one written.
+#[test]
+fn a_radius_on_a_shape_that_has_none_is_kept() {
+    let with_shape = |shape: serde_json::Value| {
+        let mut v = serde_json::json!({
+            "format": "relabel-label",
+            "version": 1,
+            "media": { "feed_tenths_mm": 400, "head_tenths_mm": 120 },
+            "canvas": { "feed": 320, "head": 96, "dpmm": { "num": 8, "den": 1 } },
+            "elements": []
+        });
+        v["media"]["shape"] = shape;
+        Label::from_json(&v.to_string()).unwrap()
+    };
+    let saved_shape = |l: &Label| {
+        let v: serde_json::Value = serde_json::from_str(&l.to_json().unwrap()).unwrap();
+        v["media"]["shape"].clone()
+    };
+    for shape in [
+        serde_json::json!({ "kind": "circle", "radius": 7, "future": 1 }),
+        serde_json::json!({ "kind": "rect", "radius": 7 }),
+        serde_json::json!({ "kind": "rounded_rect", "radius": 7, "future": 1 }),
+    ] {
+        let l = with_shape(shape.clone());
+        assert_eq!(saved_shape(&l), shape);
+        assert_eq!(Label::from_json(&l.to_json().unwrap()).unwrap(), l);
+    }
+    let mut l = with_shape(serde_json::json!({ "kind": "rounded_rect", "radius": 7, "future": 1 }));
+    l.media.shape = MediaShape::Known(KnownShape::RoundedRect { radius: 9 });
+    assert_eq!(
+        saved_shape(&l),
+        serde_json::json!({ "kind": "rounded_rect", "radius": 9, "future": 1 })
+    );
+}
+
+/// A zero inset is left out of a save, but one that carries a stranger's key
+/// cannot be: it is written whole, zeros and all, so the key has somewhere to
+/// live.
+#[test]
+fn a_zero_inset_that_carries_a_stranger_is_written_whole() {
+    let (label, saved) = nested_unknowns();
+    let v: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(
+        v["canvas"]["inset"],
+        serde_json::json!({
+            "feed_start": 0,
+            "feed_end": 0,
+            "head_start": 0,
+            "head_end": 0,
+            "x_inset": { "from": "blind zones" },
+        })
+    );
+    assert_eq!(Label::from_json(&saved).unwrap(), label);
+}
+
+/// A frame's strangers belong to its element: deleting the element takes them
+/// out of the next save, and the label that saved compares equal to the one
+/// that reloads.
+#[test]
+fn a_deleted_element_takes_its_frame_strangers_with_it() {
+    let (mut label, _) = nested_unknowns();
+    label
+        .elements
+        .retain(|e| e.known().is_none_or(|e| e.common().id != 2));
+    let saved = label.to_json().unwrap();
+    assert!(!saved.contains("x_frame_2"), "{saved}");
+    assert!(saved.contains("x_frame"), "{saved}");
+    assert_eq!(Label::from_json(&saved).unwrap(), label);
+}
+
+/// Likewise a tail: removed, it takes its strangers with it, and the fold's stay.
+#[test]
+fn a_removed_tail_takes_its_strangers_with_it() {
+    let (mut label, _) = nested_unknowns();
+    label.media.tail = None;
+    let saved = label.to_json().unwrap();
+    assert!(!saved.contains("x_tail"), "{saved}");
+    assert!(saved.contains("x_fold"), "{saved}");
+    assert_eq!(Label::from_json(&saved).unwrap(), label);
+}
+
+/// What `to_json` would refuse, asked before anything is written: the editor
+/// refuses a save up front with this, and says so when a label opens.
+#[test]
+fn writable_names_what_would_stop_a_save() {
+    let mut l = label();
+    l.elements.push(ElementOrRaw::Known(Element::Text(TextEl {
+        common: Common::new(3, RectDots::default()),
+        text: "x".into(),
+        family: String::new(),
+        size: 0.0,
+        line_height: 1.0,
+        align: TextAlign::Start,
+        weight: TextWeight::Regular,
+        raster: GlyphRaster::Hinted,
+    })));
+    assert!(matches!(
+        l.writable(),
+        Err(LoadError::BadFloat {
+            what: "size",
+            id: 3,
+            ..
+        })
+    ));
+    assert!(l.to_json().is_err());
+    assert!(label().writable().is_ok());
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/corpus/v1/kitchen-sink.relabel");
+    let reference = Label::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert!(reference.writable().is_ok());
+}

@@ -1,0 +1,274 @@
+import { Button, LineEdit, Palette } from "std-widgets.slint";
+import { SizePreset } from "types.slint";
+
+// The two popups the file commands open inside the window: the question about
+// unsaved work, and the New label pane. Every word in them comes from Rust
+// (`filing`, `fresh`), and every answer goes straight back.
+//
+// Both are no-auto-close, so only an answer closes them: a click elsewhere
+// reaches nothing (i-slint-core window.rs:843-906), and a key's captures and its
+// way back up both stop at the popup (window.rs:1084-1124), so no chord acts on
+// the document behind it. No-auto-close ignores Escape too (window.rs:1145-1170),
+// which each popup's own FocusScope turns into Cancel. Tab goes round inside the
+// popup (item_tree.rs:836-876).
+//
+// Every handler closes the popup before it calls out, as Slint's own
+// DatePickerPopup does: closing hands the keyboard back to whatever had it before
+// the popup opened, and Rust may move it to the canvas in the call that follows.
+// The other order would undo Rust's move.
+//
+// Slint 1.17 has no dialog role (i-slint-common enums.rs:474-537), so each popup is
+// a group box named for what it is.
+
+// Save, Don't save or Cancel. `reply` hands back `filing::Reply`'s token: 0, 1, 2.
+export component UnsavedQuestion inherits PopupWindow {
+    in property <string> question;
+    callback reply(answer: int);
+
+    close-policy: PopupClosePolicy.no-auto-close;
+    width: 440px;
+    height: layout.preferred-height;
+
+    // Save has the keyboard, so Return saves: the answer that loses nothing.
+    init => {
+        save.focus();
+    }
+
+    Rectangle {
+        background: Palette.background;
+        border-width: 1px;
+        border-color: Palette.border;
+        border-radius: 4px;
+        accessible-role: AccessibleRole.groupbox;
+        accessible-label: "Unsaved changes";
+
+        FocusScope {
+            focus-on-tab-navigation: false;
+            focus-on-click: false;
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    root.close();
+                    root.reply(2);
+                    return EventResult.accept;
+                }
+                return EventResult.reject;
+            }
+
+            layout := VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                Text {
+                    text: root.question;
+                    wrap: word-wrap;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "Question";
+                    accessible-value: root.question;
+                    // Announced as it appears: the keyboard lands on Save, and a
+                    // button's own name does not say what is being asked.
+                    accessible-live-region: AccessibleLiveness.polite;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    // Each described by the question, so a screen reader that
+                    // reads the button the keyboard is on reads what it answers.
+                    save := Button {
+                        text: "Save";
+                        primary: true;
+                        accessible-description: root.question;
+                        clicked => {
+                            root.close();
+                            root.reply(0);
+                        }
+                    }
+                    Button {
+                        text: "Don't save";
+                        accessible-description: root.question;
+                        clicked => {
+                            root.close();
+                            root.reply(1);
+                        }
+                    }
+                    Button {
+                        text: "Cancel";
+                        accessible-description: root.question;
+                        clicked => {
+                            root.close();
+                            root.reply(2);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A new label: the printer and the head as read-only lines, and one length, along
+// the feed, typed or taken from a preset. The canvas has to be the whole print
+// head (relabel-render target.rs:219-236), so the length along the feed is the only
+// choice there is.
+export component NewLabelPane inherits PopupWindow {
+    in property <string> printer;
+    in property <string> across;
+    // The two lines above as the field's description: they are plain text no key
+    // reaches, and the field is where the keyboard lands when the pane opens.
+    in property <string> about;
+    // The length the field starts at, assigned once in `init` and never bound: a
+    // widget's own write removes a one-way binding (inspector.slint, at the top).
+    in property <string> feed-start;
+    in property <string> hint;
+    // What the length typed so far comes to in dots, or why it cannot be a label,
+    // pushed by Rust on every edit.
+    in property <string> note;
+    in property <[SizePreset]> presets;
+
+    callback feed-edited(text: string);
+    // True when the length can make a label; Rust has said why when it cannot.
+    callback check(text: string) -> bool;
+    callback make(text: string);
+    callback preset(token: int);
+    callback cancel();
+
+    close-policy: PopupClosePolicy.no-auto-close;
+    width: 460px;
+    height: layout.preferred-height;
+
+    // A TextInput selects itself on focus only when Tab brought the keyboard, so
+    // the selection is made here, and a typed length replaces the one offered.
+    init => {
+        feed.text = root.feed-start;
+        feed.focus();
+        feed.select-all();
+    }
+
+    // A preset's button hands its length here rather than closing the popup itself:
+    // closing drops the repeated button, and a call made from it afterwards reaches
+    // nothing (measured: the preset was never made).
+    function take(token: int) {
+        root.close();
+        root.preset(token);
+    }
+
+    function create() {
+        if (root.check(feed.text)) {
+            root.close();
+            root.make(feed.text);
+        }
+    }
+
+    Rectangle {
+        background: Palette.background;
+        border-width: 1px;
+        border-color: Palette.border;
+        border-radius: 4px;
+        accessible-role: AccessibleRole.groupbox;
+        accessible-label: "New label";
+
+        FocusScope {
+            focus-on-tab-navigation: false;
+            focus-on-click: false;
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    root.close();
+                    root.cancel();
+                    return EventResult.accept;
+                }
+                return EventResult.reject;
+            }
+
+            layout := VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                Text {
+                    text: "New label";
+                    font-weight: 600;
+                    // The group box already announces it.
+                    accessible-role: AccessibleRole.none;
+                }
+                Text {
+                    text: root.printer;
+                    wrap: word-wrap;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "Printer";
+                    accessible-value: root.printer;
+                }
+                // Read-only, for the reason at the top of this component.
+                Text {
+                    text: root.across;
+                    wrap: word-wrap;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "Across the head";
+                    accessible-value: root.across;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "Along the feed (mm)";
+                        vertical-alignment: center;
+                        accessible-role: AccessibleRole.none;
+                    }
+                    feed := LineEdit {
+                        accessible-label: "Along the feed, in millimetres";
+                        accessible-description: root.about;
+                        placeholder-text: "for example 40";
+                        // Also how a length written by an assistive technology
+                        // arrives (fluent/lineedit.slint:16).
+                        edited(text) => {
+                            root.feed-edited(text);
+                        }
+                        accepted(text) => {
+                            root.create();
+                        }
+                    }
+                }
+                Text {
+                    text: root.note;
+                    wrap: word-wrap;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "Along the feed";
+                    accessible-value: root.note;
+                    // A refusal has no other channel, and blocks nothing.
+                    accessible-live-region: AccessibleLiveness.polite;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    for p in root.presets: Button {
+                        text: p.text;
+                        accessible-label: p.name;
+                        accessible-description: p.says;
+                        clicked => {
+                            root.take(p.token);
+                        }
+                    }
+                }
+                Text {
+                    text: root.hint;
+                    wrap: word-wrap;
+                    color: Palette.foreground.transparentize(35%);
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button {
+                        text: "Create";
+                        primary: true;
+                        // What Create makes, as the note says it.
+                        accessible-description: root.note;
+                        clicked => {
+                            root.create();
+                        }
+                    }
+                    Button {
+                        text: "Cancel";
+                        accessible-description: "keeps the open label";
+                        clicked => {
+                            root.close();
+                            root.cancel();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

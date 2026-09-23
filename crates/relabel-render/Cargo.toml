@@ -19,7 +19,25 @@ serde.workspace = true
 # The document format. `Value` is load-bearing rather than a convenience: it is
 # what carries fields and element types written by a future version through a
 # round-trip instead of silently deleting them.
-serde_json.workspace = true
+#
+# preserve_order: a label carrying keys a later version wrote inside nested
+# objects is saved through a Value so they can be put back, and without it that
+# Value sorts every key; with it every map keeps the document's own order, and
+# a later build's keys follow the keys this build writes in the order the file
+# had them. It links indexmap, which the build already compiled for a
+# proc-macro but no desktop binary linked.
+#
+# float_roundtrip: a number a later version wrote, in an unknown key or a raw
+# element, is held as an f64 and written back, and the default parser is not
+# correctly rounded at extreme exponents, so 1.0715660391465826e-75 came back
+# one step away on the first save. Correct rounding costs about twice the
+# parse time of a float, on files capped at 64 MiB; geometry is integers and
+# never depended on it.
+#
+# Both unify into every serde_json linked into a binary. The host copy that
+# build scripts and proc-macros use - relabel-proto's build script and Slint's
+# i-slint-core-macros - stays apart under resolver 3, without either.
+serde_json = { workspace = true, features = ["preserve_order", "float_roundtrip"] }
 code128.workspace = true
 barcoders.workspace = true
 qrcode.workspace = true
