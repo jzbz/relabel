@@ -16,35 +16,50 @@
 //!
 //! # Which printer
 //!
-//! relabel-gui does not connect to a printer yet. The model is the one the open
-//! label was made for, when the registry knows it and this build can draw for
-//! it, and a D110 otherwise, which is said out loud.
+//! The printer relabel is connected to, when it has one and this build can draw
+//! for it. Otherwise the model the open label was made for, when the registry
+//! knows it and this build can draw for it, and a D110_M otherwise, which is said
+//! out loud.
 
 use relabel_proto::ModelSpec;
 use relabel_proto::models::by_name;
 use relabel_render::document::{AuthoredFor, Label};
 use relabel_render::target::Dpmm;
 
-/// The printer a new label is for when nothing says otherwise: the D11/D110
-/// family is the one this has been run against.
-pub const DEFAULT_MODEL: &str = "D110";
+/// The printer a new label is for when nothing says otherwise: the D110_M is the
+/// printer relabel has been run against (PROTOCOL-NOTES.md, wire id 2320).
+pub const DEFAULT_MODEL: &str = "D110_M";
 
 /// The one roll whose length has been measured rather than read from the
 /// registry: 40 by 12 mm on a D110_M (PROTOCOL-NOTES.md, "The label on this roll
 /// is 40 mm x 12 mm"). Offered wherever the stock is 12 mm across.
 const MEASURED_ROLL: (i32, i32) = (400, 120);
 
-/// A printer, and whether it was only assumed.
+/// A printer, and where it came from.
 #[derive(Debug, Clone, Copy)]
 pub struct Printer {
     pub spec: &'static ModelSpec,
-    /// True when the open label names no model this build can draw for, so the
-    /// printer is [`DEFAULT_MODEL`] because something had to be.
+    /// True when nothing connected or open names a model this build can draw for,
+    /// so the printer is [`DEFAULT_MODEL`] because something had to be.
     pub assumed: bool,
+    /// True when it is the printer relabel is connected to.
+    pub connected: bool,
+    /// True when relabel is connected to a printer it cannot make a label for,
+    /// so this is another one.
+    pub connected_elsewhere: bool,
 }
 
-/// What the New label pane hands back: the printer and the length along the
-/// feed, in tenths of a millimetre.
+/// The printer relabel is connected to, as a new label sees it.
+#[derive(Debug, Clone, Copy)]
+pub struct Connected {
+    /// Its model, when relabel can print on it: `None` for an id the registry
+    /// does not know, or one that several models with different heads share.
+    pub model: Option<&'static ModelSpec>,
+}
+
+/// What the New label pane hands back: the printer, the length along the feed in
+/// tenths of a millimetre, and why the printer was assumed when it was, so the
+/// status line says what the pane said.
 ///
 /// `PartialEq` by hand: [`ModelSpec`] has none, and the registry's names are
 /// unique, so the name is the model.
@@ -52,36 +67,79 @@ pub struct Printer {
 pub struct NewSpec {
     pub spec: &'static ModelSpec,
     pub feed_tenths: i32,
+    /// [`assumed_why`] for the printer the pane was opened for.
+    pub assumed: Option<&'static str>,
 }
 
 impl PartialEq for NewSpec {
     fn eq(&self, other: &NewSpec) -> bool {
-        self.spec.name == other.spec.name && self.feed_tenths == other.feed_tenths
+        self.spec.name == other.spec.name
+            && self.feed_tenths == other.feed_tenths
+            && self.assumed == other.assumed
     }
 }
 
 impl Eq for NewSpec {}
 
 impl NewSpec {
-    /// The registry's own default label for this printer.
+    /// The registry's own default label for this printer, assumed for no reason.
     pub fn stock(spec: &'static ModelSpec) -> NewSpec {
         NewSpec {
             spec,
             feed_tenths: stock(spec).0,
+            assumed: None,
         }
+    }
+
+    /// A label of `feed_tenths` for the printer the New label pane was opened for.
+    pub fn of(p: &Printer, feed_tenths: i32) -> NewSpec {
+        NewSpec {
+            spec: p.spec,
+            feed_tenths,
+            assumed: assumed_why(p),
+        }
+    }
+}
+
+/// Why [`DEFAULT_MODEL`] is assumed when nothing is connected and nothing open
+/// names a model this build can draw for.
+pub const NOT_CONNECTED: &str = "relabel is not connected to a printer";
+
+/// Why [`DEFAULT_MODEL`] is assumed when the printer connected is one this build
+/// cannot make a label for.
+const CANNOT_USE_CONNECTED: &str = "relabel cannot make a label for the printer it is connected to";
+
+/// Why the printer was assumed, in the words that follow "assumed: ", or `None`
+/// when it was not.
+pub fn assumed_why(p: &Printer) -> Option<&'static str> {
+    match (p.assumed, p.connected_elsewhere) {
+        (false, _) => None,
+        (true, true) => Some(CANNOT_USE_CONNECTED),
+        (true, false) => Some(NOT_CONNECTED),
     }
 }
 
 /// The registry's entry for [`DEFAULT_MODEL`].
 pub fn default_printer() -> &'static ModelSpec {
     // A build-time fact rather than a runtime one: the registry is generated
-    // from vendor/devices.json, and a test pins that it holds a usable D110.
-    by_name(DEFAULT_MODEL).expect("the vendored registry has a D110")
+    // from vendor/devices.json, and a test pins that it holds a usable D110_M.
+    by_name(DEFAULT_MODEL).expect("the vendored registry has a D110_M")
 }
 
-/// The printer a new label is for: the one the open label was made for when this
-/// build can draw for it, otherwise [`DEFAULT_MODEL`], assumed.
-pub fn printer_for(label: &Label) -> Printer {
+/// The printer a new label is for: the one relabel is connected to when this
+/// build can draw for it, else the one the open label was made for when this
+/// build can draw for that, otherwise [`DEFAULT_MODEL`], assumed.
+pub fn printer_for(label: &Label, connected: Option<Connected>) -> Printer {
+    let usable_connected = connected.and_then(|c| c.model).filter(|spec| usable(spec));
+    if let Some(spec) = usable_connected {
+        return Printer {
+            spec,
+            assumed: false,
+            connected: true,
+            connected_elsewhere: false,
+        };
+    }
+    let connected_elsewhere = connected.is_some();
     let named = label
         .meta
         .authored_for
@@ -93,10 +151,14 @@ pub fn printer_for(label: &Label) -> Printer {
         Some(spec) => Printer {
             spec,
             assumed: false,
+            connected: false,
+            connected_elsewhere,
         },
         None => Printer {
             spec: default_printer(),
             assumed: true,
+            connected: false,
+            connected_elsewhere,
         },
     }
 }
@@ -258,11 +320,10 @@ pub fn about_says(p: &Printer) -> String {
 
 /// Which printer the pane is making a label for, and why that one.
 pub fn printer_says(p: &Printer) -> String {
-    if p.assumed {
-        format!(
-            "For a {} (assumed: relabel is not connected to a printer)",
-            p.spec.name
-        )
+    if p.connected {
+        format!("For the {} relabel is connected to", p.spec.name)
+    } else if let Some(why) = assumed_why(p) {
+        format!("For a {} (assumed: {why})", p.spec.name)
     } else {
         format!(
             "For a {}, the printer the open label was made for",
@@ -271,14 +332,19 @@ pub fn printer_says(p: &Printer) -> String {
     }
 }
 
-/// What the status line calls a label [`build`] has just made.
+/// What the status line calls a label [`build`] has just made, saying the printer
+/// was assumed, and why, when the New label pane said so.
 pub fn made_says(n: &NewSpec) -> String {
-    format!(
+    let mut says = format!(
         "new {} \u{d7} {} mm label for a {}",
         mm(n.feed_tenths),
         mm(stock(n.spec).1),
         n.spec.name
-    )
+    );
+    if let Some(why) = n.assumed {
+        says.push_str(&format!(" (assumed: {why})"));
+    }
+    says
 }
 
 /// A blank label for a printer and a length along the feed.
@@ -346,6 +412,7 @@ mod tests {
         let l = build(&NewSpec {
             spec: d110(),
             feed_tenths: 400,
+            assumed: None,
         });
         assert_eq!((l.canvas.feed, l.canvas.head), (320, 96));
         assert_eq!(l.canvas.dpmm, Dpmm::DPI_203);
@@ -372,6 +439,7 @@ mod tests {
         let l = build(&NewSpec {
             spec: d110(),
             feed_tenths: 400,
+            assumed: None,
         });
         let text = l.to_json().expect("a new label saves");
         let back = Label::from_json(&text).expect("and loads");
@@ -383,25 +451,93 @@ mod tests {
     }
 
     #[test]
-    fn the_printer_follows_the_open_label_and_otherwise_assumes_a_d110() {
+    fn the_printer_follows_the_open_label_and_otherwise_assumes_a_d110_m() {
         let mut l = Label::new(320, 96, Dpmm::DPI_203);
-        let p = printer_for(&l);
-        assert_eq!((p.spec.name, p.assumed), ("D110", true));
+        let p = printer_for(&l, None);
+        assert_eq!(
+            (p.spec.name, p.assumed, p.connected),
+            ("D110_M", true, false)
+        );
         for (named, want, assumed) in [
             ("B18", "B18", false),
+            ("D110", "D110", false),
             // 142 dots is not a whole number of bytes.
-            ("D11_H", "D110", true),
-            ("nonesuch", "D110", true),
+            ("D11_H", "D110_M", true),
+            ("nonesuch", "D110_M", true),
         ] {
             l.meta.authored_for = Some(AuthoredFor {
                 model: Some(named.into()),
                 head_px: 96,
                 dpi: 203,
             });
-            let p = printer_for(&l);
+            let p = printer_for(&l, None);
             assert_eq!((p.spec.name, p.assumed), (want, assumed), "{named}");
+            assert!(!p.connected, "{named}");
         }
-        assert!(usable(default_printer()));
+    }
+
+    /// The author's printer, which a new label is for when nothing says
+    /// otherwise: whole bytes of head, the landscape strip, and the measured roll.
+    #[test]
+    fn the_default_printer_is_a_usable_d110_m() {
+        let spec = default_printer();
+        assert_eq!(spec.name, "D110_M");
+        assert!(usable(spec));
+        assert_eq!(
+            (spec.printhead_px, spec.dpi, spec.direction),
+            (96, 203, PrintDirection::Left)
+        );
+        assert_eq!(stock(spec), (300, 120));
+        assert_eq!(presets(spec), [300, 400]);
+        assert_eq!(spec.max_label_mm, 100);
+    }
+
+    #[test]
+    fn printer_for_prefers_a_usable_connected_model() {
+        let mut l = Label::new(320, 96, Dpmm::DPI_203);
+        l.meta.authored_for = Some(AuthoredFor {
+            model: Some("B18".into()),
+            head_px: 96,
+            dpi: 203,
+        });
+        let p = printer_for(&l, Some(on(model("D110_M"))));
+        assert_eq!(
+            (p.spec.name, p.assumed, p.connected),
+            ("D110_M", false, true)
+        );
+        assert_eq!(printer_says(&p), "For the D110_M relabel is connected to");
+        assert_eq!(
+            about_says(&p),
+            "For the D110_M relabel is connected to. Across the head: 12 mm, 96 dots, the \
+             whole print head"
+        );
+
+        // 142 dots is not a whole number of bytes, so the label's own model is
+        // used, and then the default.
+        let p = printer_for(&l, Some(on(model("D11_H"))));
+        assert_eq!((p.spec.name, p.assumed, p.connected), ("B18", false, false));
+        assert_eq!(
+            printer_says(&p),
+            "For a B18, the printer the open label was made for"
+        );
+        let blank = Label::new(320, 96, Dpmm::DPI_203);
+        let p = printer_for(&blank, Some(on(model("D11_H"))));
+        assert_eq!(
+            (p.spec.name, p.assumed, p.connected),
+            ("D110_M", true, false)
+        );
+        // Connected, so the pane does not say that nothing is.
+        let unusable = "For a D110_M (assumed: relabel cannot make a label for the printer it \
+                        is connected to)";
+        assert_eq!(printer_says(&p), unusable);
+        // An id the registry does not know is the same.
+        let p = printer_for(&blank, Some(Connected { model: None }));
+        assert_eq!((p.spec.name, p.assumed), ("D110_M", true));
+        assert_eq!(printer_says(&p), unusable);
+    }
+
+    fn on(spec: &'static ModelSpec) -> Connected {
+        Connected { model: Some(spec) }
     }
 
     #[test]
@@ -515,14 +651,16 @@ mod tests {
 
     #[test]
     fn the_pane_says_which_printer_and_why() {
-        let assumed = printer_for(&Label::new(320, 96, Dpmm::DPI_203));
+        let assumed = printer_for(&Label::new(320, 96, Dpmm::DPI_203), None);
         assert_eq!(
             printer_says(&assumed),
-            "For a D110 (assumed: relabel is not connected to a printer)"
+            "For a D110_M (assumed: relabel is not connected to a printer)"
         );
         let known = Printer {
             spec: model("B18"),
             assumed: false,
+            connected: false,
+            connected_elsewhere: false,
         };
         assert_eq!(
             printer_says(&known),
@@ -531,11 +669,28 @@ mod tests {
         assert_eq!(
             made_says(&NewSpec {
                 spec: d110(),
-                feed_tenths: 405
+                feed_tenths: 405,
+                assumed: None,
             }),
             "new 40.5 \u{d7} 12 mm label for a D110"
         );
         assert_eq!(NewSpec::stock(d110()).feed_tenths, 300);
+        // The status line says the printer was assumed, and why, as the pane did.
+        assert_eq!(
+            made_says(&NewSpec::of(&assumed, 300)),
+            "new 30 \u{d7} 12 mm label for a D110_M (assumed: relabel is not connected to a \
+             printer)"
+        );
+        let elsewhere = Printer {
+            connected_elsewhere: true,
+            ..assumed
+        };
+        assert_eq!(
+            made_says(&NewSpec::of(&elsewhere, 300)),
+            "new 30 \u{d7} 12 mm label for a D110_M (assumed: relabel cannot make a label for \
+             the printer it is connected to)"
+        );
+        assert!(!made_says(&NewSpec::of(&known, 300)).contains("assumed"));
     }
 
     #[test]
@@ -547,6 +702,7 @@ mod tests {
             let l = build(&NewSpec {
                 spec: d110(),
                 feed_tenths: feed,
+                assumed: None,
             });
             assert_eq!(untitled_name(&l), name);
         }

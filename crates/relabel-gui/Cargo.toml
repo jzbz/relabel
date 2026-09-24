@@ -20,6 +20,12 @@ path = "src/main.rs"
 [dependencies]
 relabel-render.workspace = true
 relabel-proto.workspace = true
+# The printer link: relabel-core's `link` actor, which finds, opens and
+# identifies a printer on a thread and runtime of its own. It brings btleplug and
+# tokio into this binary and, on Linux, libdbus-1 linked through pkg-config, all
+# of which relabel-cli already links. No tokio or btleplug path is named in this
+# crate: `link`'s API carries neither, and tests/deps.rs holds that line.
+relabel-core.workspace = true
 thiserror.workspace = true
 # default-features = false is not a style choice. The default set compiles in
 # `backend-qt`, which the selector prefers over winit at runtime whenever qmake

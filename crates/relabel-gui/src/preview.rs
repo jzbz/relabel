@@ -1,9 +1,11 @@
-//! The rendered label, as one Slint image.
+//! The rendered label, as one Slint image: the canvas's, at the view's zoom, and
+//! the Preview pane's, fitted to a box.
 //!
 //! Thin on purpose: `relabel-render`'s own `preview` module owns the pixels and
 //! the scaling, and everything here is about handing them over correctly once.
 
 use crate::doc::Doc;
+use relabel_proto::BitPlane;
 use relabel_render::preview::{Extent, Scale, plane_stamp, plane_to_rgb8};
 use slint::{Image, Rgb8Pixel, SharedPixelBuffer};
 
@@ -87,6 +89,26 @@ impl Pane {
     }
 }
 
+/// A plane at the largest scale that fits a box of `box_w` by `box_h` physical
+/// pixels, and that scale: the Preview pane's image, which shows a plane the
+/// caller already drew rather than drawing one.
+///
+/// A fresh buffer every time, for [`Pane::draw`]'s reason. `None` only when the
+/// plane has no extent at any scale, which [`Scale::for_pane`] says cannot
+/// happen for a plane a label can make.
+pub fn paint_fit(plane: &BitPlane, box_w: u32, box_h: u32) -> Option<(Painted, Scale)> {
+    let scale = Scale::for_pane(plane.width(), plane.height(), box_w, box_h);
+    let extent = Extent::for_plane(plane, scale)?;
+    let mut buf = SharedPixelBuffer::<Rgb8Pixel>::new(extent.px_w, extent.px_h);
+    plane_to_rgb8(plane, scale, buf.make_mut_bytes());
+    let painted = Painted {
+        image: Image::from_rgb8(buf),
+        px_w: i32::try_from(extent.px_w).ok()?,
+        px_h: i32::try_from(extent.px_h).ok()?,
+    };
+    Some((painted, scale))
+}
+
 impl std::fmt::Display for NoDots {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -101,5 +123,76 @@ impl std::fmt::Display for NoDots {
                 plane.0, plane.1, canvas.0, canvas.1
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The author's 40 by 12 mm label at scale 1: two pixels to the dot in the
+    /// pane's 640 by 200 box, the plane in canvas orientation, never turned.
+    #[test]
+    fn a_40_by_12_mm_plane_fits_the_pane_at_two_pixels_a_dot() {
+        let plane = BitPlane::new(320, 96);
+        let (painted, scale) = paint_fit(&plane, 640, 200).expect("a plane fits");
+        assert_eq!(scale, Scale::up(2));
+        assert_eq!((painted.px_w, painted.px_h), (640, 192));
+        let size = painted.image.size();
+        assert_eq!((size.width, size.height), (640, 192));
+    }
+
+    #[test]
+    fn a_plane_larger_than_the_box_is_shown_reduced() {
+        let plane = BitPlane::new(800, 96);
+        let (painted, scale) = paint_fit(&plane, 640, 200).expect("a plane fits");
+        assert_eq!(scale, Scale::down(2));
+        assert_eq!((painted.px_w, painted.px_h), (400, 48));
+    }
+
+    /// A plane no symmetry or shift leaves unchanged: a steep diagonal, one
+    /// whole head line and one whole feed line.
+    fn marked(w: u16, h: u16) -> BitPlane {
+        let mut plane = BitPlane::new(w, h);
+        for x in 0..w {
+            plane.set(x, ((u32::from(x) * 7) % u32::from(h)) as u16, true);
+        }
+        for y in 0..h {
+            plane.set(w / 2, y, true);
+        }
+        for x in 0..w {
+            plane.set(x, h / 3, true);
+        }
+        plane
+    }
+
+    /// What the pane shows is the plane it was given, dot for dot: read back
+    /// from the image's own pixels at two pixels a dot, and equal to the
+    /// render crate's drawing of that plane when reduced.
+    #[test]
+    fn the_fitted_image_is_the_plane_dot_for_dot() {
+        let plane = marked(320, 96);
+        let (painted, scale) = paint_fit(&plane, 640, 200).expect("a plane fits");
+        assert_eq!(scale, Scale::up(2));
+        let px = painted.image.to_rgb8().expect("an RGB image");
+        let (w, bytes) = (px.width() as usize, px.as_bytes());
+        for y in 0..plane.height() {
+            for x in 0..plane.width() {
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let at = ((usize::from(y) * 2 + dy) * w + usize::from(x) * 2 + dx) * 3;
+                    let ink = bytes[at] < 128;
+                    assert_eq!(ink, plane.get(x, y), "dot ({x}, {y})");
+                }
+            }
+        }
+
+        let wide = marked(800, 96);
+        let (painted, scale) = paint_fit(&wide, 640, 200).expect("a plane fits");
+        assert_eq!(scale, Scale::down(2));
+        let px = painted.image.to_rgb8().expect("an RGB image");
+        let mut want = vec![0; px.as_bytes().len()];
+        plane_to_rgb8(&wide, scale, &mut want);
+        assert_eq!(px.as_bytes(), want.as_slice());
+        assert!(want.iter().any(|&b| b < 128), "something is inked");
     }
 }

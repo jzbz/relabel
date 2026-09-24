@@ -45,10 +45,13 @@ Every clarification in `about.toml` is pinned by SHA-256. When a dependency
 update changes one of those files, the script fails, and the checksum is
 re-derived after reading what changed.
 
-relabel does not ship a binary yet, so for now the notices cover the whole
-workspace, which is a superset. Once the GUI crate exists, pass its
-`Cargo.toml` as the second argument, and the notices cover what that binary
-links and nothing else.
+relabel does not ship a binary yet. With no second argument the notices cover
+the whole workspace, which is a superset. The binary a release ships is the
+GUI's, so pass `crates/relabel-gui/Cargo.toml` as the second argument, and the
+notices cover what that binary links and nothing else. The GUI's graph holds
+btleplug's tree since it gained the printer link (see The printer link, below),
+so its notice file needs the network as the workspace's does, and it has to be
+generated again before any release.
 
 The script appends the embedded fonts' licence, `crates/relabel-render/fonts/
 OFL.txt`, after the crates' notices; cargo-about knows only crates. See Fonts,
@@ -142,6 +145,32 @@ version wrote keep the order the file had them. That links `indexmap` 2.14
 desktop binary linked; its `hashbrown` already ships. It also turns on
 `float_roundtrip`, which links nothing. `cargo deny` passes with `deny.toml`
 unchanged.
+
+## The printer link
+
+`relabel-gui` depends on `relabel-core` for its printer link, which puts
+`btleplug` 0.13 and its tree into the GUI binary. None of it is new to the
+workspace: `relabel-cli` already had every crate. What each target gains is
+read from `cargo tree` against the GUI before the link, and the GUI's notice
+file, which covers every desktop target, gains 19 crates. On every desktop
+target: `btleplug`, whose licence is in the table
+above; `tokio`, `tokio-macros`, `tokio-stream`, `tokio-util`, `dashmap` and
+`bytes`, MIT; and `lock_api` and `parking_lot_core`, MIT OR Apache-2.0. On
+Linux only: `mio`, MIT, and `socket2`, MIT OR Apache-2.0, which tokio's IO
+driver brings there through `dbus-tokio`; `bluez-async` and
+`bluez-generated`, MIT OR Apache-2.0, whose text the script fetches; `dbus`,
+`dbus-tokio` and `libdbus-sys`, offering MIT in the older `Apache-2.0/MIT`
+spelling; and `serde-xml-rs` and `xml`, MIT. On macOS only:
+`objc2-core-bluetooth`, which offers MIT beside Zlib and Apache-2.0 and is one
+of the five `objc2` crates given the standard MIT text. Windows and macOS also
+gain `async-trait`, the `futures` crates and, on macOS, `static_assertions`,
+all MIT OR Apache-2.0 and all already in the notices through the Linux graph,
+so they add nothing to the file. `cargo tree --target all` also shows `wasi`,
+for a target relabel does not build, which the notices leave out. `cargo
+deny` passes with `deny.toml` unchanged, and `about.toml` already clarified
+`btleplug`, `bluez-async` and `bluez-generated`, so it is unchanged as well.
+The GUI's notice file therefore now carries btleplug's BSD-3-Clause notices.
+On Linux the GUI now links `libdbus-1` as well (see System libraries).
 
 ## Arriving with work in progress
 
@@ -238,15 +267,18 @@ that file.
 ## System libraries
 
 On Linux, `btleplug` reaches BlueZ through `libdbus-sys`, which links the
-system's `libdbus-1` at build time and loads it at run time. It is not built
-into relabel - the crate's `vendored` feature is off - and nothing ships it.
+system's `libdbus-1` at build time and loads it at run time: in `relabel-cli`
+and, since the printer link, in the GUI, where before the GUI only opened it
+with `dlopen` through rfd. Building either therefore needs the libdbus-1
+development files, found through `pkg-config`. It is not built into relabel -
+the crate's `vendored` feature is off - and nothing ships it.
 Should a bundle ever carry it, an AppImage for instance, libdbus's own licence
 applies and belongs here; it has not been reviewed.
 
-On Linux, rfd's file-chooser backend loads `libdbus-1.so.3` with `dlopen` at
-run time - the library btleplug links - and runs the `zenity` program when the
-desktop has no file-chooser portal. Neither is built into relabel or shipped
-with it.
+On Linux, rfd's file-chooser backend loads `libdbus-1.so.3` with `dlopen` at run
+time - the library the GUI already links for btleplug - and runs the `zenity`
+program when the desktop has no file-chooser portal. Neither is built into
+relabel or shipped with it.
 
 ## Code copied into this repository
 

@@ -636,6 +636,154 @@ macro_rules! impl_file_host {
     };
 }
 
+/// One row of the Preview pane's issue list, whichever compiled component it
+/// belongs to.
+pub trait IssueItem: Clone + 'static {
+    fn of(text: &str) -> Self;
+    /// What the row says, so the wiring writes only a row whose words changed.
+    fn text(&self) -> &str;
+}
+
+/// One of the Preview pane's printer choices: the face, and what the button
+/// announces as its description.
+pub trait ChoiceItem: Clone + 'static {
+    fn of(text: &str, says: &str) -> Self;
+}
+
+/// The print half of a window: the Printer line beside the File bar, and the
+/// Preview pane.
+///
+/// Over the file half rather than beside it, because the pane is opened by a file
+/// command and shares the popups' one place (`filing`), and closing it is a file
+/// command too. Setters, the one getter the focus serial needs, and the two
+/// callbacks: every sentence, face, flag and focus target is `printing`'s or
+/// `proof`'s, and the pane decides nothing.
+pub trait PrintHost: FileHost {
+    type Issue: IssueItem;
+    type Choice: ChoiceItem;
+
+    fn set_printer_line(&self, line: slint::SharedString);
+    fn set_preview_verdict(&self, verdict: slint::SharedString);
+    fn set_preview_step(&self, step: slint::SharedString);
+    fn set_preview_plane(&self, plane: slint::Image);
+    fn set_preview_plane_px_w(&self, px: i32);
+    fn set_preview_plane_px_h(&self, px: i32);
+    fn set_preview_plane_says(&self, says: slint::SharedString);
+    fn set_preview_facts(&self, facts: slint::SharedString);
+    fn set_preview_issues(&self, issues: slint::ModelRc<Self::Issue>);
+    fn set_preview_choices(&self, choices: slint::ModelRc<Self::Choice>);
+    fn set_preview_primary(&self, face: slint::SharedString);
+    fn set_preview_primary_says(&self, says: slint::SharedString);
+    fn set_preview_primary_shown(&self, shown: bool);
+    fn set_preview_primary_default(&self, default: bool);
+    fn set_preview_close_says(&self, says: slint::SharedString);
+    /// Where the keyboard goes: `printing::Focus::token`. Read by the pane when it
+    /// opens, and again whenever the serial below changes.
+    fn set_preview_focus_to(&self, to: i32);
+    fn set_preview_focus_serial(&self, serial: i32);
+    fn get_preview_focus_serial(&self) -> i32;
+    fn invoke_show_preview(&self);
+
+    /// 0 is the primary slot, 1 is Close.
+    fn on_preview_act(&self, f: impl FnMut(i32) + 'static);
+    /// An offered printer, by its place among the choices.
+    fn on_preview_choose(&self, f: impl FnMut(i32) + 'static);
+}
+
+/// Bind a compiled shell window and its two structs to [`crate::print`]. Once for
+/// the application, once in each test file that wires the printer.
+#[macro_export]
+macro_rules! impl_print_host {
+    ($win:ty, $issue:path, $choice:path) => {
+        impl $crate::rows::IssueItem for $issue {
+            fn of(text: &str) -> $issue {
+                $issue { text: text.into() }
+            }
+            fn text(&self) -> &str {
+                self.text.as_str()
+            }
+        }
+
+        impl $crate::rows::ChoiceItem for $choice {
+            fn of(text: &str, says: &str) -> $choice {
+                $choice {
+                    text: text.into(),
+                    says: says.into(),
+                }
+            }
+        }
+
+        impl $crate::rows::PrintHost for $win {
+            type Issue = $issue;
+            type Choice = $choice;
+
+            fn set_printer_line(&self, line: slint::SharedString) {
+                <$win>::set_printer_line(self, line)
+            }
+            fn set_preview_verdict(&self, verdict: slint::SharedString) {
+                <$win>::set_preview_verdict(self, verdict)
+            }
+            fn set_preview_step(&self, step: slint::SharedString) {
+                <$win>::set_preview_step(self, step)
+            }
+            fn set_preview_plane(&self, plane: slint::Image) {
+                <$win>::set_preview_plane(self, plane)
+            }
+            fn set_preview_plane_px_w(&self, px: i32) {
+                <$win>::set_preview_plane_px_w(self, px)
+            }
+            fn set_preview_plane_px_h(&self, px: i32) {
+                <$win>::set_preview_plane_px_h(self, px)
+            }
+            fn set_preview_plane_says(&self, says: slint::SharedString) {
+                <$win>::set_preview_plane_says(self, says)
+            }
+            fn set_preview_facts(&self, facts: slint::SharedString) {
+                <$win>::set_preview_facts(self, facts)
+            }
+            fn set_preview_issues(&self, issues: slint::ModelRc<$issue>) {
+                <$win>::set_preview_issues(self, issues)
+            }
+            fn set_preview_choices(&self, choices: slint::ModelRc<$choice>) {
+                <$win>::set_preview_choices(self, choices)
+            }
+            fn set_preview_primary(&self, face: slint::SharedString) {
+                <$win>::set_preview_primary(self, face)
+            }
+            fn set_preview_primary_says(&self, says: slint::SharedString) {
+                <$win>::set_preview_primary_says(self, says)
+            }
+            fn set_preview_primary_shown(&self, shown: bool) {
+                <$win>::set_preview_primary_shown(self, shown)
+            }
+            fn set_preview_primary_default(&self, default: bool) {
+                <$win>::set_preview_primary_default(self, default)
+            }
+            fn set_preview_close_says(&self, says: slint::SharedString) {
+                <$win>::set_preview_close_says(self, says)
+            }
+            fn set_preview_focus_to(&self, to: i32) {
+                <$win>::set_preview_focus_to(self, to)
+            }
+            fn set_preview_focus_serial(&self, serial: i32) {
+                <$win>::set_preview_focus_serial(self, serial)
+            }
+            fn get_preview_focus_serial(&self) -> i32 {
+                <$win>::get_preview_focus_serial(self)
+            }
+            fn invoke_show_preview(&self) {
+                <$win>::invoke_show_preview(self)
+            }
+            fn on_preview_act(&self, f: impl FnMut(i32) + 'static) {
+                <$win>::on_preview_act(self, f)
+            }
+            fn on_preview_choose(&self, f: impl FnMut(i32) + 'static) {
+                <$win>::on_preview_choose(self, f)
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

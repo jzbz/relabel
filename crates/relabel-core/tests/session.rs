@@ -206,3 +206,31 @@ async fn a_dropped_link_ends_a_pending_request() {
         "{err:?}"
     );
 }
+
+/// Dropping a session does not close its transport, so the link actor closes
+/// every session it opened. After that the session is over for every caller.
+#[tokio::test(start_paused = true)]
+async fn closing_a_session_closes_its_transport() {
+    let (t, handle) = MockTransport::always_ok();
+    let s = Session::start(Box::new(t));
+    s.close().await;
+    assert!(handle.is_closed());
+    let err = s.request(payload::connect(), T).await.unwrap_err();
+    assert_eq!(err, SessionError::Ended);
+    assert!(s.trace().await.is_empty());
+}
+
+/// A link the platform has already dropped still closes, and closing it does
+/// not wait for anything the printer would have said.
+#[tokio::test(start_paused = true)]
+async fn closing_after_the_link_dropped_still_returns() {
+    let (t, handle) = MockTransport::new(Box::new(|_req: &Frame| vec![]));
+    let s = Session::start(Box::new(t));
+    handle.disconnect();
+    let started = tokio::time::Instant::now();
+    s.close().await;
+    assert!(handle.is_closed());
+    assert_eq!(started.elapsed(), Duration::ZERO);
+    // Closing twice is harmless: the task has gone, so the second returns at once.
+    s.close().await;
+}

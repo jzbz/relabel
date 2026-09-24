@@ -3,7 +3,8 @@ import { Inspector } from "inspector.slint";
 import { ZoomBar, Scroller } from "zoom.slint";
 import { EditBar, FileBar } from "tools.slint";
 import { UnsavedQuestion, NewLabelPane } from "files.slint";
-import { ElRow, InsSlot, Tool, Grips, SizePreset } from "types.slint";
+import { PreviewPane } from "print.slint";
+import { ElRow, InsSlot, Tool, Grips, SizePreset, IssueRow, ChoiceRow } from "types.slint";
 
 // The size the application opens at, which its probe is fixed at too, so the two
 // cannot drift. Wide enough for a 40 mm label at two device pixels to the dot beside
@@ -41,7 +42,7 @@ export component Designer {
     in property <[Tool]> tools <=> edit-bar.tools;
 
     // --- the files, pushed by crate::file ---
-    // The File bar's four buttons, pushed once.
+    // The File bar's five buttons, pushed once.
     in property <[Tool]> file-tools <=> file-bar.tools;
     // The New label pane's presets, and what the length typed so far comes to,
     // pushed when the pane opens and on every edit.
@@ -54,6 +55,28 @@ export component Designer {
     private property <string> new-about;
     private property <string> new-feed-start;
     private property <string> new-hint;
+
+    // --- the printer, pushed by crate::print ---
+    // What is connected, beside the File bar.
+    in property <string> printer-line;
+    // The Preview pane's contents, pushed before it opens and whenever they change
+    // while it is open. Every sentence is `proof`'s or `printing`'s.
+    in property <string> preview-verdict;
+    in property <string> preview-step;
+    in property <image> preview-plane;
+    in property <int> preview-plane-px-w;
+    in property <int> preview-plane-px-h;
+    in property <string> preview-plane-says;
+    in property <string> preview-facts;
+    in property <[IssueRow]> preview-issues;
+    in property <[ChoiceRow]> preview-choices;
+    in property <string> preview-primary;
+    in property <string> preview-primary-says;
+    in property <bool> preview-primary-shown;
+    in property <bool> preview-primary-default;
+    in property <string> preview-close-says;
+    in property <int> preview-focus-to;
+    in property <int> preview-focus-serial;
 
     // --- the inspector ---
     in property <[InsSlot]> ins-slots <=> inspector.slots;
@@ -137,6 +160,9 @@ export component Designer {
     callback new-make(text: string);
     callback new-preset(token: int);
     callback new-cancel();
+    // The Preview pane: 0 its primary slot, 1 Close; and an offered printer.
+    callback preview-act(what: int);
+    callback preview-choose(index: int);
 
     // On the device size rather than on `width`: a move to a display of another
     // scale changes the first and not the second (measured, reach run4.log). Late by
@@ -193,11 +219,18 @@ export component Designer {
         new-pane.show();
     }
 
-    // Called from Rust before it shows the question or closes the window: a close
-    // abandons the New label pane, and a question never opens over another popup.
+    // Called from Rust once the pane's contents are pushed.
+    public function show-preview() {
+        preview-pane.show();
+    }
+
+    // Called from Rust before it shows the question, the preview or closes the
+    // window: a close abandons the New label pane and the preview, and no popup
+    // ever opens over another.
     public function close-file-popups() {
         unsaved.close();
         new-pane.close();
+        preview-pane.close();
     }
 
     // Every route that adds an element: a button, its default action and a chord.
@@ -343,11 +376,12 @@ export component Designer {
                     root.zoom-fit();
                     return EventResult.accept;
                 }
-                // New, open, save and save as: Control and N, O or S, with Shift for
-                // Save as, from anywhere for Ctrl+Z's reason; a field ignores all
-                // four (i-slint-core input.rs:972-998, items/text.rs:1024-1059).
-                // Before the add chords, and Rust answers -1 for Control+Shift+O and
-                // Control+Shift+N, so Add rectangle keeps its chord. A held chord
+                // New, open, save, save as and preview: Control and N, O, S or P,
+                // with Shift for Save as, from anywhere for Ctrl+Z's reason; a field
+                // ignores all five (i-slint-core input.rs:972-998,
+                // items/text.rs:1024-1059). Before the add chords, and Rust answers
+                // -1 for Control+Shift+O, Control+Shift+N and Control+Shift+P, so Add
+                // rectangle keeps its chord. A held chord
                 // repeats, since the winit backend never sets `repeat`: a second Save
                 // finds nothing to save, and a second Open a dialog already open.
                 if (event.modifiers.control && !event.modifiers.alt
@@ -423,9 +457,27 @@ export component Designer {
                     spacing: 8px;
 
                     // A row of its own, above the edit bar, so neither bar's buttons
-                    // give way to the other's. DefaultWindow grows by exactly this row.
-                    file-bar := FileBar {
-                        command(token) => { root.file-command(token); }
+                    // give way to the other's. DefaultWindow grows by exactly this row,
+                    // which the File bar holds at a button's height: the Printer line
+                    // beside it is one line and elides, so it neither widens the column
+                    // nor makes the row taller.
+                    HorizontalLayout {
+                        spacing: 12px;
+                        file-bar := FileBar {
+                            horizontal-stretch: 0;
+                            command(token) => { root.file-command(token); }
+                        }
+                        // Plain text: not live, since the status line announces a
+                        // connect once, and not a Tab stop, since nothing acts on it.
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.printer-line;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: "Printer";
+                            accessible-value: root.printer-line;
+                        }
                     }
 
                     // Above the view, so the bars take their height from the canvas
@@ -629,5 +681,34 @@ export component Designer {
         make(text) => { root.new-make(text); }
         preset(token) => { root.new-preset(token); }
         cancel => { root.new-cancel(); }
+    }
+    // As wide as the window allows, up to 700 px: print.rs fits the image to the
+    // same arithmetic.
+    preview-pane := PreviewPane {
+        x: (root.width - self.width) / 2;
+        y: 84px;
+        width: Math.min(700px, root.width - 40px);
+        // Down to the status line, less the layout's spacing above it, so the pane
+        // never covers the line that says what the link is doing. The status line is
+        // two lines tall whatever it holds, so this does not move while it talks.
+        room: status-row.y - self.y - 8px;
+        verdict: root.preview-verdict;
+        step: root.preview-step;
+        plane: root.preview-plane;
+        plane-px-w: root.preview-plane-px-w;
+        plane-px-h: root.preview-plane-px-h;
+        plane-says: root.preview-plane-says;
+        facts: root.preview-facts;
+        issues: root.preview-issues;
+        choices: root.preview-choices;
+        primary: root.preview-primary;
+        primary-says: root.preview-primary-says;
+        primary-shown: root.preview-primary-shown;
+        primary-default: root.preview-primary-default;
+        close-says: root.preview-close-says;
+        focus-to: root.preview-focus-to;
+        focus-serial: root.preview-focus-serial;
+        act(what) => { root.preview-act(what); }
+        choose(index) => { root.preview-choose(index); }
     }
 }

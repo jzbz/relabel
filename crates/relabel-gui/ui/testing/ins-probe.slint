@@ -1,7 +1,7 @@
 import { Designer, DefaultWindow } from "../shell.slint";
-import { ElRow, InsSlot, Tool, Grips, SizePreset } from "../types.slint";
+import { ElRow, InsSlot, Tool, Grips, SizePreset, IssueRow, ChoiceRow } from "../types.slint";
 
-export { ElRow, InsSlot, Tool, Grips, SizePreset, DefaultWindow }
+export { ElRow, InsSlot, Tool, Grips, SizePreset, IssueRow, ChoiceRow, DefaultWindow }
 
 // The application's shell in a window of its own, compiled a second time with
 // debug info so that ElementHandle can see the element tree. It imports the
@@ -44,6 +44,23 @@ export component InsProbe inherits Window {
     in property <[Tool]> file-tools <=> shell.file-tools;
     in property <[SizePreset]> new-presets <=> shell.new-presets;
     in property <string> new-note <=> shell.new-note;
+    in property <string> printer-line <=> shell.printer-line;
+    in property <string> preview-verdict <=> shell.preview-verdict;
+    in property <string> preview-step <=> shell.preview-step;
+    in property <image> preview-plane <=> shell.preview-plane;
+    in property <int> preview-plane-px-w <=> shell.preview-plane-px-w;
+    in property <int> preview-plane-px-h <=> shell.preview-plane-px-h;
+    in property <string> preview-plane-says <=> shell.preview-plane-says;
+    in property <string> preview-facts <=> shell.preview-facts;
+    in property <[IssueRow]> preview-issues <=> shell.preview-issues;
+    in property <[ChoiceRow]> preview-choices <=> shell.preview-choices;
+    in property <string> preview-primary <=> shell.preview-primary;
+    in property <string> preview-primary-says <=> shell.preview-primary-says;
+    in property <bool> preview-primary-shown <=> shell.preview-primary-shown;
+    in property <bool> preview-primary-default <=> shell.preview-primary-default;
+    in property <string> preview-close-says <=> shell.preview-close-says;
+    in property <int> preview-focus-to <=> shell.preview-focus-to;
+    in property <int> preview-focus-serial <=> shell.preview-focus-serial;
 
     callback select(id: int);
     callback begin-move(id: int);
@@ -84,6 +101,8 @@ export component InsProbe inherits Window {
     callback new-make(text: string);
     callback new-preset(token: int);
     callback new-cancel();
+    callback preview-act(what: int);
+    callback preview-choose(index: int);
 
     public function show-fields() {
         shell.show-fields();
@@ -103,6 +122,10 @@ export component InsProbe inherits Window {
 
     public function close-file-popups() {
         shell.close-file-popups();
+    }
+
+    public function show-preview() {
+        shell.show-preview();
     }
 
     // The testing backend ignores a window's title (testing_backend.rs:404-409), so
@@ -150,5 +173,7 @@ export component InsProbe inherits Window {
         new-make(t) => { root.new-make(t); }
         new-preset(t) => { root.new-preset(t); }
         new-cancel() => { root.new-cancel(); }
+        preview-act(w) => { root.preview-act(w); }
+        preview-choose(i) => { root.preview-choose(i); }
     }
 }

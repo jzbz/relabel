@@ -2,9 +2,11 @@
 //!
 //! Two panes: the label as dots, with a frame round every element, placement and
 //! size by pointer or by keyboard, and a bar to add and delete elements; and beside
-//! it the selected element's fields. Above them, a bar to make, open and save a
-//! label. The document lives in Rust; the `.slint` side holds flat models of rows
-//! and slots and no rules at all.
+//! it the selected element's fields. Above them, a bar to make, open, save and
+//! preview a label, and a line saying which printer is connected. The Preview pane
+//! shows what would print and connects to a printer; nothing prints yet. The
+//! document lives in Rust; the `.slint` side holds flat models of rows and slots
+//! and no rules at all.
 
 pub mod a11y;
 pub mod canvas;
@@ -18,7 +20,11 @@ pub mod fresh;
 pub mod geom;
 pub mod ins;
 pub mod make;
+pub mod plug;
 pub mod preview;
+pub mod print;
+pub mod printing;
+pub mod proof;
 pub mod rows;
 pub mod view;
 
@@ -27,10 +33,12 @@ use choose::{Chooser, NativeChooser};
 use doc::Doc;
 use filing::Filing;
 use fresh::NewSpec;
-use rows::FileHost;
-use std::cell::RefCell;
+use plug::{NativePlug, Plug};
+use rows::PrintHost;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Duration;
 use view::Opening;
 
 slint::include_modules!();
@@ -40,6 +48,7 @@ impl_ins_host!(AppWindow, InsSlot);
 impl_view_host!(AppWindow);
 impl_edit_host!(AppWindow, Tool, Grips);
 impl_file_host!(AppWindow, SizePreset);
+impl_print_host!(AppWindow, IssueRow, ChoiceRow);
 
 /// What the window opens on: the document, its file when it has one, and the
 /// status line's first sentence.
@@ -52,7 +61,7 @@ pub struct Started {
 
 /// The document the window opens on, from the command line's path or from none.
 ///
-/// With no path, a new label at the registry's default size for a D110. With a
+/// With no path, a new label at the registry's default size for a D110_M. With a
 /// path, that label; or, when the path names a file that does not exist in a
 /// folder that does, a new label whose file it becomes, so Control+S writes it
 /// there with no dialog - which is also how a label is saved where no file dialog
@@ -61,14 +70,17 @@ pub struct Started {
 /// say it on (main.rs, `windows_subsystem`).
 pub fn start(path: Option<&Path>) -> Started {
     let blank = || {
-        let spec = NewSpec::stock(fresh::default_printer());
-        let doc = Doc::open(fresh::build(&spec), spec.spec.direction)
-            .expect("the registry's own D110 label opens");
         // The printer is assumed: nothing is open to take it from, and nothing is
-        // connected.
+        // connected. Said in `made_says`'s words, which Create in the New label
+        // pane uses too.
+        let spec = NewSpec {
+            assumed: Some(fresh::NOT_CONNECTED),
+            ..NewSpec::stock(fresh::default_printer())
+        };
+        let doc = Doc::open(fresh::build(&spec), spec.spec.direction)
+            .expect("the registry's own D110_M label opens");
         let note = format!(
-            "{} (assumed: relabel is not connected to a printer): {}; Control+N makes one of \
-             another size",
+            "{}: {}; Control+N makes one of another size",
             fresh::made_says(&spec),
             doc.opening_note()
         );
@@ -118,18 +130,24 @@ pub fn start(path: Option<&Path>) -> Started {
 }
 
 /// The document's state, as [`wire_window`] hands it back for a caller to read.
-pub struct Wired<H: FileHost> {
+pub struct Wired<H: PrintHost> {
     pub canvas: Rc<RefCell<Canvas<H>>>,
     pub filing: Rc<RefCell<Filing>>,
+    pub prints: Rc<print::Prints<H>>,
 }
 
 /// Wire every pane of a window to the document `started` holds: the canvas, the
-/// fields, the edit bar, the view and the files, in that order. The application and
-/// every file test call this, so both run the one wiring.
-pub fn wire_window<H: FileHost>(
+/// fields, the edit bar, the view, the printer and the files, in that order. The
+/// application and every file and print test call this, so all of them run the one
+/// wiring.
+///
+/// `plug` carries orders to the printer link, and nothing is sent through it until
+/// Connect is pressed.
+pub fn wire_window<H: PrintHost>(
     host: &H,
     started: Started,
     chooser: Rc<dyn Chooser>,
+    plug: Rc<dyn Plug>,
     opening: Opening,
 ) -> Wired<H> {
     let Started { doc, path, note } = started;
@@ -140,13 +158,34 @@ pub fn wire_window<H: FileHost>(
     // window manager's first sizes are provisional, and a fit taken once here would
     // be stale.
     let viewer = view::wire(host, &canvas, opening);
-    let filing = file::wire(host, &canvas, viewer, chooser, Filing::new(path));
+    // One machine for the file commands and the preview, which share the popups'
+    // one place (filing.rs); the printer before the files, which open its pane.
+    let filing = Rc::new(RefCell::new(Filing::new(path)));
+    let connected = Rc::new(Cell::new(None));
+    let prints = print::wire(host, &canvas, &filing, plug, connected.clone());
+    let preview: Rc<dyn Fn(&H)> = {
+        let prints = prints.clone();
+        Rc::new(move |host: &H| prints.open(host))
+    };
+    file::wire(
+        host,
+        &canvas,
+        viewer,
+        chooser,
+        filing.clone(),
+        preview,
+        connected,
+    );
     host.set_status(note.as_str().into());
     // So the window opens with the keyboard in the canvas: F6 is a capture, and
     // the capture list is built from the focused item's ancestor chain, which is
     // empty when nothing has focus.
     host.invoke_focus_canvas();
-    Wired { canvas, filing }
+    Wired {
+        canvas,
+        filing,
+        prints,
+    }
 }
 
 /// Open the window on the label at `path`, or on a new one, and run it until it
@@ -158,7 +197,14 @@ pub fn run_app(path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     }
     let ui = AppWindow::new()?;
     let chooser = Rc::new(NativeChooser::new(&ui));
-    wire_window(&ui, started, chooser, Opening::Fit);
-    ui.run()?;
+    let plug = Rc::new(NativePlug::new());
+    wire_window(&ui, started, chooser, plug.clone(), Opening::Fit);
+    let ran = ui.run();
+    // Whatever the loop ended with, the printer link is closed before the process
+    // goes: a scan stopped, a connect abandoned, a session closed. Five seconds
+    // covers each of those at its own cap (relabel-core `link`), and past it the
+    // process leaves anyway rather than hang with no window.
+    plug.finish(Duration::from_secs(5));
+    ran?;
     Ok(())
 }

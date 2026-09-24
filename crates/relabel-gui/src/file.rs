@@ -1,6 +1,6 @@
 //! The file commands' wiring: the File bar, the chords, the question about unsaved
-//! work, the New label pane and the window's close button, driven through
-//! [`Filing`].
+//! work, the New label pane, opening the Preview pane and the window's close
+//! button, driven through [`Filing`].
 //!
 //! Every route is one call to `drive`, which does the same five things in order:
 //! commit what a field is holding, unless an element is held; read the document
@@ -23,7 +23,7 @@ use crate::filing::{self, FileCmd, Filing, Next, Now, Reply, Source, Want};
 use crate::fresh::{self, NewSpec};
 use crate::rows::{FileHost, PresetRow, ToolRow};
 use crate::view::Viewer;
-use relabel_proto::{ModelSpec, PrintDirection};
+use relabel_proto::PrintDirection;
 use relabel_render::document::{DataBinding, KnownBinding};
 use slint::{CloseRequestResponse, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
@@ -41,32 +41,43 @@ struct Files<H: FileHost> {
     /// that push never borrows the `Filing`.
     name: Rc<RefCell<Option<String>>>,
     /// The printer the New label pane was opened for, which its answers are read
-    /// against.
-    printer: Cell<Option<&'static ModelSpec>>,
+    /// against, and whether it was assumed, which the status line then says.
+    printer: Cell<Option<fresh::Printer>>,
+    /// Opens the Preview pane, which is `print`'s.
+    preview: Rc<dyn Fn(&H)>,
+    /// The connected printer, written by `print` and offered by the New label
+    /// pane when a new label can be made for it.
+    connected: Rc<Cell<Option<fresh::Connected>>>,
 }
 
-/// Wire the file commands to a window whose canvas, pane, edit bar and view are
-/// wired already. Returns the file state, so a caller can read back which file the
-/// document is.
+/// Wire the file commands to a window whose canvas, pane, edit bar, view and
+/// printer are wired already.
 ///
 /// `viewer` is the view's state from [`crate::view::wire`], which a document
 /// opened in place of another starts afresh. `chooser` asks the operator for a
 /// file: [`crate::choose::NativeChooser`] in the application, a script in a test.
+/// `filing` is shared with the Preview pane, which closes through it; `preview`
+/// opens that pane, and `connected` is the printer it has connected to.
 pub fn wire<H: FileHost>(
     host: &H,
     canvas: &Rc<RefCell<Canvas<H>>>,
     viewer: Viewer<H>,
     chooser: Rc<dyn Chooser>,
-    filing: Filing,
-) -> Rc<RefCell<Filing>> {
+    filing: Rc<RefCell<Filing>>,
+    preview: Rc<dyn Fn(&H)>,
+    connected: Rc<Cell<Option<fresh::Connected>>>,
+) {
+    let name = filing.borrow().name();
     let files = Rc::new(Files {
         host: host.as_weak(),
         canvas: canvas.clone(),
         viewer,
         chooser,
-        name: Rc::new(RefCell::new(filing.name())),
-        filing: Rc::new(RefCell::new(filing)),
+        name: Rc::new(RefCell::new(name)),
+        filing,
         printer: Cell::new(None),
+        preview,
+        connected,
     });
 
     // Once, for `edit::wire`'s reason: the commands are this build's.
@@ -126,7 +137,7 @@ pub fn wire<H: FileHost>(
         }
     });
     on!(on_new_feed_edited, |files, host, text| {
-        if let Some(spec) = files.printer.get() {
+        if let Some(spec) = files.printer.get().map(|p| p.spec) {
             let note = match fresh::parse_feed(&text, spec) {
                 Ok(tenths) => fresh::feed_says(tenths, spec),
                 Err(why) => why,
@@ -137,7 +148,9 @@ pub fn wire<H: FileHost>(
     {
         let files = files.clone();
         host.on_new_check(move |text| {
-            let (Some(host), Some(spec)) = (files.host.upgrade(), files.printer.get()) else {
+            let (Some(host), Some(spec)) =
+                (files.host.upgrade(), files.printer.get().map(|p| p.spec))
+            else {
                 return false;
             };
             match fresh::parse_feed(&text, spec) {
@@ -157,11 +170,10 @@ pub fn wire<H: FileHost>(
     on!(on_new_make, |files, host, text| {
         // Checked by the pane before it closed; a length that fails here after all
         // starts nothing, and the machine says so.
-        let made = files
-            .printer
-            .get()
-            .and_then(|spec| Some((spec, fresh::parse_feed(&text, spec).ok()?)));
-        let spec = made.map(|(spec, feed_tenths)| NewSpec { spec, feed_tenths });
+        let spec = files.printer.get().and_then(|p| {
+            let feed_tenths = fresh::parse_feed(&text, p.spec).ok()?;
+            Some(NewSpec::of(&p, feed_tenths))
+        });
         drive(files, host, FileCmd::Sized(spec));
     });
     on!(on_new_preset, |files, host, token| {
@@ -169,11 +181,8 @@ pub fn wire<H: FileHost>(
         let spec = files
             .printer
             .get()
-            .filter(|spec| fresh::presets(spec).contains(&token))
-            .map(|spec| NewSpec {
-                spec,
-                feed_tenths: token,
-            });
+            .filter(|p| fresh::presets(p.spec).contains(&token))
+            .map(|p| NewSpec::of(&p, token));
         drive(files, host, FileCmd::Sized(spec));
     });
     on!(on_new_cancel, |files, host| {
@@ -199,8 +208,6 @@ pub fn wire<H: FileHost>(
             }
         });
     }
-
-    files.filing.clone()
 }
 
 /// One file command, start to finish. Returns what the command itself came to,
@@ -284,9 +291,10 @@ impl<H: FileHost> Files<H> {
                 }
             }
             Next::Size => {
-                let printer = fresh::printer_for(self.canvas.borrow().doc().label());
+                let printer =
+                    fresh::printer_for(self.canvas.borrow().doc().label(), self.connected.get());
                 let spec = printer.spec;
-                self.printer.set(Some(spec));
+                self.printer.set(Some(printer));
                 let presets: Vec<H::Preset> =
                     fresh::offers(spec).iter().map(H::Preset::of).collect();
                 host.set_new_presets(ModelRc::new(VecModel::from(presets)));
@@ -312,16 +320,24 @@ impl<H: FileHost> Files<H> {
                 drive(self, host, FileCmd::Wrote { to, result });
             }
             Next::Read(from) => {
-                // Until a printer is connected, the only thing that knows which way
-                // round the canvas goes is the model the file was made for; `Left`
-                // is the assumption when it says nothing, because it is the whole
-                // D11/D110/D101 family and the one this has been run against.
+                // The only thing that says which way round the canvas goes is the
+                // model the file was made for; `Left` is the assumption when it
+                // says nothing, because it is the whole D11/D110/D101 family and
+                // the one this has been run against. A connected printer that goes
+                // the other way stops the preview rather than turning the label
+                // (`proof`).
                 let opened = disk::read_label(&from)
                     .map_err(|e| e.to_string())
                     .and_then(|label| {
                         Doc::open(label, PrintDirection::Left).map_err(|e| e.to_string())
                     });
                 self.open(host, Source::File(from), opened);
+            }
+            // Shown again when it is already open, drawn afresh, so it is closed
+            // first as a question is; and nothing else is ever shown with it.
+            Next::Preview => {
+                host.invoke_close_file_popups();
+                (self.preview)(host);
             }
             Next::Fresh(spec) => {
                 let made =

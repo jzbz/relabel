@@ -301,3 +301,17 @@ The SDK shows what the vendor *sends*. It cannot show what the firmware
   178, K4 832 vs 656). That is vendor catalogue data, not protocol.
 - The units and polarity of the heartbeat temperature and RFID flags.
 - How a user learns their label size without the vendor's cloud SKU lookup.
+
+Three more are Bluetooth-stack questions the editor's printer link (RENDER-PLAN
+step 12, 12f-1) was built on by reading source rather than by observing. Each
+is at worst a wrong sentence or a slow retry, never a spent label, and the
+passive hardware checks H4 and H5 there settle them:
+
+- Whether BlueZ keeps a device's RSSI once discovery stops, and whether it
+  clears it before the next discovery. A scan now reads it before stopping, and
+  the editor uses whether it is present only to order printers and word notes.
+- How long after a printer is switched off BlueZ raises `DeviceDisconnected`,
+  and whether it always does. It is the editor's only sign of a lost link.
+- Whether `Device1.Disconnect` cancels a connect still pending, so that the
+  next connect, after the editor gives one up at 15 seconds, does not find the
+  device still busy.

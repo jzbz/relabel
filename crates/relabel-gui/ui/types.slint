@@ -116,3 +116,15 @@ export struct SizePreset {
     name: string,
     says: string,
 }
+
+// One row of the Preview pane's issue list, severity first, as `proof` says it.
+export struct IssueRow {
+    text: string,
+}
+
+// One printer the Preview pane offers while choosing, from `printing`: the face,
+// and what the button announces as its description.
+export struct ChoiceRow {
+    text: string,
+    says: string,
+}

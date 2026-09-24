@@ -1,0 +1,269 @@
+import { Button, Palette } from "std-widgets.slint";
+import { IssueRow, ChoiceRow } from "types.slint";
+
+// The Preview pane: what would print, why it could not, and the printer link.
+// Every word, face, flag and focus target comes from Rust (`proof`, `printing`);
+// the pane decides nothing, and nothing in it is editable.
+//
+// A popup in the file popups' one place, for their reasons (files.slint): no-auto-
+// close, so a click elsewhere reaches nothing and no chord acts on the document
+// behind it; Escape closes it through its own FocusScope; Tab goes round inside
+// it; and every handler that ends it closes it before it calls out.
+
+// One of the offered printers. A fixed slot rather than a repeated button, so the
+// pane can put the keyboard on the first by id, as the inspector's fixed slots are
+// reached (inspector.slint). An unused slot leaves the layout as well as the
+// tree, for the inspector slot's reason: `visible: false` alone keeps its height.
+component ChoiceSlot {
+    in property <ChoiceRow> choice;
+    in property <bool> used;
+    callback clicked();
+    visible: root.used;
+    min-height: root.used ? inner.min-height : 0px;
+    max-height: root.used ? inner.max-height : 0px;
+    forward-focus: button;
+    inner := HorizontalLayout {
+        alignment: start;
+        button := Button {
+            text: root.choice.text;
+            accessible-description: root.choice.says;
+            clicked => {
+                root.clicked();
+            }
+        }
+    }
+}
+
+export component PreviewPane inherits PopupWindow {
+    in property <string> verdict;
+    in property <string> step;
+    in property <image> plane;
+    in property <int> plane-px-w;
+    in property <int> plane-px-h;
+    in property <string> plane-says;
+    in property <string> facts;
+    in property <[IssueRow]> issues;
+    in property <[ChoiceRow]> choices;
+    in property <string> primary;
+    in property <string> primary-says;
+    in property <bool> primary-shown;
+    in property <bool> primary-default;
+    in property <string> close-says;
+    // Where the keyboard goes: 0 the primary slot, 1 Close, 2 the first choice
+    // (`printing::Focus::token`). Read as the pane opens, and again whenever Rust
+    // moves the serial, which it does only while the pane is open.
+    in property <int> focus-to;
+    in property <int> focus-serial;
+    // The most height the pane may take, which the window decides. Past it the issue
+    // list scrolls, so the buttons below it stay on screen; while a printer is
+    // chosen the list steps aside for the choices.
+    in property <length> room;
+
+    // 0 the primary slot, 1 Close.
+    callback act(what: int);
+    callback choose(index: int);
+
+    close-policy: PopupClosePolicy.no-auto-close;
+    height: Math.min(layout.preferred-height, root.room);
+
+    init => {
+        root.land();
+    }
+    changed focus-serial => {
+        root.land();
+    }
+
+    function land() {
+        if (root.focus-to == 0) {
+            primary-button.focus();
+        } else if (root.focus-to == 2) {
+            choice0.focus();
+        } else {
+            close-button.focus();
+        }
+    }
+
+    Rectangle {
+        background: Palette.background;
+        border-width: 1px;
+        border-color: Palette.border;
+        border-radius: 4px;
+        accessible-role: AccessibleRole.groupbox;
+        accessible-label: "Preview";
+
+        FocusScope {
+            focus-on-tab-navigation: false;
+            focus-on-click: false;
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    root.close();
+                    root.act(1);
+                    return EventResult.accept;
+                }
+                return EventResult.reject;
+            }
+
+            layout := VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                Text {
+                    text: "Preview";
+                    font-weight: 600;
+                    // The group box already announces it.
+                    accessible-role: AccessibleRole.none;
+                }
+                Text {
+                    text: root.verdict;
+                    wrap: word-wrap;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "Verdict";
+                    accessible-value: root.verdict;
+                    // Announced as the pane opens and whenever it changes: an edit
+                    // behind the pane, or a printer connecting, can change it.
+                    accessible-live-region: AccessibleLiveness.polite;
+                }
+                // Not live: the handshake's steps would be eleven announcements. The
+                // status line says what matters once (`printing`).
+                Text {
+                    text: root.step;
+                    wrap: word-wrap;
+                    color: Palette.foreground.transparentize(35%);
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "Printer link";
+                    accessible-value: root.step;
+                }
+                // In device pixels, as the canvas's plane is (canvas.slint): the size
+                // is the image's own, so fill is a one-to-one blit, and nearest
+                // neighbour keeps the dots square.
+                if root.plane-px-w > 0: HorizontalLayout {
+                    alignment: center;
+                    Image {
+                        source: root.plane;
+                        width: root.plane-px-w * 1phx;
+                        height: root.plane-px-h * 1phx;
+                        image-fit: fill;
+                        image-rendering: pixelated;
+                        accessible-role: AccessibleRole.image;
+                        accessible-label: "What would print";
+                        accessible-description: root.plane-says;
+                    }
+                }
+                Text {
+                    text: root.facts;
+                    wrap: word-wrap;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "Size and sending";
+                    accessible-value: root.facts;
+                }
+                // A list of items, as the canvas's elements are (canvas.slint): each
+                // row is a Tab stop, through a FocusScope that takes no pointer events,
+                // so a screen reader can go through them one by one. The only part of
+                // the pane that gives way when the window is short: it scrolls, and a
+                // row the keyboard reaches is scrolled into view (i-slint-core
+                // window.rs:1300-1304), and Tab still stops on a row the scroll has
+                // clipped (window.rs:1325-1328).
+                //
+                // Hidden while a printer is chosen: four choices and the list at its
+                // least are taller than the room the default window leaves, and the
+                // choices cannot scroll without hiding one. The verdict still counts
+                // the issues, and the list comes back, from the same rows, once the
+                // choice is made or cancelled.
+                if root.issues.length > 0 && root.choices.length == 0: Flickable {
+                    vertical-stretch: 1;
+                    min-height: Math.min(list.preferred-height, 64px);
+                    preferred-height: list.preferred-height;
+                    max-height: list.preferred-height;
+                    viewport-width: self.width;
+                    viewport-height: list.preferred-height;
+                    list := Rectangle {
+                        width: parent.width;
+                        height: self.preferred-height;
+                        accessible-role: AccessibleRole.list;
+                        accessible-label: "Issues";
+                        accessible-item-count: root.issues.length;
+                        VerticalLayout {
+                            spacing: 2px;
+                            for issue[i] in root.issues: Rectangle {
+                                border-width: row-focus.has-focus ? 1px : 0px;
+                                border-color: Palette.accent-background;
+                                accessible-role: AccessibleRole.list-item;
+                                accessible-item-index: i;
+                                accessible-label: issue.text;
+                                accessible-value: issue.text;
+                                forward-focus: row-focus;
+                                HorizontalLayout {
+                                    padding: 2px;
+                                    Text {
+                                        text: issue.text;
+                                        wrap: word-wrap;
+                                        accessible-role: AccessibleRole.none;
+                                    }
+                                }
+                                // The whole row, so the scroll reveals all of it; a
+                                // FocusScope with no click focus ignores the pointer,
+                                // which reaches the list's scroll beneath.
+                                row-focus := FocusScope {
+                                    x: 0px;
+                                    y: 0px;
+                                    width: parent.width;
+                                    height: parent.height;
+                                    focus-on-click: false;
+                                }
+                            }
+                        }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 4px;
+                    choice0 := ChoiceSlot {
+                        choice: root.choices[0];
+                        used: root.choices.length > 0;
+                        clicked => { root.choose(0); }
+                    }
+                    ChoiceSlot {
+                        choice: root.choices[1];
+                        used: root.choices.length > 1;
+                        clicked => { root.choose(1); }
+                    }
+                    ChoiceSlot {
+                        choice: root.choices[2];
+                        used: root.choices.length > 2;
+                        clicked => { root.choose(2); }
+                    }
+                    ChoiceSlot {
+                        choice: root.choices[3];
+                        used: root.choices.length > 3;
+                        clicked => { root.choose(3); }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    // Connect, Stop waiting, Cancel or Disconnect, and hidden while a
+                    // link is closing or broken. Styled as the primary button only
+                    // when it is Connect, so Return in the pane never disconnects.
+                    primary-button := Button {
+                        text: root.primary;
+                        primary: root.primary-default;
+                        visible: root.primary-shown;
+                        accessible-description: root.primary-says;
+                        clicked => {
+                            root.act(0);
+                        }
+                    }
+                    close-button := Button {
+                        text: "Close";
+                        primary: !root.primary-default;
+                        // What the label costs, so the button the keyboard lands on
+                        // once connected reads the figures the pane shows.
+                        accessible-description: root.close-says;
+                        clicked => {
+                            root.close();
+                            root.act(1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

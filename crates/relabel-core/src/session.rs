@@ -79,9 +79,18 @@ enum Command {
     Trace {
         reply: oneshot::Sender<Vec<TraceEntry>>,
     },
+    Close {
+        reply: oneshot::Sender<()>,
+    },
 }
 
 /// A live connection.
+///
+/// Dropping a `Session` does **not** close its transport. The task that owns
+/// the transport ends when it notices every sender has gone (the `cmd.recv()`
+/// branch of `run`), and it drops the transport without closing it: a BLE link
+/// then stays connected until the printer or the platform gives up on it.
+/// Anything that opens a session and outlives it calls [`Session::close`].
 pub struct Session {
     cmd: mpsc::Sender<Command>,
     /// Serialises the request path. See the module note.
@@ -228,6 +237,27 @@ impl Session {
         rx.await.unwrap_or_default()
     }
 
+    /// Close the transport and end the session.
+    ///
+    /// Queued behind any command already sent, since commands run in order. A
+    /// request still waiting for its reply ends with [`SessionError::Ended`],
+    /// and so does every call made afterwards; [`Session::trace`] then returns
+    /// nothing. Returns at once if the session has already ended, and never
+    /// fails: a transport that cannot close cleanly is still finished with.
+    pub async fn close(&self) {
+        close_over(&self.cmd).await;
+    }
+
+    /// Something that can close this session later, from wherever the session
+    /// itself has gone. While a closer is held, dropping the session does not
+    /// end the task that owns the transport, so the closer can still reach it.
+    /// Closing an ended session through it returns at once.
+    pub fn closer(&self) -> Closer {
+        Closer {
+            cmd: self.cmd.clone(),
+        }
+    }
+
     fn check_size(&self, n: usize) -> Result<(), SessionError> {
         if n > self.max_write {
             return Err(TransportError::FrameTooLarge {
@@ -238,6 +268,27 @@ impl Session {
         }
         Ok(())
     }
+}
+
+/// Closes a session from outside whatever owns it. See [`Session::closer`].
+#[derive(Clone)]
+pub struct Closer {
+    cmd: mpsc::Sender<Command>,
+}
+
+impl Closer {
+    /// What [`Session::close`] does.
+    pub async fn close(&self) {
+        close_over(&self.cmd).await;
+    }
+}
+
+async fn close_over(cmd: &mpsc::Sender<Command>) {
+    let (tx, rx) = oneshot::channel();
+    if cmd.send(Command::Close { reply: tx }).await.is_err() {
+        return;
+    }
+    let _ = rx.await;
 }
 
 struct Pending {
@@ -310,6 +361,16 @@ async fn run(
                 match next {
                     Command::Trace { reply } => {
                         let _ = reply.send(trace.iter().cloned().collect());
+                    }
+                    Command::Close { reply } => {
+                        // Refuse new commands first, so nothing is queued
+                        // behind a close that may take a while. Whatever is
+                        // already queued, and a request still pending, is
+                        // dropped on return, which its caller sees as Ended.
+                        cmd.close();
+                        let _ = transport.close().await;
+                        let _ = reply.send(());
+                        return;
                     }
                     Command::Write { writes, first_id, reply } => {
                         let mut res = Ok(());

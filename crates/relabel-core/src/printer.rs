@@ -79,16 +79,62 @@ impl Identity {
     }
 }
 
+/// One request the handshake sends, for saying what a connect is waiting on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandshakeStep {
+    Connect,
+    /// Only sent to a printer that answered Connect at level 2 or better.
+    Status,
+    /// The `n`th of the identity reads, in [`IDENTITY_READS`] order, from 1.
+    Info {
+        field: InfoField,
+        n: u8,
+    },
+    Heartbeat,
+}
+
+impl HandshakeStep {
+    /// What relabel is doing at this step, to follow "while relabel was" or
+    /// "Connecting to D110_M-GB28010920: ".
+    pub fn says(&self) -> String {
+        match self {
+            HandshakeStep::Connect => "asking it to connect".into(),
+            HandshakeStep::Status => "asking which protocol it speaks".into(),
+            HandshakeStep::Info { field, n } => format!(
+                "reading its {} ({n} of {})",
+                field_name(*field),
+                IDENTITY_READS.len()
+            ),
+            HandshakeStep::Heartbeat => "checking the link".into(),
+        }
+    }
+}
+
 /// Connect, negotiate the protocol level, and read identity.
 ///
-/// Never fails on an individual read. The only hard error is a transport that
-/// has gone away.
+/// Never fails on an individual read. The only hard error is a link that has
+/// gone away: a transport failure, or a session that has already ended, at any
+/// step, the heartbeat included.
 pub async fn handshake(session: &Session, t: &Timeouts) -> Result<Identity, SessionError> {
+    handshake_with(session, t, |_| {}).await
+}
+
+/// [`handshake`], calling `on_step` immediately before each request it sends.
+///
+/// A step is reported only when its request is actually sent, so a printer
+/// below level 2 never reports [`HandshakeStep::Status`]. When the handshake
+/// fails, the last step reported is the one the link died on.
+pub async fn handshake_with(
+    session: &Session,
+    t: &Timeouts,
+    mut on_step: impl FnMut(HandshakeStep),
+) -> Result<Identity, SessionError> {
     let mut id = Identity::default();
 
     // 1. Connect. A missing reply is not fatal - several implementations never
     //    send this command at all and print successfully - but it is the only
     //    route to a protocol level, so it is worth asking.
+    on_step(HandshakeStep::Connect);
     match session.request(payload::connect(), t.default).await {
         Ok(f) => match ConnectResult::parse(&f.data) {
             Ok(r) => match r.protocol_version() {
@@ -108,7 +154,7 @@ pub async fn handshake(session: &Session, t: &Timeouts) -> Result<Identity, Sess
             },
             Err(_) => id.missing.push("connect result"),
         },
-        Err(SessionError::Transport(e)) => return Err(e.into()),
+        Err(e) if link_gone(&e) => return Err(e),
         Err(_) => {
             id.protocol_assumed = true;
             id.missing.push("connect");
@@ -117,6 +163,7 @@ pub async fn handshake(session: &Session, t: &Timeouts) -> Result<Identity, Sess
 
     // 2. Try to raise the baseline to an exact level.
     if id.protocol >= 2 {
+        on_step(HandshakeStep::Status);
         match session
             .request(payload::printer_status_data(), t.default)
             .await
@@ -136,7 +183,7 @@ pub async fn handshake(session: &Session, t: &Timeouts) -> Result<Identity, Sess
                 }
                 Err(_) => id.missing.push("printer status data"),
             },
-            Err(SessionError::Transport(e)) => return Err(e.into()),
+            Err(e) if link_gone(&e) => return Err(e),
             Err(_) => {
                 id.missing.push("printer status data");
                 id.protocol_assumed = true;
@@ -145,13 +192,14 @@ pub async fn handshake(session: &Session, t: &Timeouts) -> Result<Identity, Sess
     }
 
     // 3. Identity, model id first because everything downstream depends on it.
-    for field in IDENTITY_READS {
+    for (n, field) in (1u8..).zip(IDENTITY_READS) {
+        on_step(HandshakeStep::Info { field: *field, n });
         let reply = match session
             .request(payload::printer_info(*field), t.settings)
             .await
         {
             Ok(f) => f,
-            Err(SessionError::Transport(e)) => return Err(e.into()),
+            Err(e) if link_gone(&e) => return Err(e),
             Err(_) => {
                 id.missing.push(field_name(*field));
                 continue;
@@ -178,20 +226,31 @@ pub async fn handshake(session: &Session, t: &Timeouts) -> Result<Identity, Sess
     }
 
     // 4. One heartbeat. Cheap, and it is the first thing that would fail if the
-    //    link were only half up.
+    //    link were only half up. A printer that declines it, or does not
+    //    answer, is only missing it; a link that is gone here is gone.
     let kind = HeartbeatKind::for_protocol(id.protocol);
-    if session
-        .request(payload::heartbeat(kind), t.default)
-        .await
-        .is_err()
-    {
-        id.missing.push("heartbeat");
+    on_step(HandshakeStep::Heartbeat);
+    match session.request(payload::heartbeat(kind), t.default).await {
+        Ok(_) => {}
+        Err(e) if link_gone(&e) => return Err(e),
+        Err(_) => id.missing.push("heartbeat"),
     }
 
     Ok(id)
 }
 
-fn field_name(f: InfoField) -> &'static str {
+/// Whether a failed request means the link itself is gone, rather than the
+/// printer declining or not answering one request. A session whose loop has
+/// ended answers every request with `Ended` at once, so without this a link
+/// that went between two reads would be reported as a printer that declined
+/// every read after it.
+fn link_gone(e: &SessionError) -> bool {
+    matches!(e, SessionError::Transport(_) | SessionError::Ended)
+}
+
+/// A printer property in words, for the list of reads that failed and for
+/// [`HandshakeStep::says`].
+pub fn field_name(f: InfoField) -> &'static str {
     match f {
         InfoField::ModelId => "model id",
         InfoField::SerialNumber => "serial number",

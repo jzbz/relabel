@@ -339,6 +339,14 @@ impl Doc {
         &self.target
     }
 
+    /// Whether the canvas's direction is the fallback [`Doc::open`] was given,
+    /// because the file records no model this build knows. A printer whose
+    /// direction differs from an assumed one is said differently from one that
+    /// differs from what the file says.
+    pub fn direction_assumed(&self) -> bool {
+        self.direction_assumed
+    }
+
     pub fn selected(&self) -> Option<ElementId> {
         self.selected
     }
@@ -1495,6 +1503,7 @@ mod tests {
             "B1's head runs across the canvas"
         );
         assert!(!doc.orientation_note().contains("assumed"));
+        assert!(!doc.direction_assumed());
     }
 
     #[test]
@@ -1506,6 +1515,7 @@ mod tests {
             "{}",
             doc.orientation_note()
         );
+        assert!(doc.direction_assumed());
     }
 
     #[test]

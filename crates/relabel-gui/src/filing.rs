@@ -1,5 +1,5 @@
-//! New, open, save, save as and closing the window: which of them may go ahead,
-//! what has to be asked first, and what the operator is told.
+//! New, open, save, save as, the preview and closing the window: which of them
+//! may go ahead, what has to be asked first, and what the operator is told.
 //!
 //! A synchronous state machine with no toolkit and no I/O in it, for `doc`'s
 //! reason: one [`FileCmd`] in, one [`FileOutcome`] out, and every rule reached by
@@ -12,6 +12,16 @@
 //! A chord, a File bar button, an assistive technology's default action, the
 //! window's close button, a dialog's late answer and the New label pane all come
 //! through [`Filing::apply`], so unsaved work is asked about in one place.
+//!
+//! # The preview shares the popups' one place
+//!
+//! The Preview pane is not a file command, and it is here anyway: it opens in the
+//! same place as the question and the New label pane, only one of the three is
+//! ever shown, and the window's one close handler runs through this machine. So
+//! Control+P is refused while the others are open, a file command an assistive
+//! technology presses behind the open preview is refused with "close the preview
+//! first", and closing the window with the preview open is an ordinary close.
+//! The preview asks nothing about unsaved work: it changes nothing.
 //!
 //! # Consent is to a revision, not to a moment
 //!
@@ -33,6 +43,8 @@ pub enum Want {
     Open,
     Save,
     SaveAs,
+    /// The Preview pane: what would print, and the printer link.
+    Preview,
     /// The window's close button, or anything else that asks the window to go.
     Close,
 }
@@ -40,7 +52,13 @@ pub enum Want {
 impl Want {
     /// The File bar's buttons, in order, which is also token order. Close has no
     /// button: the window's own close is the way to ask for it.
-    pub const BAR: [Want; 4] = [Want::New, Want::Open, Want::Save, Want::SaveAs];
+    pub const BAR: [Want; 5] = [
+        Want::New,
+        Want::Open,
+        Want::Save,
+        Want::SaveAs,
+        Want::Preview,
+    ];
 
     /// The integer the File bar sends back, for `Field::token`'s reason. `None`
     /// for Close, which has no button.
@@ -62,7 +80,8 @@ impl Want {
     /// told from Save by Shift, never by the letter's case: one layout sends `S`
     /// with Shift held and another `s`. Control+Shift+O and Control+Shift+N are
     /// not file commands: the first adds a rectangle (`make::Kind`), and the
-    /// second is left alone as the add chords leave U and E.
+    /// second is left alone as the add chords leave U and E. Control+Shift+P is
+    /// left alone the same way.
     pub fn of_key(text: &str, shift: bool) -> Option<Want> {
         let mut chars = text.chars();
         let (Some(c), None) = (chars.next(), chars.next()) else {
@@ -73,6 +92,7 @@ impl Want {
             ('s', true) => Some(Want::SaveAs),
             ('o', false) => Some(Want::Open),
             ('n', false) => Some(Want::New),
+            ('p', false) => Some(Want::Preview),
             _ => None,
         }
     }
@@ -84,6 +104,7 @@ impl Want {
             Want::Open => "Open",
             Want::Save => "Save",
             Want::SaveAs => "Save as",
+            Want::Preview => "Preview",
             Want::Close => "Close",
         }
     }
@@ -95,6 +116,7 @@ impl Want {
             Want::Open => "Open label",
             Want::Save => "Save label",
             Want::SaveAs => "Save label as",
+            Want::Preview => "Preview the label for the printer",
             Want::Close => "Close the window",
         }
     }
@@ -107,6 +129,7 @@ impl Want {
             Want::Open => "Control+O",
             Want::Save => "Control+S",
             Want::SaveAs => "Control+Shift+S",
+            Want::Preview => "Control+P",
             Want::Close => "",
         }
     }
@@ -117,6 +140,7 @@ impl Want {
             Want::New => "no new label was started",
             Want::Open => "nothing was opened",
             Want::Save | Want::SaveAs => "nothing was saved",
+            Want::Preview => "the preview was not opened",
             Want::Close => "nothing was closed",
         }
     }
@@ -222,6 +246,8 @@ pub enum FileCmd {
         from: Source,
         result: Result<String, String>,
     },
+    /// The Preview pane closed, by its Close button or Escape.
+    PreviewClosed,
 }
 
 /// Where an opened document came from.
@@ -248,6 +274,8 @@ pub enum Next {
     Write(PathBuf),
     Read(PathBuf),
     Fresh(NewSpec),
+    /// Show the Preview pane, or show it again with what it says now.
+    Preview,
     /// Close the window: the question was answered and the work is saved or let
     /// go.
     Hide,
@@ -315,6 +343,8 @@ enum Wait {
     Writing {
         then: Option<Intent>,
     },
+    /// The Preview pane is open.
+    Previewing,
 }
 
 /// Which file the document is, and what is open or under way.
@@ -361,6 +391,12 @@ impl Filing {
         self.path.as_deref().map(file_name)
     }
 
+    /// Whether the Preview pane is open, which is when the wiring may move the
+    /// keyboard inside it or draw it again.
+    pub fn previewing(&self) -> bool {
+        self.wait == Wait::Previewing
+    }
+
     pub fn apply(&mut self, cmd: FileCmd, now: &Now) -> FileOutcome {
         let out = match cmd {
             FileCmd::Want(w) => self.want(w, now),
@@ -369,6 +405,12 @@ impl Filing {
             FileCmd::Sized(spec) => self.sized(spec, now),
             FileCmd::Wrote { to, result } => self.wrote(to, result, now),
             FileCmd::Opened { from, result } => self.opened(from, result),
+            FileCmd::PreviewClosed => {
+                if self.wait == Wait::Previewing {
+                    self.wait = Wait::Idle;
+                }
+                FileOutcome::quiet()
+            }
         };
         // A shelved dialog goes with the window, and is pending again once the
         // question over it has ended any other way.
@@ -421,12 +463,25 @@ impl Filing {
             (Wait::Sizing { .. }, _) => {
                 return FileOutcome::said("finish or cancel the new label first");
             }
+            // Closing is an ordinary close, which takes the pane down with the
+            // window or with the question asked in its place.
+            (Wait::Previewing, Want::Close) => {}
+            // Asked again, it is drawn again: nothing is lost by it.
+            (Wait::Previewing, Want::Preview) => return FileOutcome::then(Next::Preview),
+            // Pointer and keys cannot reach the File bar behind the pane, and an
+            // assistive technology's action can, for the question's reason above.
+            (Wait::Previewing, _) => return FileOutcome::said("close the preview first"),
             (Wait::Idle | Wait::Writing { .. }, _) => {}
         }
         self.wait = Wait::Idle;
         let intent = match w {
             Want::Save => return self.save(now, None),
             Want::SaveAs => return self.save_as(now, None),
+            // Nothing about unsaved work is asked: the preview changes nothing.
+            Want::Preview => {
+                self.wait = Wait::Previewing;
+                return FileOutcome::then(Next::Preview);
+            }
             Want::New => Intent::New,
             Want::Open => Intent::Open,
             Want::Close => Intent::Close,
@@ -829,10 +884,11 @@ mod tests {
         PathBuf::from(p)
     }
 
-    fn d110_at(feed_tenths: i32) -> NewSpec {
+    fn d110_m_at(feed_tenths: i32) -> NewSpec {
         NewSpec {
             spec: fresh::default_printer(),
             feed_tenths,
+            assumed: None,
         }
     }
 
@@ -934,7 +990,7 @@ mod tests {
         let mut f = at("/l/a.relabel");
         want(&mut f, Want::New, &unsaved(5));
         assert_eq!(reply(&mut f, Reply::DontSave, &unsaved(5)).next, Next::Size);
-        let spec = d110_at(400);
+        let spec = d110_m_at(400);
         let out = f.apply(FileCmd::Sized(Some(spec)), &unsaved(6));
         assert_eq!(
             out.next,
@@ -1008,6 +1064,10 @@ mod tests {
                 "no new label was started: let go of the element first",
             ),
             (
+                Want::Preview,
+                "the preview was not opened: let go of the element first",
+            ),
+            (
                 Want::Close,
                 "nothing was closed: let go of the element first",
             ),
@@ -1039,7 +1099,7 @@ mod tests {
         let mut f = at("/l/a.relabel");
         want(&mut f, Want::New, &clean());
         assert_eq!(
-            f.apply(FileCmd::Sized(Some(d110_at(400))), &now),
+            f.apply(FileCmd::Sized(Some(d110_m_at(400))), &now),
             FileOutcome::said("no new label was started: let go of the element first")
         );
     }
@@ -1375,7 +1435,7 @@ mod tests {
         assert_eq!(want(&mut f, Want::Close, &clean()).next, Next::Allow);
         // The pane's own answer, if it comes, finds nothing waiting for it.
         assert_eq!(
-            f.apply(FileCmd::Sized(Some(d110_at(400))), &clean()),
+            f.apply(FileCmd::Sized(Some(d110_m_at(400))), &clean()),
             FileOutcome::quiet()
         );
     }
@@ -1494,11 +1554,147 @@ mod tests {
             assert_eq!(w.token().and_then(Want::from_token), Some(w));
         }
         assert_eq!(Want::Close.token(), None);
-        assert_eq!(Want::from_token(4), None);
+        assert_eq!(Want::from_token(5), None);
         assert_eq!(Want::from_token(-1), None);
         for r in Reply::ALL {
             assert_eq!(Reply::from_token(r.token()), Some(r));
         }
+    }
+
+    #[test]
+    fn control_p_is_preview_and_control_shift_p_is_nothing() {
+        for (text, shift, want) in [
+            ("p", false, Some(Want::Preview)),
+            ("P", false, Some(Want::Preview)),
+            ("p", true, None),
+            ("P", true, None),
+        ] {
+            assert_eq!(Want::of_key(text, shift), want, "{text:?} {shift}");
+        }
+        assert_eq!(Want::Preview.token(), Some(4));
+        assert_eq!(Want::from_token(4), Some(Want::Preview));
+        assert_eq!(Want::from_token(5), None);
+        assert_eq!(
+            (
+                Want::Preview.caption(),
+                Want::Preview.button_name(),
+                Want::Preview.keys()
+            ),
+            ("Preview", "Preview the label for the printer", "Control+P")
+        );
+    }
+
+    #[test]
+    fn preview_opens_without_asking_about_unsaved_work() {
+        let mut f = at("/l/a.relabel");
+        assert!(!f.previewing());
+        assert_eq!(
+            want(&mut f, Want::Preview, &unsaved(3)),
+            FileOutcome::then(Next::Preview)
+        );
+        assert!(f.previewing());
+    }
+
+    #[test]
+    fn preview_is_refused_while_an_element_is_held() {
+        let now = Now {
+            pressed: true,
+            ..unsaved(1)
+        };
+        let mut f = at("/l/a.relabel");
+        assert_eq!(
+            want(&mut f, Want::Preview, &now),
+            FileOutcome::said("the preview was not opened: let go of the element first")
+        );
+        assert!(!f.previewing());
+    }
+
+    /// Only an assistive technology can reach the File bar behind the pane, and
+    /// what it presses there is refused, not run under the pane.
+    #[test]
+    fn file_commands_are_refused_while_the_preview_is_open() {
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::Preview, &unsaved(1));
+        for w in [Want::New, Want::Open, Want::Save, Want::SaveAs] {
+            assert_eq!(
+                want(&mut f, w, &unsaved(1)),
+                FileOutcome::said("close the preview first"),
+                "{w:?}"
+            );
+            assert!(f.previewing(), "{w:?}");
+        }
+        assert_eq!(
+            want(&mut f, Want::Preview, &unsaved(1)),
+            FileOutcome::then(Next::Preview)
+        );
+        assert!(f.previewing());
+    }
+
+    #[test]
+    fn closing_with_the_preview_open_asks_or_allows() {
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::Preview, &clean());
+        assert_eq!(want(&mut f, Want::Close, &clean()).next, Next::Allow);
+
+        let mut f = Filing::new(None);
+        want(&mut f, Want::Preview, &unsaved(2));
+        assert_eq!(
+            want(&mut f, Want::Close, &unsaved(2)).next,
+            Next::Ask("Save this label before closing?".into())
+        );
+        assert!(!f.previewing());
+        // Cancelled, the window stays with no pane, and the commands are free.
+        assert_eq!(
+            reply(&mut f, Reply::Cancel, &unsaved(2)),
+            FileOutcome::said("nothing was closed")
+        );
+        assert!(matches!(
+            want(&mut f, Want::SaveAs, &unsaved(2)).next,
+            Next::Choose { .. }
+        ));
+    }
+
+    #[test]
+    fn the_preview_closing_frees_the_file_commands() {
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::Preview, &clean());
+        assert_eq!(
+            f.apply(FileCmd::PreviewClosed, &clean()),
+            FileOutcome::quiet()
+        );
+        assert!(!f.previewing());
+        assert_eq!(want(&mut f, Want::New, &clean()).next, Next::Size);
+        // A late close, with the New label pane showing, leaves it showing.
+        assert_eq!(
+            f.apply(FileCmd::PreviewClosed, &clean()),
+            FileOutcome::quiet()
+        );
+        assert_eq!(
+            want(&mut f, Want::Preview, &clean()),
+            FileOutcome::said("finish or cancel the new label first")
+        );
+    }
+
+    /// The question and the dialog keep the one place: Control+P over either is
+    /// refused with their own words.
+    #[test]
+    fn preview_is_refused_while_a_question_or_dialog_is_open() {
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::Open, &unsaved(4));
+        let out = want(&mut f, Want::Preview, &unsaved(4));
+        assert_eq!(
+            out.note.as_deref(),
+            Some("answer the question about unsaved changes first")
+        );
+        assert!(!f.previewing());
+
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::Open, &clean());
+        assert_eq!(
+            want(&mut f, Want::Preview, &clean()),
+            FileOutcome::said("a file dialog is already open")
+        );
+        assert!(!f.previewing());
     }
 
     #[test]
@@ -1606,16 +1802,34 @@ mod tests {
 
         let out = f.apply(
             FileCmd::Opened {
-                from: Source::New(d110_at(400)),
+                from: Source::New(d110_m_at(400)),
                 result: Ok("the head runs down the side".into()),
             },
             &clean(),
         );
         assert_eq!(
             out.note.as_deref(),
-            Some("new 40 \u{d7} 12 mm label for a D110: the head runs down the side")
+            Some("new 40 \u{d7} 12 mm label for a D110_M: the head runs down the side")
         );
         assert_eq!(f.path(), None);
+        // A printer the New label pane said was assumed is said to be here too.
+        let out = f.apply(
+            FileCmd::Opened {
+                from: Source::New(NewSpec {
+                    assumed: Some(fresh::NOT_CONNECTED),
+                    ..d110_m_at(300)
+                }),
+                result: Ok("the head runs down the side".into()),
+            },
+            &clean(),
+        );
+        assert_eq!(
+            out.note.as_deref(),
+            Some(
+                "new 30 \u{d7} 12 mm label for a D110_M (assumed: relabel is not connected to a \
+                 printer): the head runs down the side"
+            )
+        );
         let out = f.apply(
             FileCmd::Opened {
                 from: Source::File(path("/m/c.relabel")),
@@ -1640,8 +1854,8 @@ mod tests {
         );
         want(&mut f, Want::New, &clean());
         assert_eq!(
-            f.apply(FileCmd::Sized(Some(d110_at(300))), &clean()).next,
-            Next::Fresh(d110_at(300))
+            f.apply(FileCmd::Sized(Some(d110_m_at(300))), &clean()).next,
+            Next::Fresh(d110_m_at(300))
         );
         let t = ticket_of(&want(&mut f, Want::Open, &clean()));
         assert_eq!(

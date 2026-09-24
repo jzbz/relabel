@@ -453,11 +453,11 @@ pub enum Binarise { Threshold(u8), FloydSteinberg, Atkinson, Bayer(u8), … }
 
 ```rust
 #[async_trait]
-pub trait Transport: Send + 'static {
+pub trait Transport: Send {
     /// One write. May contain one or several complete frames.
     async fn write(&mut self, buf: &[u8]) -> Result<(), TransportError>;
-    /// Raw inbound bytes. Never frame-aligned.
-    fn reader(&mut self) -> mpsc::UnboundedReceiver<Vec<u8>>;
+    /// Raw inbound bytes. Never frame-aligned. Taken once, by the session.
+    fn take_reader(&mut self) -> Option<mpsc::UnboundedReceiver<Vec<u8>>>;
     /// Largest single write. BLE: negotiated MTU - 3. Serial: usize::MAX.
     fn max_write(&self) -> usize;
     /// Default inter-write gap. BLE 10 ms, serial 0.
@@ -466,6 +466,8 @@ pub trait Transport: Send + 'static {
     async fn close(&mut self) -> Result<(), TransportError>;
 }
 ```
+
+That is the trait as built. The reader is taken rather than borrowed because the session owns it for the life of the connection, and the trait asks only `Send`, not `'static`. `close` is called only by `Session::close`, which waits behind the commands already sent: dropping a session does not close its transport, so a program that outlives its sessions, as the editor does, closes each one. The command line leaves that to its exit.
 
 Three implementations:
 
@@ -492,7 +494,8 @@ let ch = find_known(&peripheral)
 // and anything delivered before the stream exists is lost outright.
 let notes = peripheral.notifications().await?;
 peripheral.subscribe(&ch).await?;
-tokio::spawn(drain_into_unbounded(notes, tx));       // never let 16 slots lag
+tokio::spawn(drain_into_unbounded(notes, tx));       // never let 16 slots lag;
+                                                     // aborted on close and on drop
 
 // mtu() unwraps an Option<u16> on the BlueZ backend and panics when BlueZ does
 // not publish the characteristic MTU property (older than ~5.62).
@@ -507,7 +510,7 @@ Known-good pair: service `e7810a71-73ae-499d-8c15-faa9aef0c3f2`, characteristic 
 
 **MTU and bundling.** Every model's row frame fits one write at the commonly-negotiated ~247 MTU (largest is ET10 at 213 bytes) and **none fits at the 23-byte default**. relabel never splits a frame across writes — that direction is undocumented and untested. Instead: if `max_write < largest_frame`, refuse to print with a clear message naming the MTU. Bundling several complete frames into one write up to `max_write` is documented as safe and gives roughly 4× throughput; it ships behind a setting, default off until it is tested on all three platforms.
 
-**Identity.** On macOS `Peripheral::address()` returns an all-zero `BDAddr`. Persist the `PeripheralId` and the name, and reconnect with btleplug 0.13's `Central::retrieve_peripherals` — which works without scanning on all three platforms and is the right primitive for "remember my printer".
+**Identity.** On macOS `Peripheral::address()` returns an all-zero `BDAddr`. Persist the `PeripheralId` and the name, and reconnect with btleplug 0.13's `Central::retrieve_peripherals` — which works without scanning on all three platforms and is the right primitive for "remember my printer". Except on Windows: there, retrieval by identifier leaves out a device that is not connected (btleplug-0.13.0 `winrtble/adapter.rs:207-219`), so it cannot find a printer that has dropped its link, and a Reconnect built on it would need a scan to fall back on. Nothing is remembered yet (§6.1).
 
 **`SerialTransport` (serialport 4.10).** CDC-ACM at **115200 baud**, same frames, same fragmentation. Confirmed on D110, D11_H, B3S, B21_C2B and B21_PRO (which enumerates as VID:PID `3513:0002`; no public VID/PID list exists for the rest, so the port is user-picked or probed by handshake). A dedicated blocking reader thread feeds the same unbounded channel — `tokio-serial`/`mio-serial` buys nothing here and adds a dependency. Field-reported caveat for D11_H over USB: skip the info handshake, disable heartbeat, and add **no** artificial inter-packet delay — even 5 ms breaks its parser. That is why pace is a transport default and not a constant.
 
@@ -549,7 +552,7 @@ The job engine owns retries, the deadline, the copies/pages fallback for D110-cl
 
 ### 3.5 `relabel-gui` and `relabel-cli`
 
-`relabel-gui` follows rpgp's `ui/` layout exactly: `theme.slint`, `widgets.slint`, `dialogs.slint`, `app-window.slint`, `types.slint`. The GUI depends only on `relabel-core`, `relabel-render` and `relabel-proto` types; no `btleplug::` type reaches a Slint callback.
+`relabel-gui` follows rpgp's `ui/` layout exactly: `theme.slint`, `widgets.slint`, `dialogs.slint`, `app-window.slint`, `types.slint`. The GUI depends only on `relabel-core`, `relabel-render` and `relabel-proto` types; no `btleplug::` type reaches a Slint callback. As built, that holds through `relabel-core`'s `link` module, the GUI's only way to a printer, whose API names no tokio or btleplug type; `relabel-gui` depends on neither crate, and its `tests/deps.rs` checks the source and the manifest for either. `transport::ble` still hands btleplug types to the command line.
 
 `relabel-cli` is a workspace member excluded from release builds: `scan`, `info`, `status`, `rfid`, `print <png>`, `raw <hex>`, `dump`. It is how milestone 1 gets tested and how every hardware question in §8 gets answered, on all three test machines, without the GUI existing.
 
@@ -653,6 +656,8 @@ Connection progress is shown as the actual handshake steps (Connect → status �
 
 Permissions get first-class messages rather than an opaque error: macOS needs `NSBluetoothAlwaysUsageDescription` in the bundle (a TCC usage string, not an entitlement — so rpgp's hardened-runtime, no-entitlements-file signing script stays valid), a CLI outside a bundle needs the terminal itself added under Privacy → Bluetooth, Linux needs no group membership for BLE GATT but does need `dialout`/`uucp` for USB serial, and unpackaged Win32 needs no manifest capability at all.
 
+**As built, in 12f-1 (RENDER-PLAN step 12).** There is no Devices pane yet. Connect is the Preview pane's default button (§6.4). It scans once, for four seconds, wide and filtered on the name prefixes, with no "show all devices" escape yet; a single printer found is opened without asking, several are offered as up to four buttons in the same pane, those heard in the scan first, and none found is said. The handshake is shown as its steps, on a line in the pane that a screen reader does not announce, and a failure names the step it stopped at in plain words; there is no Protocol Log to point at. A connect gives up at 15 seconds. Bluetooth that is off, missing, unreachable or not allowed each has its own sentence, the macOS one saying where to allow it. The live list, signal and last-seen, show all devices, Serial, Manual and Reconnect wait for this pane, and nothing is remembered between runs.
+
 ### 6.2 Printer
 
 What is connected and what it is doing.
@@ -663,11 +668,13 @@ What is connected and what it is doing.
 - **Settings** — density (slider clamped to the model's own range, with the range shown), label type, print mode, speed, auto-shutdown, sounds, volume. Each writes its command and reports the reply; an unsupported value comes back as `0xDB 0x1E`/`0x1F`/`0x21` and is surfaced as "this printer does not support that value", not as a failure.
 - **Actions** — Print test page (`0x5A`, gated on model support), Calibrate (`0x8E`, gated on `isSupportCalibration`, with the warning that on a B1 it ejects roughly 15 cm of paper without retracting it), Reset settings (`0x28`), and a Protocol Log toggle.
 
+**As built, in 12f-1.** Only a Printer line, plain text beside the File bar: the printer's name and model, its head in dots and its dpi, the firmware, and the battery in words, leaving out whatever the printer did not say. An id the registry does not know is said as "a printer relabel does not know", with the id, and one it gives to several models that differ, such as id 2305, as "a D110 or a Hi-D110": named, not guessed at. The pane itself, with the D110_M warning of §8.4, waits.
+
 ### 6.3 Designer
 
 A canvas and an inspector. Deliberately modest: this is a label composer, not Illustrator.
 
-- **Label properties** — the New label pane, from the File bar or Control+N. Two dimensions labelled **across the head** and **along the feed**, never width/height. Across the head is a read-only readout of the whole print head in millimetres and dots, and stays one while nothing draws media narrower than the head (`Target::require_head`). Along the feed is one millimetre field, to a tenth, showing its dot count and refusing a length past the printer's longest label. The presets are the registry's default label for the model and, where that stock is 12 mm across, the measured 40 × 12 mm roll: `devices.json` has no media list to drive more. The printer is the open label's model, or a D110, said to be assumed, until relabel connects to one; a 300-dpi head that is not whole bytes is not offered.
+- **Label properties** — the New label pane, from the File bar or Control+N. Two dimensions labelled **across the head** and **along the feed**, never width/height. Across the head is a read-only readout of the whole print head in millimetres and dots, and stays one while nothing draws media narrower than the head (`Target::require_head`). Along the feed is one millimetre field, to a tenth, showing its dot count and refusing a length past the printer's longest label. The presets are the registry's default label for the model and, where that stock is 12 mm across, the measured 40 × 12 mm roll: `devices.json` has no media list to drive more. The printer is the connected printer's model when relabel is connected to one it can print on, and otherwise the open label's model, or a D110_M, said to be assumed, and assumed because the connected printer is one relabel cannot make a label for when that is the reason; a 300-dpi head that is not whole bytes is not offered.
 - **Canvas** — the full printhead width at 1:1 dots with a zoom, showing the media area and the padding beyond it as distinct tones so the user can see where the paper ends. Snap-to-dot, arrow-key nudge by one dot.
 - **Elements** — Text, Barcode, QR, DataMatrix, Rectangle, Line, added from a toolbar or with Control+Shift and a letter, resized by grips on the element's far edges or by the inspector's lengths, and deleted with Delete, Backspace or a toolbar button; Image arrives with artwork import, since an image without artwork draws nothing. Select on canvas, edit in the inspector.
 - **Inspector** — per type, and the primary keyboard path: every field is a named, announced, arrow-steppable text box, with drag on the canvas as the accelerator. Common to all seven element types: name, feed, head, feed length, head length, rotation in degrees, ink, and a read-only row for the element's state. Text: content (a template), font family, em size in dots, line height, alignment, weight, rasterisation. Barcode: symbology, data, module width in dots, bar height. QR: data, module size in dots, error-correction level, pinned version. DataMatrix: data, module size, symbol size. Image: source path, fit, halftone, threshold. Rectangle: stroke. Line: thickness. The document has no field for human-readable text, a quiet-zone override, a wide:narrow ratio, letter spacing, wrap, vertical alignment or shrink-to-fit, so the inspector offers none: see RENDER-DESIGN §7.4 for what was sketched against what was built. A value this build cannot draw is kept exactly as it was typed and said out loud, because the file format promises to round-trip it; a live validity indicator is the pane that shows preflight's own issues, not this one.
@@ -680,6 +687,8 @@ Split view: **rendered** (greyscale, pre-threshold) beside **printed** (the actu
 Print settings: copies, density (defaulting to the model's own default), label type, dither mode and threshold with a live preview, and an advanced disclosure holding pace, write type, bundling, counters mode, indexed rows and print-task override. Advanced settings are visibly non-default when changed, so a support conversation starts from the truth.
 
 A **Bytes** readout — frames, total bytes, estimated seconds at the current pace — because the estimate is `write_count × pace` and users deserve to know why a dense label takes 16 seconds.
+
+**As built, in 12f-1: Preview, not yet print.** Control+P, or Preview on the File bar, opens a Preview pane with the printed half only: the 1-bit plane a job would encode, with `pixelated` scaling at a whole number of pixels to the dot, or reduced by whole dots to the pixel where it would not fit, drawn for the label's own printer and, once one is connected, checked against its head, dpi and direction and never re-fitted to them. Beside it are a verdict, preflight's issues with the refusals first, and every reason the editor would not print it: a label that prints the date or time or takes CSV rows, which the command line prints, an unknown or ambiguous printer, another printer's head, and a link too narrow for a row. The grey, pre-threshold half is deferred, together with the dither and threshold controls it exists to judge and the editor's artwork import, which is what would need them. The Bytes readout is there, as a facts line of frames, bytes and seconds, at the command line's 12 ms a frame rather than a pace setting, which does not exist yet. None of the print settings is built: copies and Print come in 12f-2, and the pane's command is called Preview until then.
 
 ### 6.5 Job
 
@@ -786,7 +795,7 @@ None of this ever blocked M1–M4.
 ### 8.4 Non-protocol risks
 
 - **btleplug is unproven for this hardware.** No NIIMBOT project uses it in production; the one Rust attempt that does hardcodes characteristic UUIDs (`0000FF00`/`FF01`/`FF02`) that contradict every hardware-validated source and subscribes before opening the notification stream. M1 is deliberately a btleplug spike before anything else is built on it.
-- **D110_M has a documented pattern of spontaneous bricking.** relabel shows a warning on that model. This is not a relabel bug and must not become one.
+- **D110_M has a documented pattern of spontaneous bricking.** relabel shows a warning on that model. This is not a relabel bug and must not become one. Not yet: the warning waits for the Printer pane (§6.2), and 12f-1, which connects to a D110_M and identifies it, shows none.
 - **`serialport` is MPL-2.0.** File-level copyleft, fine to link from MIT, recorded in `THIRD-PARTY.md` rather than discovered later.
 - **Slint's royalty-free terms require attribution**: its `AboutSlint` widget in an About screen reachable from the top level, or its attribution badge on the download page. The licence names the widget, so a line of text naming Slint is not enough; `THIRD-PARTY.md` has the detail. Bundled fonts carry the SIL OFL text beside them.
 - **No existing Rust crate is usable.** The one crate on crates.io (`niimprint-rs`, MIT, 24 downloads) does not compile at all on macOS or Windows — an ungated `bluer` import means the platform stub is unreachable dead code — and implements a single print flow that matches no niimbluelib task cleanly. The two GitHub-only attempts are GPL-3.0 and license-ambiguous respectively. `relabel-proto` is written from scratch against the facts, with small pieces optionally lifted from MIT sources under attribution.

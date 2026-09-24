@@ -1276,25 +1276,30 @@ One residual risk not settled by reading: `itemrenderer.rs:896-900` translates b
 
 Read `slint-1.17.1/lib.rs:300-311` before writing any of this. It states that "Tokio futures aren't guaranteed to hand off their work to separate threads and may therefore not complete, because the Slint runtime can't drive the Tokio runtime", and that the current-thread scheduler "cannot be used in Slint main thread".
 
-**So `slint::spawn_local` must never hold a btleplug future.** It is for runtime-agnostic futures only — `rfd::AsyncFileDialog` is the one rpgp actually uses it for, and that use transfers verbatim.
+**So `slint::spawn_local` must never hold a btleplug future.** It is for runtime-agnostic futures only — `rfd::AsyncFileDialog` is the one rpgp actually uses it for, and that use transfers verbatim. A tokio channel's receiver is one too: tokio's sync primitives are runtime agnostic (tokio-1.53.1 `sync/mod.rs:438-450`), and `UnboundedSender::send` is synchronous.
+
+As built in 12f-1 (RENDER-PLAN step 12), the printer link follows that rule:
 
 ```
-GUI thread (Slint event loop)              worker thread (tokio multi-thread)
-──────────────────────────────             ─────────────────────────────────
-cmd_tx.send(Cmd::Print { pages, cancel })  rt.block_on(job::print(&session, .., |p| {
-ui.on_cancel(|| cancel_tx.send(true))          let w = ui_weak.clone();
-◀── set_progress ──────────────────────        let _ = w.upgrade_in_event_loop(
-                                                   move |ui| ui.set_page(p.page as i32));
-                                           }))
+GUI thread (Slint event loop)                   relabel-link thread (tokio multi-thread)
+─────────────────────────────                   ────────────────────────────────────────
+Printing::apply(cmd) -> order                   actor: owns the Opener, the adapter, the
+link.send(ticket, order)  ── unbounded mpsc ──▶   Session and the disconnect watch
+spawn_local(loop {                              handshake_with(.., |step| heard.send(Step))
+  events.next().await  ◀── unbounded mpsc ────  heard.send(Found | Ready | Failed | Dropped ..)
+  deliver(News::Heard(h))  // print.rs: Printing,
+})                          // the proof, properties
 ```
+
+The worker never touches a Slint handle. Everything it says is data - `link::Heard` - carried by a channel, and the one `spawn_local` loop in `relabel-gui`'s `plug.rs` awaits it and feeds it to the `printing::Printing` state machine on the UI thread, which decides what is said and shown. Slint posts every wake of that future back through its event-loop proxy (i-slint-core-1.17.1 `future.rs:60-86`), so nothing crosses threads but the two channels, and no `Weak` is upgraded anywhere but its own thread. `invoke_from_event_loop` and `upgrade_in_event_loop` are not used for the printer.
 
 `invoke_from_event_loop(func: impl FnOnce() + Send + 'static) -> Result<(), EventLoopError>` (`api.rs:1260`) is callable from any thread. `Weak::upgrade_in_event_loop(impl FnOnce(T) + Send + 'static)` (`api.rs:1201`) is that plus the upgrade, and drops silently if the window is gone. `Weak::upgrade()` returns `None` off-thread (`api.rs:1145-1151`) and **`Weak::unwrap()` panics off-thread** (`api.rs:1157-1163`) — never use it in a worker.
 
-Unlike rpgp, relabel needs **one runtime alive for the whole app**, because the `Session` owns the BLE link across operations. rpgp's `OnceLock<Runtime>` plus `std::thread::spawn` per operation does not transfer; its `BusyGuard` (clearing the busy flag on panic) and its `invoke_from_event_loop` completion half do.
+Unlike rpgp's, relabel's runtime has to keep a `Session` alive across operations, because the session owns the BLE link between them. rpgp's own shapes split on that. Its agent runtime - one `OnceLock` multi-thread runtime, built lazily, driven by `block_on` (rpgp-core `agent.rs:48-60`) - does transfer: on a multi-thread runtime spawned tasks keep running between `block_on` calls. What does not transfer is its keyserver's fresh current-thread runtime per call (rpgp-core `keyserver.rs:852`), under which spawned tasks are suspended whenever `block_on` has returned (tokio-1.53.1 `runtime/runtime.rs:283-313`), and its `std::thread::spawn` per operation, which gives a long-lived session no owner. relabel-core's `link` therefore runs one multi-thread runtime, two workers, `enable_all`, on a thread of its own that is started at the first Connect and owns the session through an actor. It is multi-thread because the session loop, the notification drain and bluez-async's D-Bus task are all spawned tasks that must keep running while the actor awaits something else; a current-thread runtime would freeze them the moment one refactor left `block_on` idle, and no test would notice. It is on its own thread, not a `OnceLock`, so that the whole of it - every btleplug object included, since bluez-async's message stream calls `tokio::spawn` in its `Drop` (bluez-async-0.8.2 `messagestream.rs:36-41`) - is dropped there at shutdown, which `run_app` waits for after `ui.run()` for at most five seconds. A panic in the actor unwinds out of `block_on` with the session dropped unclosed, which would leave the Bluetooth link up, so the thread catches it there and closes the last session opened, through a `session::Closer` the actor keeps, before the runtime goes. The adapter the first scan needs is made on a worker, not on the thread `block_on` polls the actor from, because btleplug's manager connects to the system bus with a blocking call (bluez-async-0.8.2 `lib.rs:285-286`) that would otherwise keep Stop waiting and shutdown from reaching the actor. rpgp's `BusyGuard` has no counterpart: the link's news is one channel, and its ending is delivered as one event.
 
-Progress rate is not a problem: `Timeouts::poll_interval` is 150 ms (`crates/relabel-core/src/job.rs:58`), so roughly seven `invoke_from_event_loop` calls a second. No coalescing needed.
+Progress rate is not a problem: `Timeouts::poll_interval` is 150 ms (`crates/relabel-core/src/job.rs:64`), so roughly seven progress events a second. No coalescing needed.
 
-**Cancel must be cooperative, and this is a change to `relabel-core`.** `job::print` (`job.rs:118-124`) takes `on_progress: impl FnMut(Progress)` and has no cancel parameter; `one_job` (`job.rs:183-188`) sends `PrintEnd` unconditionally *after* `run` returns. `JoinHandle::abort()` drops the future mid-`await`, that line never executes, and the paper never retracts. Add a `tokio::sync::watch::Receiver<bool>` checked in `wait_for_pages`'s loop alongside `check_deadline`, and `tokio::select!` on the `session.request` awaits. `tokio`'s `sync` feature is already in the workspace manifest, so this adds no dependency.
+**Cancel must be cooperative, and this is a change to `relabel-core`.** `job::print` (`job.rs:127-133`) takes `on_progress: impl FnMut(Progress)` and has no cancel parameter; `one_job` (`job.rs:227-233`) sends `PrintEnd` unconditionally *after* `run` returns. `JoinHandle::abort()` drops the future mid-`await`, that line never executes, and the paper never retracts. Add a `tokio::sync::watch::Receiver<bool>` checked in `wait_for_pages`'s loop alongside `check_deadline`, and `tokio::select!` on the `session.request` awaits. `tokio`'s `sync` feature is already in the workspace manifest, so this adds no dependency. 12f-1 has no job to cancel; its link cancels only a scan or a connect, and only abandons a handshake together with its session, so a late reply can never be taken for the next request's. 12f-2 stops only between labels, and in-job cancel waits for its own ticket.
 
 **Debounce** with a single `slint::Timer` held in an `Rc<Timer>` captured by the edit callbacks. `Timer` is `!Send` (`PhantomData<*mut ()>`, `timers.rs:62-65`) and stops when dropped, so it lives on the event-loop thread. `Timer::start` explicitly restarts an already-started timer (`timers.rs:70-72`), so `t.start(TimerMode::SingleShot, Duration::from_millis(80), cb)` on every edit *is* the debounce. `restart()` is the wrong call — it "does nothing if the timer was never started" (`timers.rs:132-136`). Hang it off `changed <prop> => { … }` blocks, which parse in 1.17 (`parser/element.rs:91`, `:489`), rather than wiring every widget callback.
 

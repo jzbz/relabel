@@ -1,20 +1,25 @@
 //! Labels and handles the canvas tests share. Nothing here touches the
-//! toolkit except the element-tree helpers, each about one trap, and the two
-//! choosers the file tests stand in for a file dialog.
+//! toolkit except the element-tree helpers, each about one trap, the two
+//! choosers the file tests stand in for a file dialog, and the two plugs the
+//! file and print tests stand in for the printer link.
 
 // Shared by several test binaries, each of which uses part of it.
 #![allow(dead_code)]
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementQuery};
+use relabel_core::link::mock::{MockLink, MockOpener};
+use relabel_core::link::{Events, Finished, Heard, Link, Order};
 use relabel_gui::choose::{Answer, Ask, Chooser, NoDialog, Picked};
+use relabel_gui::plug::{Deliver, News, Plug};
 use relabel_render::document::{
     Common, Element, ElementId, ElementOrRaw, Label, RectDots, RectEl, Rot,
 };
 use relabel_render::target::Dpmm;
 use slint::platform::{Key, WindowEvent};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// The 40 by 12 mm label at 203 dpi this project measures everything against:
 /// 320 dots along the feed, 96 across the head.
@@ -148,9 +153,9 @@ fn is_field_role(h: &ElementHandle) -> bool {
     )
 }
 
-/// The labels of the three text nodes that are not fields: the status line, the
-/// pane's heading and the zoom readout.
-const NOT_FIELDS: [&str; 3] = ["Status", "Selected element", "Zoom"];
+/// The labels of the four text nodes that are not fields: the status line, the
+/// pane's heading, the zoom readout and the Printer line beside the File bar.
+const NOT_FIELDS: [&str; 4] = ["Status", "Selected element", "Zoom", "Printer"];
 
 /// One inspector field, by the name it announces, or `None` when it is not in
 /// the accessibility tree at all.
@@ -499,4 +504,137 @@ pub fn button_of(probe: &impl slint::ComponentHandle, name: &str) -> ElementHand
         })
         .find_first()
         .unwrap_or_else(|| panic!("no button is called {name:?}"))
+}
+
+/// A printer link that goes nowhere: it keeps every order, and the test says what
+/// the link heard. Nothing is delivered unless the test delivers it, so no test
+/// using it touches Bluetooth or a thread.
+#[derive(Default)]
+pub struct HeldPlug {
+    orders: RefCell<Vec<(u64, Order)>>,
+    deliver: RefCell<Option<Deliver>>,
+    finished: Cell<bool>,
+}
+
+impl HeldPlug {
+    /// Every order so far, with its ticket, oldest first.
+    pub fn orders(&self) -> Vec<(u64, Order)> {
+        self.orders.borrow().clone()
+    }
+
+    /// The link says `news`, as the application's loop would deliver it.
+    pub fn deliver(&self, news: News) {
+        let deliver = self
+            .deliver
+            .borrow()
+            .clone()
+            .expect("the wiring listens before anything is heard");
+        deliver(news);
+    }
+
+    pub fn hear(&self, heard: Heard) {
+        self.deliver(News::Heard(heard));
+    }
+
+    pub fn finished(&self) -> bool {
+        self.finished.get()
+    }
+}
+
+impl Plug for HeldPlug {
+    fn listen(&self, deliver: Deliver) {
+        *self.deliver.borrow_mut() = Some(deliver);
+    }
+
+    fn order(&self, ticket: u64, order: Order) {
+        self.orders.borrow_mut().push((ticket, order));
+    }
+
+    fn finish(&self, _within: Duration) {
+        self.finished.set(true);
+    }
+}
+
+/// relabel-core's real link, on its own thread and runtime, over an in-memory
+/// printer. The test thread has no event loop, so what the link says is
+/// delivered by [`LivePlug::pump_until`] rather than by `slint::spawn_local`.
+pub struct LivePlug {
+    opener: RefCell<Option<MockOpener>>,
+    /// The test's view of the printer the link opens.
+    pub mock: MockLink,
+    link: RefCell<Option<Link>>,
+    events: RefCell<Option<Events>>,
+    deliver: RefCell<Option<Deliver>>,
+    finished: Cell<Option<Finished>>,
+}
+
+impl LivePlug {
+    pub fn new((opener, mock): (MockOpener, MockLink)) -> LivePlug {
+        LivePlug {
+            opener: RefCell::new(Some(opener)),
+            mock,
+            link: RefCell::new(None),
+            events: RefCell::new(None),
+            deliver: RefCell::new(None),
+            finished: Cell::new(None),
+        }
+    }
+
+    /// Deliver what the link says until `until` holds, for at most `within` of
+    /// real time. True when it held.
+    pub fn pump_until(&self, within: Duration, until: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + within;
+        loop {
+            if until() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            // Released before delivering: the delivery can order again.
+            let heard = self
+                .events
+                .borrow_mut()
+                .as_mut()
+                .and_then(|e| e.wait(Duration::from_millis(20)));
+            match heard {
+                Some(h) => {
+                    let deliver = self.deliver.borrow().clone().expect("listening");
+                    deliver(News::Heard(h));
+                }
+                None => std::thread::sleep(Duration::from_millis(2)),
+            }
+        }
+    }
+
+    /// How `finish` went, once it has run.
+    pub fn finished(&self) -> Option<Finished> {
+        self.finished.get()
+    }
+}
+
+impl Plug for LivePlug {
+    fn listen(&self, deliver: Deliver) {
+        *self.deliver.borrow_mut() = Some(deliver);
+    }
+
+    fn order(&self, ticket: u64, order: Order) {
+        if self.link.borrow().is_none() {
+            let opener = self.opener.borrow_mut().take().expect("started once");
+            let (link, events) = Link::start(Box::new(opener)).expect("the link starts");
+            *self.link.borrow_mut() = Some(link);
+            *self.events.borrow_mut() = Some(events);
+        }
+        let link = self.link.borrow();
+        link.as_ref()
+            .expect("started")
+            .send(ticket, order)
+            .expect("the link takes orders");
+    }
+
+    fn finish(&self, within: Duration) {
+        if let Some(link) = self.link.borrow_mut().take() {
+            self.finished.set(Some(link.shutdown(within)));
+        }
+    }
 }

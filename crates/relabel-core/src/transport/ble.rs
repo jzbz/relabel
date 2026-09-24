@@ -16,6 +16,12 @@
 //!   when BlueZ does not publish the characteristic MTU, which is the case on
 //!   older versions. It is called inside `catch_unwind` for that reason and no
 //!   other.
+//! - **Disconnects come from the adapter, not the link.** BlueZ's notification
+//!   stream is the device's whole event stream filtered to values, so it never
+//!   ends when the device goes (btleplug-0.13.0 `bluez/peripheral.rs:275-282`).
+//!   The adapter's own event stream does report `DeviceDisconnected` when
+//!   `Connected` turns false (`bluez/adapter.rs:213-219`,
+//!   `corebluetooth/adapter.rs:133-135`), so [`watch_disconnect`] listens there.
 //! - **The characteristic pair is not guessed.** The commonly seen pair is tried
 //!   first, then a capability scan for anything that can notify and write on a
 //!   non-standard service, because at least one model is reported to use
@@ -25,10 +31,12 @@ use crate::error::TransportError;
 use crate::transport::{Transport, TransportKind};
 use async_trait::async_trait;
 use btleplug::api::{
-    Central, CharPropFlags, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType,
+    Central, CentralEvent, CentralState, CharPropFlags, Characteristic, Manager as _,
+    Peripheral as _, ScanFilter, WriteType,
 };
 use btleplug::platform::{Adapter, Manager, Peripheral, PeripheralId};
 use futures_util::StreamExt;
+use futures_util::future::BoxFuture;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::{Uuid, uuid};
@@ -58,6 +66,12 @@ pub struct Discovered {
     pub id: PeripheralId,
     pub name: Option<String>,
     pub rssi: Option<i16>,
+    /// Whether this scan heard the device, as far as the platform says: it
+    /// reported a signal strength. BlueZ keeps devices it has seen before in
+    /// its list whether or not they are advertising now, and those carry no
+    /// RSSI. An inference, not a verified fact, so it only orders the list and
+    /// words a message; it never decides whether to connect.
+    pub heard: bool,
     /// Whether the name looks like one of these printers. Advisory only - the
     /// device list offers a "show everything" escape, because the naming is not
     /// consistent enough to hide devices on.
@@ -83,25 +97,49 @@ fn looks_like_printer(name: Option<&str>) -> bool {
 
 /// Get the first Bluetooth adapter the platform offers.
 pub async fn adapter() -> Result<Adapter, TransportError> {
-    let manager = Manager::new().await.map_err(|e| {
-        // The overwhelmingly common cause on Linux is that there is no session
-        // bus to talk to, which the underlying message does say but not in a
-        // way that suggests what to do about it.
-        TransportError::Connect(format!(
-            "could not reach the Bluetooth stack: {e}\n\
-             On Linux this usually means bluetoothd is not running, or this \
-             process cannot reach the D-Bus system bus."
-        ))
-    })?;
-    let adapters = manager
-        .adapters()
+    // The overwhelmingly common cause on Linux is that there is no system bus
+    // to talk to, which the underlying message does say but not in a way that
+    // suggests what to do about it; the variant's text does.
+    let manager = Manager::new()
         .await
-        .map_err(|e| TransportError::Connect(format!("listing adapters: {e}")))?;
-    adapters.into_iter().next().ok_or_else(|| {
-        TransportError::Connect(
-            "no Bluetooth adapter found. On Linux, check that bluetoothd is running".into(),
-        )
-    })
+        .map_err(|e| TransportError::NoBluetooth(e.to_string()))?;
+    let adapters = manager.adapters().await.map_err(adapter_error)?;
+    adapters.into_iter().next().ok_or(TransportError::NoAdapter)
+}
+
+/// What listing the adapters failed with.
+///
+/// macOS refuses at this point when the program is not allowed Bluetooth
+/// (btleplug-0.13.0 `corebluetooth/internal.rs:1945-1951`, reached through
+/// `corebluetooth/manager.rs:26-27`). Anything else keeps the words the
+/// command line has always printed for it.
+fn adapter_error(e: btleplug::Error) -> TransportError {
+    match e {
+        btleplug::Error::PermissionDenied => TransportError::NotAllowed,
+        btleplug::Error::NoAdapterAvailable => TransportError::NoAdapter,
+        other => TransportError::Connect(format!("listing adapters: {other}")),
+    }
+}
+
+/// Refuse early when the adapter is switched off, rather than letting the scan
+/// fail with a message about something else.
+///
+/// On BlueZ, an adapter whose properties cannot be read at all also reports
+/// `PoweredOff` (btleplug-0.13.0 `bluez/adapter.rs:173-179`), so switched off
+/// is the likely cause rather than a certainty. A state that cannot be read is
+/// let through: the scan then says what is wrong in its own words.
+pub async fn powered(adapter: &Adapter) -> Result<(), TransportError> {
+    match adapter.adapter_state().await {
+        Ok(state) => state_error(state),
+        Err(_) => Ok(()),
+    }
+}
+
+fn state_error(state: CentralState) -> Result<(), TransportError> {
+    match state {
+        CentralState::PoweredOff => Err(TransportError::BluetoothOff),
+        CentralState::PoweredOn | CentralState::Unknown => Ok(()),
+    }
 }
 
 /// Scan for `duration` and return everything seen.
@@ -114,12 +152,18 @@ pub async fn scan(
         .await
         .map_err(|e| TransportError::Connect(format!("starting scan: {e}")))?;
     tokio::time::sleep(duration).await;
-    let found = adapter
-        .peripherals()
-        .await
-        .map_err(|e| TransportError::Connect(format!("listing peripherals: {e}")))?;
-    let _ = adapter.stop_scan().await;
+    let found = match adapter.peripherals().await {
+        Ok(found) => found,
+        Err(e) => {
+            let _ = adapter.stop_scan().await;
+            return Err(TransportError::Connect(format!("listing peripherals: {e}")));
+        }
+    };
 
+    // Properties are read while discovery is still running, because BlueZ may
+    // invalidate a device's RSSI when discovery stops, which would make every
+    // device look unheard. Whether it does is not verified; reading first is
+    // right either way.
     let mut out = Vec::new();
     for p in found {
         // A peripheral whose properties cannot be read is not worth reporting,
@@ -132,9 +176,11 @@ pub async fn scan(
             id: p.id(),
             likely_printer: looks_like_printer(name.as_deref()),
             name,
+            heard: props.rssi.is_some(),
             rssi: props.rssi,
         });
     }
+    let _ = adapter.stop_scan().await;
     // Likely printers first, then by signal strength.
     out.sort_by(|a, b| {
         b.likely_printer
@@ -156,6 +202,44 @@ pub async fn find(adapter: &Adapter, id: &PeripheralId) -> Result<Peripheral, Tr
         .ok_or(TransportError::NotConnected)
 }
 
+/// A future that resolves when the platform says the device has disconnected.
+///
+/// The adapter's event stream is opened here, at once, so a disconnect that
+/// happens during the connect that follows is not missed; call this before
+/// connecting. The future resolves on the first `DeviceDisconnected` for `id`
+/// after which the platform also reports the device not connected, or when
+/// the stream ends. The second check is there because the stream buffers
+/// events from the moment it is opened: a disconnect left over from an
+/// earlier link that was still tearing down would otherwise read as this
+/// link dropping as soon as the future is first polled.
+pub async fn watch_disconnect(
+    adapter: &Adapter,
+    id: PeripheralId,
+) -> Result<BoxFuture<'static, ()>, TransportError> {
+    let mut events = adapter
+        .events()
+        .await
+        .map_err(|e| TransportError::Connect(format!("watching for disconnects: {e}")))?;
+    let adapter = adapter.clone();
+    Ok(Box::pin(async move {
+        while let Some(event) = events.next().await {
+            let CentralEvent::DeviceDisconnected(gone) = event else {
+                continue;
+            };
+            if gone != id {
+                continue;
+            }
+            let still_connected = match adapter.peripheral(&id).await {
+                Ok(p) => p.is_connected().await.unwrap_or(false),
+                Err(_) => false,
+            };
+            if !still_connected {
+                return;
+            }
+        }
+    }))
+}
+
 pub struct BleTransport {
     peripheral: Peripheral,
     characteristic: Characteristic,
@@ -163,6 +247,12 @@ pub struct BleTransport {
     reader: Option<mpsc::UnboundedReceiver<Vec<u8>>>,
     max_write: usize,
     pace: Duration,
+    /// The task moving notifications into `reader`.
+    ///
+    /// Aborted on close. Left alone it would outlive the link: BlueZ's
+    /// notification stream never ends (see the module note), so the task and
+    /// its D-Bus match would stay for as long as the runtime runs.
+    drain: tokio::task::JoinHandle<()>,
 }
 
 impl BleTransport {
@@ -204,7 +294,7 @@ impl BleTransport {
 
         let (tx, rx) = mpsc::unbounded_channel();
         let want = characteristic.uuid;
-        tokio::spawn(async move {
+        let drain = tokio::spawn(async move {
             while let Some(n) = notifications.next().await {
                 if n.uuid != want {
                     continue;
@@ -222,6 +312,7 @@ impl BleTransport {
             characteristic,
             write_type,
             reader: Some(rx),
+            drain,
             max_write: usize::from(mtu).saturating_sub(ATT_OVERHEAD),
             // Unpaced writes drop rows on some host and adapter combinations,
             // and every BLE client in the wild paces every model identically.
@@ -356,10 +447,23 @@ impl Transport for BleTransport {
 
     async fn close(&mut self) -> Result<(), TransportError> {
         let _ = self.peripheral.unsubscribe(&self.characteristic).await;
-        self.peripheral
+        let disconnected = self
+            .peripheral
             .disconnect()
             .await
-            .map_err(|e| TransportError::Write(e.to_string()))
+            .map_err(|e| TransportError::Write(e.to_string()));
+        self.drain.abort();
+        disconnected
+    }
+}
+
+impl Drop for BleTransport {
+    /// Abort only flags the task (tokio-1.53.1 `runtime/task/join.rs:183-227`);
+    /// the task itself is dropped on its runtime, which is where bluez-async's
+    /// stream needs to be dropped, since its `Drop` calls `tokio::spawn`
+    /// (bluez-async-0.8.2 `messagestream.rs:36-41`).
+    fn drop(&mut self) {
+        self.drain.abort();
     }
 }
 
@@ -381,6 +485,25 @@ mod tests {
         assert!(looks_like_printer(Some("b21_1234")));
         assert!(!looks_like_printer(Some("Someone's Headphones")));
         assert!(!looks_like_printer(None));
+    }
+
+    #[test]
+    fn permission_and_power_have_their_own_errors() {
+        assert_eq!(
+            adapter_error(btleplug::Error::PermissionDenied),
+            TransportError::NotAllowed
+        );
+        // Anything else keeps the command line's words.
+        assert_eq!(
+            adapter_error(btleplug::Error::NotConnected).to_string(),
+            "could not connect: listing adapters: Not connected"
+        );
+        assert_eq!(
+            state_error(CentralState::PoweredOff),
+            Err(TransportError::BluetoothOff)
+        );
+        assert_eq!(state_error(CentralState::PoweredOn), Ok(()));
+        assert_eq!(state_error(CentralState::Unknown), Ok(()));
     }
 
     #[test]

@@ -20,6 +20,71 @@ use tokio::sync::mpsc;
 /// Decides what a request gets back. Return an empty vec for silence.
 pub type Responder = Box<dyn FnMut(&Frame) -> Vec<Frame> + Send>;
 
+/// A printer that identifies itself the way the handshake reads one.
+///
+/// `model_id` is what it reports for its model (info 8). `status` is the pair
+/// that ends its status reply, `(3, 1)` meaning level 4; `None` is the two-byte
+/// reply a D110 gives, too short to carry a level. `heartbeat_ok: false`
+/// answers the heartbeat with "not supported", as the D110 does.
+///
+/// Beyond that it gives fixed answers: Connect says "level 2 or better", the
+/// serial is `GB28010920`, the firmware 4.17, the hardware 4.01, the battery
+/// three bars of four, and every other request gets the generic success
+/// [`MockTransport::always_ok`] gives. `identifying(2320, Some((3, 1)), true)`
+/// is the author's D110_M as its handshake reads it.
+pub fn identifying(model_id: u16, status: Option<(u8, u8)>, heartbeat_ok: bool) -> Responder {
+    Box::new(move |req: &Frame| match req.id {
+        // "Connected, level 2 or better."
+        0xC1 => vec![Frame::new(0xC2, [0x03])],
+        0xA5 => {
+            let d = match status {
+                Some((hi, lo)) => {
+                    let mut d = vec![0u8; 11];
+                    d.extend_from_slice(&[hi, lo]);
+                    d
+                }
+                None => vec![0x00, 0x01],
+            };
+            vec![Frame::new(0xB5, d)]
+        }
+        0xDC if !heartbeat_ok => vec![Frame::new(0x00, [0x01])],
+        0x40 => {
+            let sub = req.data.first().copied().unwrap_or(0);
+            let payload: Vec<u8> = match sub {
+                8 => model_id.to_be_bytes().to_vec(),
+                11 => b"GB28010920".to_vec(),
+                9 => vec![4, 17],
+                12 => vec![4, 1],
+                10 => vec![3],
+                _ => vec![1],
+            };
+            vec![Frame::new(0x40u8.wrapping_add(sub), payload)]
+        }
+        _ => generic_success(req),
+    })
+}
+
+/// A printer that answers nothing at all: every request runs its timeout out.
+pub fn silent() -> Responder {
+    Box::new(|_req: &Frame| vec![])
+}
+
+/// The documented success reply to any request, or nothing to a one-way one.
+fn generic_success(req: &Frame) -> Vec<Frame> {
+    match relabel_proto::RequestId(req.id).expect() {
+        relabel_proto::Expect::Nothing => vec![],
+        relabel_proto::Expect::One(r) => vec![Frame::new(r.0, [0x01])],
+        relabel_proto::Expect::Any(set) => {
+            vec![Frame::new(set[0].0, [0x01])]
+        }
+        // The reply id is 0x40 plus the requested sub-type.
+        relabel_proto::Expect::InfoSubtype => {
+            let sub = req.data.first().copied().unwrap_or(0);
+            vec![Frame::new(0x40u8.wrapping_add(sub), [0x01])]
+        }
+    }
+}
+
 /// How the mock chops its replies up on the way back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Fragmentation {
@@ -121,20 +186,7 @@ impl MockTransport {
     /// Good enough to drive the whole job engine, and the baseline that more
     /// interesting fakes are built by wrapping.
     pub fn always_ok() -> (MockTransport, MockHandle) {
-        MockTransport::new(Box::new(|req: &Frame| {
-            match relabel_proto::RequestId(req.id).expect() {
-                relabel_proto::Expect::Nothing => vec![],
-                relabel_proto::Expect::One(r) => vec![Frame::new(r.0, [0x01])],
-                relabel_proto::Expect::Any(set) => {
-                    vec![Frame::new(set[0].0, [0x01])]
-                }
-                // The reply id is 0x40 plus the requested sub-type.
-                relabel_proto::Expect::InfoSubtype => {
-                    let sub = req.data.first().copied().unwrap_or(0);
-                    vec![Frame::new(0x40u8.wrapping_add(sub), [0x01])]
-                }
-            }
-        }))
+        MockTransport::new(Box::new(generic_success))
     }
 
     pub fn with_fragmentation(mut self, f: Fragmentation) -> Self {

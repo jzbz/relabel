@@ -22,6 +22,30 @@ pub enum TransportError {
     FrameTooLarge { frame: usize, max: usize },
     #[error("no usable read/write characteristic on this device")]
     NoChannel,
+
+    // The four below were `Connect` strings until the GUI needed to tell them
+    // apart. Each keeps the words the command line printed for it, prefix
+    // included, so relabel-cli's output does not change.
+    /// The platform's Bluetooth service could not be reached at all.
+    #[error(
+        "could not connect: could not reach the Bluetooth stack: {0}\n\
+         On Linux this usually means bluetoothd is not running, or this \
+         process cannot reach the D-Bus system bus."
+    )]
+    NoBluetooth(String),
+    #[error(
+        "could not connect: no Bluetooth adapter found. On Linux, check that bluetoothd is running"
+    )]
+    NoAdapter,
+    /// The platform refused this program Bluetooth: macOS's privacy setting,
+    /// or Windows's. BlueZ never reports this.
+    #[error("could not connect: this program is not allowed to use Bluetooth")]
+    NotAllowed,
+    /// The adapter is there and switched off. On BlueZ this is also what an
+    /// adapter whose state cannot be read at all reports (see
+    /// [`crate::transport::ble::powered`]).
+    #[error("could not connect: Bluetooth is switched off")]
+    BluetoothOff,
 }
 
 /// A protocol-level failure while talking to a printer.
@@ -89,4 +113,33 @@ pub enum JobError {
 
     #[error("cancelled")]
     Cancelled,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What relabel-cli printed for these before they had their own variants,
+    /// when they were `Connect` strings.
+    #[test]
+    fn the_cli_keeps_its_words() {
+        assert_eq!(
+            TransportError::NoAdapter.to_string(),
+            "could not connect: no Bluetooth adapter found. On Linux, check that bluetoothd is running"
+        );
+        assert_eq!(
+            TransportError::NoAdapter.to_string(),
+            TransportError::Connect(
+                "no Bluetooth adapter found. On Linux, check that bluetoothd is running".into()
+            )
+            .to_string()
+        );
+        let e = TransportError::NoBluetooth("x".into()).to_string();
+        assert!(
+            e.starts_with("could not connect: could not reach the Bluetooth stack: x\n"),
+            "{e}"
+        );
+        assert!(e.contains("bluetoothd"), "{e}");
+        assert!(e.ends_with("cannot reach the D-Bus system bus."), "{e}");
+    }
 }

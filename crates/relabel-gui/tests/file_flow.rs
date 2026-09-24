@@ -3,8 +3,9 @@
 //! them.
 //!
 //! Every probe is wired by `relabel_gui::wire_window`, the one wiring the
-//! application runs, with a scripted file dialog in place of the platform's.
-//! Every file a test writes is under the build's scratch space.
+//! application runs, with a scripted file dialog in place of the platform's and a
+//! printer link that goes nowhere. Every file a test writes is under the build's
+//! scratch space.
 
 #[path = "support/mod.rs"]
 mod support;
@@ -23,8 +24,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 use support::{
-    Held, Scripted, button_of, down, field_of, find_button, frame, frame_of, group_of, move_to,
-    press, rect, reference_label, rows_of, tmp_dir, type_text, up,
+    Held, HeldPlug, Scripted, button_of, down, field_of, find_button, frame, frame_of, group_of,
+    move_to, press, rect, reference_label, rows_of, tmp_dir, type_text, up,
 };
 
 include!(concat!(env!("OUT_DIR"), "/ins-probe.rs"));
@@ -34,6 +35,7 @@ relabel_gui::impl_ins_host!(InsProbe, InsSlot);
 relabel_gui::impl_view_host!(InsProbe);
 relabel_gui::impl_edit_host!(InsProbe, Tool, Grips);
 relabel_gui::impl_file_host!(InsProbe, SizePreset);
+relabel_gui::impl_print_host!(InsProbe, IssueRow, ChoiceRow);
 
 type Wired = relabel_gui::Wired<InsProbe>;
 
@@ -44,7 +46,8 @@ fn probe(started: Started, chooser: Rc<dyn Chooser>) -> (InsProbe, Wired) {
     let ui = InsProbe::new().expect("the probe window");
     ui.window()
         .dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.0 });
-    let wired = wire_window(&ui, started, chooser, Opening::Fit);
+    let plug = Rc::new(HeldPlug::default());
+    let wired = wire_window(&ui, started, chooser, plug, Opening::Fit);
     ui.show().expect("showing a headless window");
     i_slint_backend_testing::mock_elapsed_time(Duration::ZERO);
     (ui, wired)
@@ -529,7 +532,7 @@ fn a_dialog_answered_under_the_close_question_is_said_to_be_dropped() {
 /// New replaces the document and its history, so Undo straight after has nothing
 /// to take back: the question before it is what protects the work.
 #[test]
-fn new_with_a_preset_makes_a_40_mm_d110_label_that_undo_cannot_take_back() {
+fn new_with_a_preset_makes_a_40_mm_d110_m_label_that_undo_cannot_take_back() {
     let (_dir, a) = with_a("new_preset");
     let (ui, wired) = on_file(&a, Rc::new(Scripted::default()));
     ctrl(&ui, "n");
@@ -545,20 +548,35 @@ fn new_with_a_preset_makes_a_40_mm_d110_label_that_undo_cannot_take_back() {
             .authored_for
             .as_ref()
             .and_then(|f| f.model.as_deref());
-        assert_eq!(model, Some("D110"));
+        assert_eq!(model, Some("D110_M"));
         assert_eq!(label.media.feed_tenths_mm, 400);
     }
     assert_eq!(ui.get_doc_title(), "Untitled label \u{2014} relabel");
     assert!(group_of(&ui, "New label").is_none());
     assert!(
         ui.get_status()
-            .starts_with("new 40 \u{d7} 12 mm label for a D110"),
+            .starts_with("new 40 \u{d7} 12 mm label for a D110_M"),
         "{}",
         ui.get_status()
     );
     assert_eq!(wired.filing.borrow().path(), None);
     ctrl(&ui, "z");
     assert_eq!(ui.get_status(), "nothing to undo");
+}
+
+/// The New label pane said the printer was assumed, and so does the status line
+/// once the label is made, in the words a launch with no file says it in.
+#[test]
+fn a_label_made_for_an_assumed_printer_is_said_to_be_assumed_as_at_launch() {
+    let (_dir, a) = with_a("new_assumed");
+    let (ui, _wired) = on_file(&a, Rc::new(Scripted::default()));
+    ctrl(&ui, "n");
+    answer(&ui, "Create");
+    let lead = "new 30 \u{d7} 12 mm label for a D110_M (assumed: relabel is not connected to a \
+                printer): ";
+    assert!(ui.get_status().starts_with(lead), "{}", ui.get_status());
+    let launch = start(None).note;
+    assert!(launch.starts_with(lead), "{launch}");
 }
 
 #[test]
@@ -569,14 +587,14 @@ fn new_refuses_a_feed_past_the_printer_and_stays_open() {
     type_text(ui.window(), "150");
     assert_eq!(
         ui.get_new_note(),
-        "100 mm is the longest label the D110 takes"
+        "100 mm is the longest label the D110_M takes"
     );
     // Return is refused out loud: the note already held the refusal, so it is
     // said again in other words, as the status line says a repeat.
     key(&ui, Key::Return);
     assert_eq!(
         ui.get_new_note(),
-        "100 mm is the longest label the D110 takes (again)"
+        "100 mm is the longest label the D110_M takes (again)"
     );
     assert!(find_button(&ui, "Create").is_some());
     assert_eq!((ui.get_dots_x(), ui.get_dots_y()), (320, 96));
@@ -597,7 +615,7 @@ fn the_feed_field_describes_the_printer_and_the_head() {
             .accessible_description()
             .as_deref(),
         Some(
-            "For a D110 (assumed: relabel is not connected to a printer). Across the head: \
+            "For a D110_M (assumed: relabel is not connected to a printer). Across the head: \
              12 mm, 96 dots, the whole print head"
         )
     );
@@ -623,6 +641,7 @@ fn the_file_bar_buttons_carry_their_chords_and_are_not_tab_stops() {
         ("Open label", "Control+O"),
         ("Save label", "Control+S"),
         ("Save label as", "Control+Shift+S"),
+        ("Preview the label for the printer", "Control+P"),
     ] {
         assert_eq!(
             button_of(&ui, name).accessible_description().as_deref(),
@@ -691,7 +710,7 @@ fn a_bad_path_at_launch_opens_the_default_label_and_says_why() {
     assert!(
         blank
             .note
-            .starts_with("new 30 \u{d7} 12 mm label for a D110 (assumed"),
+            .starts_with("new 30 \u{d7} 12 mm label for a D110_M (assumed"),
         "{}",
         blank.note
     );
@@ -726,7 +745,7 @@ fn a_missing_path_at_launch_becomes_the_new_labels_file() {
         .authored_for
         .as_ref()
         .and_then(|f| f.model.as_deref());
-    assert_eq!(model, Some("D110"));
+    assert_eq!(model, Some("D110_M"));
     assert_eq!(ui.get_doc_title(), "new.relabel \u{2014} relabel");
 }
 

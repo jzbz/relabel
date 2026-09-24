@@ -206,6 +206,36 @@ fn a_data_file_outside_the_labels_directory_is_refused() {
     }
 }
 
+/// `--csv` names the rows' file anywhere, as the refusal above says, so a label
+/// whose own data file is not beside it still runs with it.
+#[test]
+fn csv_gives_rows_to_a_label_whose_data_file_is_not_beside_it() {
+    let dir = scratch("csv_gives_rows_to_a_label_whose_data_file_is_not_beside_it");
+    let rows = dir.join("rows.csv");
+    std::fs::write(&rows, "sku,name\nA1,Widget\n").unwrap();
+    let file = dir.join("up.relabel");
+    std::fs::write(
+        &file,
+        r#"{ "format": "relabel-label", "version": 1,
+          "media": { "feed_tenths_mm": 400, "head_tenths_mm": 120 },
+          "canvas": { "feed": 320, "head": 96, "dpmm": { "num": 8, "den": 1 } },
+          "data": { "kind": "csv_file", "path": "../rows.csv" },
+          "elements": [ { "type": "text", "id": 1,
+            "frame": { "feed": 8, "head": 8, "feed_len": 200, "head_len": 32 },
+            "text": "{name}", "family": "Noto Sans", "size": 20.0 } ] }"#,
+    )
+    .unwrap();
+    let (code, out, err) = run(&[
+        "label",
+        file.to_str().unwrap(),
+        "--check",
+        "--csv",
+        rows.to_str().unwrap(),
+    ]);
+    assert_eq!(code, Some(0), "{out}{err}");
+    assert!(out.contains("nothing refused"), "{out}");
+}
+
 /// The size cap counts the bytes as they arrive: a character device reports no
 /// length to ask for.
 #[cfg(unix)]

@@ -130,8 +130,14 @@ pub fn prepare(o: &Opts<'_>) -> Result<Option<Prepared>> {
 fn read_rows(label: &Label, file: &Path, csv: Option<&Path>) -> Result<Option<Rows>> {
     let (delimiter, has_header, named) = match &label.data {
         None => (',', true, None),
+        // With `--csv` the binding's own path is never read, so it is not
+        // checked either: `--csv` is how a label whose path is refused runs.
         Some(DataBinding::Known(KnownBinding::CsvFile(f))) => {
-            (f.delimiter, f.has_header, Some(beside(file, &f.path)?))
+            let named = match csv {
+                Some(_) => None,
+                None => Some(beside(file, &f.path)?),
+            };
+            (f.delimiter, f.has_header, named)
         }
         Some(DataBinding::Unknown(_)) if csv.is_none() => bail!(
             "the label's data was set up by a later version of relabel, which is needed to \
