@@ -289,6 +289,30 @@ signature of something settling, not of something being counted - though the
 vendor's own logging names a field in this region `sparePacket`, so the two
 readings are still unreconciled. relabel acts on neither.
 
+## 3c. Printed from the editor
+
+On 2026-09-25 the same D110_M, firmware 4.17, printed from `relabel-gui` for
+the first time (12f-2, commit 59e2412), six labels in all, each one a
+one-copy job as `relabel-cli label` sends it. The author ran the RENDER-PLAN
+checks H10 to H14 and each behaved as the plan describes:
+
+- **H11, one label after an idle link.** After at least a minute connected
+  and idle, the liveness heartbeat before the job was answered and the label
+  printed, matching the preview.
+- **H12, three one-copy jobs in a row.** Three whole labels. This is the first
+  run of more than two labels since 3b's refusal of a second job's settings
+  was answered with a resend, so the refusal-and-resend held for jobs two and
+  three as it did for job two in 3b.
+- **H13, Stop after this label.** With two copies asked for, one label fed
+  out whole and the second job never started.
+- **H14, closing the window during a job.** One whole label, then the window
+  closed and the link was released.
+
+No trace was kept, and the seconds from Return to the label, the pause
+between labels and the screen-reader part of H12 were not recorded. H15, the
+printer switched off mid-label, was not run, so what a link dropped inside a
+label leaves on the paper and in the printer is still open (DESIGN-GAPS #10).
+
 ## 4. Still open after this pass
 
 The SDK shows what the vendor *sends*. It cannot show what the firmware
