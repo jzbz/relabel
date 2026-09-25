@@ -315,3 +315,12 @@ passive hardware checks H4 and H5 there settle them:
 - Whether `Device1.Disconnect` cancels a connect still pending, so that the
   next connect, after the editor gives one up at 15 seconds, does not find the
   device still busy.
+
+One run has since answered part of the last two, on 2026-09-23 with the D110_M.
+Switched off while the editor was connected and idle, the printer went from
+connected to not connected in BlueZ at power-off, and the editor said the drop;
+how long it took to say it was not timed, and one run cannot say whether BlueZ
+always notices. A connect with the printer switched off failed once the
+15-second limit passed, and a later connect, after it was switched on again,
+worked, which is consistent with the abandoned connect having been cancelled,
+though one run does not settle it. Closing the window released the link.

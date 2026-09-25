@@ -16,14 +16,25 @@
 //! mid-print produces a cut-off label. Completion is judged on the page counter
 //! and never on the two progress percentages, which are not reliably 0-100
 //! across models.
+//!
+//! # Two ways in
+//!
+//! [`print()`] is the command line's: one job for the pages it is given, with the
+//! copies in it. [`print_labels`] is the editor's: a liveness check, then one
+//! one-copy job per label, which is byte for byte what `relabel-cli label`
+//! sends for the same labels. It exists so a run can be stopped between labels
+//! and so a failure can say how many labels came out; neither needs a command
+//! the printer has not been seen to take.
 
 use crate::error::JobError;
+use crate::printer::Identity;
 use crate::session::{PrinterEvent, Session};
 use relabel_proto::{
     EncodedPage, LabelType, PrintFlow,
     parse::PrintStatus,
     payload::{self, PageColor},
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, timeout};
@@ -107,6 +118,25 @@ impl PrintOptions {
         self.copies_per_job = relabel_proto::copies_per_job(model_id);
         self
     }
+
+    /// What `relabel-cli label` prints one label with on this printer: the
+    /// model's default density unless `density` says otherwise, else 2; the
+    /// first label type the model lists, else labels with gaps; one copy.
+    ///
+    /// The command line spells the same expression out itself; a unit test
+    /// holds the two together.
+    pub fn for_identity(id: &Identity, density: Option<u8>) -> PrintOptions {
+        let model = id.model;
+        PrintOptions {
+            density: density.or(model.map(|m| m.density.2)).unwrap_or(2),
+            label_type: model
+                .and_then(|m| m.label_types.first().copied())
+                .unwrap_or(LabelType::Gap),
+            copies: 1,
+            ..PrintOptions::default()
+        }
+        .for_model(id.model_id)
+    }
 }
 
 /// How far along a job is.
@@ -118,6 +148,193 @@ pub struct Progress {
     /// wherever they are shown.
     pub print_percent: u8,
     pub feed_percent: u8,
+}
+
+/// How far one job has got, as [`one_job`] reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    /// A page's rows are about to be sent. From here on a label may come out,
+    /// in part or whole, whatever happens next.
+    Rows,
+    /// The printer's own figures, while the job waits for its counter.
+    Waiting(Progress),
+}
+
+/// How far the label in hand had got when a run of labels ended. Ordered, so
+/// `reached >= Reached::Rows` asks whether any of it may have printed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Reached {
+    /// The liveness check before the first label.
+    Check,
+    /// The settings and the job's start: nothing of the label has been sent.
+    Settings,
+    /// Its rows were being sent.
+    Rows,
+    /// Its rows were sent and the printer was reporting on it.
+    Waiting,
+}
+
+/// What a run of labels says as it goes. Labels count from 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunNews {
+    /// The liveness check is about to be sent.
+    Checking,
+    /// Label `n`'s job is about to start.
+    Starting { n: u16, of: u16 },
+    /// Label `n`'s rows are about to be sent.
+    Sending { n: u16, of: u16 },
+    /// The printer's own figures for label `n`, said only when they change.
+    Printer {
+        n: u16,
+        of: u16,
+        print_percent: u8,
+        feed_percent: u8,
+    },
+    /// Label `n`'s job ended with its counter reached.
+    Printed { n: u16, of: u16 },
+}
+
+/// How a run of labels ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunEnd {
+    /// Every label printed.
+    Done,
+    /// The stop was read before a label started, so that label and every one
+    /// after it were never sent.
+    Stopped,
+    /// Label `label` failed at `reached`. No label after it was sent.
+    Failed {
+        label: u16,
+        reached: Reached,
+        error: JobError,
+    },
+}
+
+/// What a run of labels did: `printed` of `of` labels reached their counter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunReport {
+    pub printed: u16,
+    pub of: u16,
+    pub end: RunEnd,
+}
+
+/// Print one page as `labels` labels, the editor's way: a liveness check, then
+/// one one-copy job per label.
+///
+/// The check is one heartbeat of `check` with the default timeout. A printer
+/// that answers it, or says it does not support it, is alive; anything else
+/// ends the run with nothing else sent - no job is started, so there is no
+/// `PrintEnd` to send either.
+///
+/// Each label is then exactly what [`print()`] sends for one page with `opts`
+/// and one copy, whatever `opts.copies` says: its own job, its own clock and
+/// its own `PrintEnd`. Nothing is sent between labels. `stop` is read before
+/// every label, the first one included, and a stop only ever takes effect
+/// there, so the label in hand always finishes. No label is sent twice.
+#[allow(clippy::too_many_arguments)]
+pub async fn print_labels(
+    session: &Session,
+    flow: PrintFlow,
+    page: &EncodedPage,
+    opts: &PrintOptions,
+    labels: u16,
+    check: payload::HeartbeatKind,
+    stop: &AtomicBool,
+    mut on_news: impl FnMut(RunNews),
+) -> RunReport {
+    let of = labels;
+    if of == 0 {
+        return RunReport {
+            printed: 0,
+            of,
+            end: RunEnd::Done,
+        };
+    }
+    let one = PrintOptions { copies: 1, ..*opts };
+
+    on_news(RunNews::Checking);
+    match session
+        .request(payload::heartbeat(check), one.timeouts.default)
+        .await
+    {
+        Ok(_) => {}
+        // The D110 answers every heartbeat this way, and prints.
+        Err(e) if e.is_unsupported() => {}
+        Err(e) => {
+            return RunReport {
+                printed: 0,
+                of,
+                end: RunEnd::Failed {
+                    label: 1,
+                    reached: Reached::Check,
+                    error: e.into(),
+                },
+            };
+        }
+    }
+
+    let mut printed = 0u16;
+    for n in 1..=of {
+        if stop.load(Ordering::SeqCst) {
+            return RunReport {
+                printed,
+                of,
+                end: RunEnd::Stopped,
+            };
+        }
+        on_news(RunNews::Starting { n, of });
+        let mut reached = Reached::Settings;
+        let mut figures = None;
+        let result = one_job(
+            session,
+            flow,
+            std::slice::from_ref(page),
+            &one,
+            Instant::now(),
+            &mut |stage: Stage| match stage {
+                Stage::Rows => {
+                    reached = Reached::Rows;
+                    on_news(RunNews::Sending { n, of });
+                }
+                Stage::Waiting(p) => {
+                    reached = Reached::Waiting;
+                    let now = (p.print_percent, p.feed_percent);
+                    if figures != Some(now) {
+                        figures = Some(now);
+                        on_news(RunNews::Printer {
+                            n,
+                            of,
+                            print_percent: p.print_percent,
+                            feed_percent: p.feed_percent,
+                        });
+                    }
+                }
+            },
+        )
+        .await;
+        match result {
+            Ok(()) => {
+                printed += 1;
+                on_news(RunNews::Printed { n, of });
+            }
+            Err(error) => {
+                return RunReport {
+                    printed,
+                    of,
+                    end: RunEnd::Failed {
+                        label: n,
+                        reached,
+                        error,
+                    },
+                };
+            }
+        }
+    }
+    RunReport {
+        printed,
+        of,
+        end: RunEnd::Done,
+    }
 }
 
 /// Print one or more pages.
@@ -158,12 +375,14 @@ pub async fn print(
                 pages,
                 &batch_opts,
                 Instant::now(),
-                &mut |p: Progress| {
-                    on_progress(Progress {
-                        page: base + p.page,
-                        total: grand_total,
-                        ..p
-                    })
+                &mut |stage: Stage| {
+                    if let Stage::Waiting(p) = stage {
+                        on_progress(Progress {
+                            page: base + p.page,
+                            total: grand_total,
+                            ..p
+                        })
+                    }
                 },
             )
             .await?;
@@ -172,7 +391,12 @@ pub async fn print(
         return Ok(());
     }
 
-    one_job(session, flow, pages, opts, started, &mut on_progress).await
+    one_job(session, flow, pages, opts, started, &mut |stage: Stage| {
+        if let Stage::Waiting(p) = stage {
+            on_progress(p)
+        }
+    })
+    .await
 }
 
 /// Send a step that is answered accepted-or-refused, sending it again while
@@ -217,14 +441,14 @@ async fn one_job(
     pages: &[EncodedPage],
     opts: &PrintOptions,
     started: Instant,
-    on_progress: &mut impl FnMut(Progress),
+    on_stage: &mut impl FnMut(Stage),
 ) -> Result<(), JobError> {
     let total: u16 = pages
         .iter()
         .map(|_| opts.copies)
         .fold(0u16, |a, b| a.saturating_add(b));
 
-    let result = run(session, flow, pages, opts, total, started, on_progress).await;
+    let result = run(session, flow, pages, opts, total, started, on_stage).await;
 
     // Always, on every path. See the module note.
     let _ = session
@@ -242,12 +466,15 @@ async fn run(
     opts: &PrintOptions,
     total: u16,
     started: Instant,
-    on_progress: &mut impl FnMut(Progress),
+    on_stage: &mut impl FnMut(Stage),
 ) -> Result<(), JobError> {
     let t = &opts.timeouts;
 
-    // Settings first, in the order this flow wants them. An unsupported value
-    // comes back as a fault report rather than a refusal, and is not fatal.
+    // Settings first, in the order this flow wants them. A setting the printer
+    // answers with 0x00 (not supported) is skipped; a 0xDB fault report fails
+    // the job before any row is sent, and PrintEnd still follows. (A bare 0x00
+    // byte in the setting's own reply is a refusal, sent again by
+    // `accepted_step`.)
     let density = payload::set_density(opts.density);
     let label_type = payload::set_label_type(opts.label_type);
     let ordered = if flow.label_type_before_density() {
@@ -309,13 +536,14 @@ async fn run(
                 .await?;
         }
 
+        on_stage(Stage::Rows);
         session.send_bulk(&page.frames).await?;
 
         let r = session.request(payload::page_end(), t.page_end).await?;
         refused(&r, "PageEnd")?;
     }
 
-    wait_for_pages(session, total, started, budget, opts, on_progress).await
+    wait_for_pages(session, total, started, budget, opts, on_stage).await
 }
 
 /// The second discarded packet, sent after `PrintEnd`.
@@ -352,7 +580,7 @@ async fn wait_for_pages(
     started: Instant,
     budget: Duration,
     opts: &PrintOptions,
-    on_progress: &mut impl FnMut(Progress),
+    on_stage: &mut impl FnMut(Stage),
 ) -> Result<(), JobError> {
     let t = &opts.timeouts;
     let mut events = session.events();
@@ -366,12 +594,12 @@ async fn wait_for_pages(
             match timeout(Duration::from_millis(0), events.recv()).await {
                 Ok(Ok(PrinterEvent::PageIndex(p))) => {
                     last_page = last_page.max(p);
-                    on_progress(Progress {
+                    on_stage(Stage::Waiting(Progress {
                         page: last_page,
                         total,
                         print_percent: 0,
                         feed_percent: 0,
-                    });
+                    }));
                 }
                 Ok(Ok(PrinterEvent::Error(code))) => {
                     return Err(crate::SessionError::Printer(code).into());
@@ -394,12 +622,12 @@ async fn wait_for_pages(
                     return Err(crate::SessionError::Printer(code).into());
                 }
                 last_page = last_page.max(st.page);
-                on_progress(Progress {
+                on_stage(Stage::Waiting(Progress {
                     page: last_page,
                     total,
                     print_percent: st.print_progress,
                     feed_percent: st.feed_progress,
-                });
+                }));
                 // Deliberately `>=` and not `==`: a printer that overshoots or
                 // reports a page we did not count must still end the job.
                 if last_page >= total {
@@ -432,5 +660,81 @@ fn check_deadline(started: Instant, job: Duration) -> Result<(), JobError> {
         })
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use relabel_proto::models;
+
+    fn identity(model_id: Option<u16>) -> Identity {
+        let candidates: Vec<_> = model_id
+            .map(models::by_wire_id)
+            .into_iter()
+            .flatten()
+            .collect();
+        Identity {
+            model_id,
+            model: candidates.first().copied(),
+            candidates,
+            ..Identity::default()
+        }
+    }
+
+    /// relabel-cli's `label.rs`, spelled out as it is there.
+    fn cli_formula(id: &Identity, density: Option<u8>) -> PrintOptions {
+        let model = id.model;
+        PrintOptions {
+            density: density.or(model.map(|m| m.density.2)).unwrap_or(2),
+            label_type: model
+                .and_then(|m| m.label_types.first().copied())
+                .unwrap_or(LabelType::Gap),
+            copies: 1,
+            ..PrintOptions::default()
+        }
+        .for_model(id.model_id)
+    }
+
+    fn fields(o: &PrintOptions) -> (u8, LabelType, u16, PageColor, Option<u16>, Duration) {
+        (
+            o.density,
+            o.label_type,
+            o.copies,
+            o.color,
+            o.copies_per_job,
+            o.timeouts.job,
+        )
+    }
+
+    #[test]
+    fn for_identity_is_the_cli_formula() {
+        let d110_m = PrintOptions::for_identity(&identity(Some(2320)), None);
+        assert_eq!(d110_m.density, 3);
+        assert_eq!(d110_m.label_type, LabelType::Gap);
+        assert_eq!(d110_m.copies, 1);
+        assert_eq!(d110_m.copies_per_job, None);
+
+        let d110 = PrintOptions::for_identity(&identity(Some(2304)), None);
+        assert_eq!(d110.density, 2);
+        assert_eq!(d110.copies_per_job, Some(1));
+
+        let nothing = PrintOptions::for_identity(&identity(None), None);
+        assert_eq!(nothing.density, 2);
+        assert_eq!(nothing.label_type, LabelType::Gap);
+
+        let chosen = PrintOptions::for_identity(&identity(Some(2320)), Some(5));
+        assert_eq!(chosen.density, 5);
+
+        for model_id in [Some(2320), Some(2304), Some(2305), Some(9999), None] {
+            for density in [None, Some(1), Some(5)] {
+                let id = identity(model_id);
+                assert_eq!(
+                    fields(&PrintOptions::for_identity(&id, density)),
+                    fields(&cli_formula(&id, density)),
+                    "model {model_id:?}, density {density:?}"
+                );
+            }
+        }
     }
 }

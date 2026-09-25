@@ -1,4 +1,4 @@
-//! New, open, save, save as, the preview and closing the window: which of them
+//! New, open, save, save as, the print pane and closing the window: which of them
 //! may go ahead, what has to be asked first, and what the operator is told.
 //!
 //! A synchronous state machine with no toolkit and no I/O in it, for `doc`'s
@@ -13,15 +13,17 @@
 //! window's close button, a dialog's late answer and the New label pane all come
 //! through [`Filing::apply`], so unsaved work is asked about in one place.
 //!
-//! # The preview shares the popups' one place
+//! # The print pane shares the popups' one place
 //!
-//! The Preview pane is not a file command, and it is here anyway: it opens in the
+//! The print pane is not a file command, and it is here anyway: it opens in the
 //! same place as the question and the New label pane, only one of the three is
 //! ever shown, and the window's one close handler runs through this machine. So
 //! Control+P is refused while the others are open, a file command an assistive
-//! technology presses behind the open preview is refused with "close the preview
-//! first", and closing the window with the preview open is an ordinary close.
-//! The preview asks nothing about unsaved work: it changes nothing.
+//! technology presses behind the open pane is refused with "close the print pane
+//! first", and closing the window with the pane open is an ordinary close. The
+//! pane asks nothing about unsaved work: printing changes nothing in the
+//! document. A close held for a print job is `print`'s, and reaches this machine
+//! only once the job has ended.
 //!
 //! # Consent is to a revision, not to a moment
 //!
@@ -43,7 +45,8 @@ pub enum Want {
     Open,
     Save,
     SaveAs,
-    /// The Preview pane: what would print, and the printer link.
+    /// The print pane: what will print, the printer link, and Print. Named
+    /// Preview inside, as the pane was before it printed.
     Preview,
     /// The window's close button, or anything else that asks the window to go.
     Close,
@@ -104,7 +107,7 @@ impl Want {
             Want::Open => "Open",
             Want::Save => "Save",
             Want::SaveAs => "Save as",
-            Want::Preview => "Preview",
+            Want::Preview => "Print",
             Want::Close => "Close",
         }
     }
@@ -116,7 +119,7 @@ impl Want {
             Want::Open => "Open label",
             Want::Save => "Save label",
             Want::SaveAs => "Save label as",
-            Want::Preview => "Preview the label for the printer",
+            Want::Preview => "Print the label",
             Want::Close => "Close the window",
         }
     }
@@ -140,7 +143,7 @@ impl Want {
             Want::New => "no new label was started",
             Want::Open => "nothing was opened",
             Want::Save | Want::SaveAs => "nothing was saved",
-            Want::Preview => "the preview was not opened",
+            Want::Preview => "the print pane was not opened",
             Want::Close => "nothing was closed",
         }
     }
@@ -246,7 +249,7 @@ pub enum FileCmd {
         from: Source,
         result: Result<String, String>,
     },
-    /// The Preview pane closed, by its Close button or Escape.
+    /// The print pane closed, by its Close button or Escape.
     PreviewClosed,
 }
 
@@ -274,7 +277,7 @@ pub enum Next {
     Write(PathBuf),
     Read(PathBuf),
     Fresh(NewSpec),
-    /// Show the Preview pane, or show it again with what it says now.
+    /// Show the print pane, or show it again with what it says now.
     Preview,
     /// Close the window: the question was answered and the work is saved or let
     /// go.
@@ -343,7 +346,7 @@ enum Wait {
     Writing {
         then: Option<Intent>,
     },
-    /// The Preview pane is open.
+    /// The print pane is open.
     Previewing,
 }
 
@@ -391,7 +394,7 @@ impl Filing {
         self.path.as_deref().map(file_name)
     }
 
-    /// Whether the Preview pane is open, which is when the wiring may move the
+    /// Whether the print pane is open, which is when the wiring may move the
     /// keyboard inside it or draw it again.
     pub fn previewing(&self) -> bool {
         self.wait == Wait::Previewing
@@ -470,14 +473,14 @@ impl Filing {
             (Wait::Previewing, Want::Preview) => return FileOutcome::then(Next::Preview),
             // Pointer and keys cannot reach the File bar behind the pane, and an
             // assistive technology's action can, for the question's reason above.
-            (Wait::Previewing, _) => return FileOutcome::said("close the preview first"),
+            (Wait::Previewing, _) => return FileOutcome::said("close the print pane first"),
             (Wait::Idle | Wait::Writing { .. }, _) => {}
         }
         self.wait = Wait::Idle;
         let intent = match w {
             Want::Save => return self.save(now, None),
             Want::SaveAs => return self.save_as(now, None),
-            // Nothing about unsaved work is asked: the preview changes nothing.
+            // Nothing about unsaved work is asked: the pane changes nothing.
             Want::Preview => {
                 self.wait = Wait::Previewing;
                 return FileOutcome::then(Next::Preview);
@@ -1065,7 +1068,7 @@ mod tests {
             ),
             (
                 Want::Preview,
-                "the preview was not opened: let go of the element first",
+                "the print pane was not opened: let go of the element first",
             ),
             (
                 Want::Close,
@@ -1561,8 +1564,10 @@ mod tests {
         }
     }
 
+    /// The fifth command opens the print pane: named Print, on Control+P, with
+    /// token 4. Its refusals name the print pane.
     #[test]
-    fn control_p_is_preview_and_control_shift_p_is_nothing() {
+    fn print_is_the_fifth_command() {
         for (text, shift, want) in [
             ("p", false, Some(Want::Preview)),
             ("P", false, Some(Want::Preview)),
@@ -1580,7 +1585,22 @@ mod tests {
                 Want::Preview.button_name(),
                 Want::Preview.keys()
             ),
-            ("Preview", "Preview the label for the printer", "Control+P")
+            ("Print", "Print the label", "Control+P")
+        );
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::Preview, &clean());
+        assert_eq!(
+            want(&mut f, Want::Save, &clean()),
+            FileOutcome::said("close the print pane first")
+        );
+        let held = Now {
+            pressed: true,
+            ..clean()
+        };
+        let mut f = at("/l/a.relabel");
+        assert_eq!(
+            want(&mut f, Want::Preview, &held),
+            FileOutcome::said("the print pane was not opened: let go of the element first")
         );
     }
 
@@ -1604,7 +1624,7 @@ mod tests {
         let mut f = at("/l/a.relabel");
         assert_eq!(
             want(&mut f, Want::Preview, &now),
-            FileOutcome::said("the preview was not opened: let go of the element first")
+            FileOutcome::said("the print pane was not opened: let go of the element first")
         );
         assert!(!f.previewing());
     }
@@ -1618,7 +1638,7 @@ mod tests {
         for w in [Want::New, Want::Open, Want::Save, Want::SaveAs] {
             assert_eq!(
                 want(&mut f, w, &unsaved(1)),
-                FileOutcome::said("close the preview first"),
+                FileOutcome::said("close the print pane first"),
                 "{w:?}"
             );
             assert!(f.previewing(), "{w:?}");

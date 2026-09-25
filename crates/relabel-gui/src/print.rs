@@ -1,13 +1,14 @@
-//! The Preview pane's wiring and the Printer line beside the File bar, driven
+//! The print pane's wiring and the Printer line beside the File bar, driven
 //! through [`Printing`] and [`prove`].
 //!
 //! Every route into the link is one call to `drive`, which does the same four
 //! things in order: apply the command to the machine, say its note on the status
 //! line, hand the link the order it carries, and push what the machine and the
-//! proof now say. No `RefCell` is borrowed while the order is handed over: a plug
-//! may deliver news from inside it - a test's does, and the real one does when the
-//! link cannot start - and that news is another `drive`. This is `file`'s rule for
-//! the file dialog.
+//! proof now say - and, when a job the window's close was held for has ended,
+//! ask for the close again. No `RefCell` is borrowed while the order is handed
+//! over or the close asked for: a plug may deliver news from inside it - a test's
+//! does, and the real one does when the link cannot start - and that news is
+//! another `drive`. This is `file`'s rule for the file dialog.
 //!
 //! # When the pane is drawn again
 //!
@@ -17,15 +18,39 @@
 //! edit reaches the canvas through its popup, and news arrives whenever the link
 //! has some. The pane is a popup, so pointer and keys cannot edit behind it.
 //!
+//! # What is printed
+//!
+//! The page of the proof the pane shows, as it was encoded for that proof and
+//! never again: the job slot gathers it only from a proof that is printable,
+//! drawn for the connected printer and for the document as it now stands. A
+//! proof that is stale is drawn again, shown, and nothing is printed, so what
+//! prints is always what the operator last saw. Behind those gates a fresh
+//! encode would give the same bytes, so no test can tell a cloned page from one
+//! encoded again: that it is the proof's own rests on `job_cmd` alone. The
+//! proof whose page was sent is kept while the job runs, and the pane shows it,
+//! opened again or not, whatever is edited, opened or made behind it; when the
+//! job ends it is let go, and the document is drawn again if the pane is open.
+//! A job's news repaints nothing but the Printer line and the job line.
+//!
+//! # Closing the window during a job
+//!
+//! The close is held ([`Prints::hold_close`]), and no label starts after the one
+//! in hand. Once the job has ended the close is asked for again, through the file
+//! commands, as the close button would have asked: unsaved work is asked about
+//! then, after the label, and a held element still refuses it.
+//!
 //! # Where the keyboard goes
 //!
 //! Where [`Printing`] says, and only while the pane is open: on opening; to the
-//! first printer on entering a choice; and to Close whenever the primary slot
-//! changes face under it. Connect, and opening a printer, chosen or the only one
-//! found, make it Stop waiting; Stop waiting, Cancel, none found, a failure and a
-//! drop make it Connect; connecting makes it Disconnect; and disconnecting and the
-//! link ending hide it. So a second Return, or Return held down, never stops,
-//! starts or drops a link, and neither does a Return meant for the face the slot
+//! first printer on entering a choice; and to Close whenever the primary slot or
+//! the job slot changes face under it. Connect, and opening a printer, chosen or
+//! the only one found, make the primary slot Stop waiting; Stop waiting, Cancel,
+//! none found, a failure and a drop make it Connect; connecting makes it
+//! Disconnect; and disconnecting and the link ending hide it. Print makes the job
+//! slot Stop after this label, or hides it; the last label's start and a stop
+//! hide it; and a job's end makes it Print again. So a second Return, or Return
+//! held down, never stops, starts or drops a link, never prints twice and never
+//! stops the job it started, and neither does a Return meant for the face a slot
 //! had a moment before. Otherwise it stays where the operator left it. The issue
 //! list leaves the pane while a printer is chosen, when the keyboard is on a
 //! choice. Its rows are one model for the life of the window, written row by row,
@@ -34,15 +59,17 @@
 
 use crate::canvas::{Canvas, PanePush, said_again};
 use crate::doc::Doc;
+use crate::file::CloseReplay;
 use crate::filing::{FileCmd, Filing, Now};
 use crate::fresh;
 use crate::plug::{News, Plug};
 use crate::preview::paint_fit;
-use crate::printing::{Focus, LinkView, PrintCmd, Printing};
+use crate::printing::{Focus, JobSlot, LinkView, NotReady, PrintCmd, Printing};
 use crate::proof::{Proof, prove};
 use crate::rows::{ChoiceItem, IssueItem, PrintHost};
+use relabel_core::link::Heard;
 use slint::{Model, ModelRc, VecModel};
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 
 /// The pane's widest, in logical pixels, and what it keeps from the window's
@@ -67,13 +94,19 @@ pub struct Prints<H: PrintHost> {
     /// The connected printer, as the New label pane sees it
     /// (`fresh::printer_for`).
     connected: Rc<Cell<Option<fresh::Connected>>>,
-    /// What the pane shows, or showed last.
+    /// The document's proof, drawn last.
     proof: RefCell<Option<Proof>>,
+    /// The proof whose page a running job is printing, which the pane shows in
+    /// place of the document's until the job ends.
+    printing_proof: RefCell<Option<Proof>>,
+    /// The close button's request again, through the file commands: set once by
+    /// the wiring, and called when a job the close was held for has ended.
+    close_replay: RefCell<Option<CloseReplay<H>>>,
     /// The issue list's one model, for `rows`' reason.
     issues: Rc<VecModel<H::Issue>>,
 }
 
-/// Wire the Printer line and the Preview pane to a window whose canvas is wired
+/// Wire the Printer line and the print pane to a window whose canvas is wired
 /// already. Before the files: the file commands open the pane through
 /// [`Prints::open`].
 ///
@@ -95,6 +128,8 @@ pub fn wire<H: PrintHost>(
         printing: RefCell::new(Printing::new()),
         connected,
         proof: RefCell::new(None),
+        printing_proof: RefCell::new(None),
+        close_replay: RefCell::new(None),
         issues: Rc::new(VecModel::default()),
     });
     host.set_preview_issues(ModelRc::from(prints.issues.clone()));
@@ -145,7 +180,13 @@ pub fn wire<H: PrintHost>(
                         .filing
                         .borrow_mut()
                         .apply(FileCmd::PreviewClosed, &Now::default());
-                    debug_assert_eq!(out.note, None, "closing the preview is quiet");
+                    debug_assert_eq!(out.note, None, "closing the pane is quiet");
+                }
+                // The job slot. What it holds is the machine's to say, never the
+                // face the button had when it was pressed.
+                2 => {
+                    let cmd = prints.job_cmd();
+                    prints.drive(&host, cmd);
                 }
                 _ => {}
             }
@@ -160,31 +201,120 @@ pub fn wire<H: PrintHost>(
             prints.drive(&host, PrintCmd::Choose(i));
         });
     }
+    {
+        let prints = prints.clone();
+        host.on_preview_copies_edited(move |text| {
+            let Some(host) = prints.host.upgrade() else {
+                return;
+            };
+            prints.drive(&host, PrintCmd::Copies(text.to_string()));
+        });
+    }
 
     prints.show(host, None);
     prints
 }
 
 impl<H: PrintHost> Prints<H> {
-    /// The proof the pane shows, or showed last.
+    /// The proof the pane shows, or showed last: a running job's own, else the
+    /// document's.
     pub fn proof(&self) -> Option<Proof> {
-        self.proof.borrow().clone()
+        self.shown().clone()
+    }
+
+    fn shown(&self) -> Ref<'_, Option<Proof>> {
+        let job = self.printing_proof.borrow();
+        if job.is_some() {
+            return job;
+        }
+        drop(job);
+        self.proof.borrow()
+    }
+
+    /// Whether a job is running, which holds the window's close.
+    pub fn busy(&self) -> bool {
+        self.printing.borrow().busy()
+    }
+
+    /// The window's close button, before the file commands see it. While a job
+    /// runs the close is held: no label starts after the one in hand, the status
+    /// line says so, and this answers true, for the window to stay. Otherwise it
+    /// does nothing and answers false.
+    pub fn hold_close(&self, host: &H) -> bool {
+        if !self.busy() {
+            return false;
+        }
+        self.drive(host, PrintCmd::WindowClosing);
+        true
+    }
+
+    /// What asks for the close again once a job it was held for has ended.
+    pub fn set_close_replay(&self, replay: CloseReplay<H>) {
+        *self.close_replay.borrow_mut() = Some(replay);
     }
 
     /// Open the pane, drawn afresh: the file commands' `Next::Preview`, once the
     /// machine is previewing and every other popup is closed.
+    ///
+    /// While a job runs it shows the job's own proof; the document's is drawn
+    /// all the same, for the pane to show once the job has ended.
     pub fn open(&self, host: &H) {
         self.reprove(self.canvas.borrow().doc());
-        let view = self.printing.borrow().view();
+        let view = self.view();
         self.push_pane(host, &view);
         // Read by the pane as it opens.
         host.set_preview_focus_to(view.focus.token());
         host.invoke_show_preview();
     }
 
+    /// What the job slot gives: Stop after this label while a job runs, which
+    /// the machine takes only while it can still stop one; otherwise Print, with
+    /// the page of the proof the pane shows when that proof is printable, drawn
+    /// for the connected printer and for the document as it stands. A stale
+    /// proof is drawn again, and the command says so, for the operator to check
+    /// the new one first.
+    fn job_cmd(&self) -> PrintCmd {
+        if self.busy() {
+            return PrintCmd::StopAfterLabel;
+        }
+        let stale = {
+            let c = self.canvas.borrow();
+            self.is_stale(c.doc())
+        };
+        if stale {
+            self.reprove(self.canvas.borrow().doc());
+            return PrintCmd::Print(Err(NotReady::Stale));
+        }
+        let generation = self.printing.borrow().generation();
+        let proof = self.proof.borrow();
+        let page = proof
+            .as_ref()
+            .filter(|p| p.printable() && p.printer.is_some() && p.generation == generation)
+            .and_then(|p| p.page.clone());
+        PrintCmd::Print(page.ok_or(NotReady::NotPrintable))
+    }
+
     /// One printer command, start to finish.
     fn drive(&self, host: &H, cmd: PrintCmd) {
+        // News of a job and a typed count change only the job's own lines,
+        // unless the job slot changed face with them.
+        let light = matches!(
+            cmd,
+            PrintCmd::Copies(_) | PrintCmd::Heard(Heard::Job { .. })
+        );
+        // Print sends the page of the proof shown now, which is the one kept.
+        let sent = match &cmd {
+            PrintCmd::Print(Ok(_)) => self.proof.borrow().clone(),
+            _ => None,
+        };
+        let was_busy = self.busy();
         let out = self.printing.borrow_mut().apply(cmd);
+        // Before the order is handed over: the job can end inside it.
+        match (was_busy, self.busy()) {
+            (false, true) => *self.printing_proof.borrow_mut() = sent,
+            (true, false) => *self.printing_proof.borrow_mut() = None,
+            _ => {}
+        }
         self.connected.set(self.connected_now());
         if let Some(note) = out.note {
             host.set_status(said_again(&host.get_status(), note).as_str().into());
@@ -193,7 +323,19 @@ impl<H: PrintHost> Prints<H> {
         if let Some((ticket, order)) = out.order {
             self.plug.order(ticket, order);
         }
-        self.show(host, out.focus);
+        if light && out.focus.is_none() {
+            self.show_job(host);
+        } else {
+            self.show(host, out.focus);
+        }
+        // Last, with nothing borrowed: the close goes through the file commands,
+        // which may hide the window or ask about unsaved work.
+        if out.replay_close {
+            let replay = self.close_replay.borrow().clone();
+            if let Some(replay) = replay {
+                replay(host);
+            }
+        }
     }
 
     /// The connected printer as a new label sees it: its model only when
@@ -206,10 +348,28 @@ impl<H: PrintHost> Prints<H> {
         })
     }
 
+    /// Push the Printer line, and the pane's job line and slots when it is open:
+    /// all that a job's news or a typed count changes. The image, the verdict
+    /// and the issues stay as they are.
+    fn show_job(&self, host: &H) {
+        let view = self.view();
+        host.set_printer_line(view.printer_line.as_str().into());
+        if self.filing.borrow().previewing() {
+            push_job(host, &view);
+        }
+    }
+
+    /// What the machine says, with Print's description naming the size of the
+    /// label the pane shows.
+    fn view(&self) -> LinkView {
+        let size = self.shown().as_ref().map(Proof::size_says);
+        self.printing.borrow().view_for(size.as_deref())
+    }
+
     /// Push the link as it now stands: the Printer line always, and the pane when
     /// it is open, drawn again when stale.
     fn show(&self, host: &H, focus: Option<Focus>) {
-        let view = self.printing.borrow().view();
+        let view = self.view();
         host.set_printer_line(view.printer_line.as_str().into());
         if !self.filing.borrow().previewing() {
             return;
@@ -218,9 +378,12 @@ impl<H: PrintHost> Prints<H> {
             let c = self.canvas.borrow();
             self.is_stale(c.doc())
         };
-        if stale {
+        let view = if stale {
             self.reprove(self.canvas.borrow().doc());
-        }
+            self.view()
+        } else {
+            view
+        };
         self.push_pane(host, &view);
         if let Some(focus) = focus {
             host.set_preview_focus_to(focus.token());
@@ -237,7 +400,7 @@ impl<H: PrintHost> Prints<H> {
             return;
         }
         self.reprove(doc);
-        let view = self.printing.borrow().view();
+        let view = self.view();
         self.push_pane(host, &view);
     }
 
@@ -257,9 +420,9 @@ impl<H: PrintHost> Prints<H> {
         *self.proof.borrow_mut() = Some(proof);
     }
 
-    /// Everything the pane shows, from the proof and `view`.
+    /// Everything the pane shows, from the proof it shows and `view`.
     fn push_pane(&self, host: &H, view: &LinkView) {
-        let proof = self.proof.borrow();
+        let proof = self.shown();
         let Some(proof) = proof.as_ref() else {
             return;
         };
@@ -302,6 +465,7 @@ impl<H: PrintHost> Prints<H> {
         host.set_preview_primary_says(view.primary_says.as_str().into());
         host.set_preview_primary_shown(view.primary.is_some());
         host.set_preview_primary_default(view.primary.is_some_and(|p| p.is_default()));
+        push_job(host, view);
     }
 
     /// Bring the issue list to `rows`, row by row: rows past the new end go from
@@ -321,6 +485,29 @@ impl<H: PrintHost> Prints<H> {
             }
         }
     }
+}
+
+/// The job slot, the Copies field and the job line, from `view`.
+fn push_job<H: PrintHost>(host: &H, view: &LinkView) {
+    host.set_preview_print_face(view.job_slot.map_or("", JobSlot::face).into());
+    host.set_preview_print_says(view.job_slot_says.as_str().into());
+    host.set_preview_print_shown(view.job_slot.is_some());
+    host.set_preview_copies_start(view.copies_start.as_str().into());
+    host.set_preview_copies_says(view.copies_says.into());
+    host.set_preview_copies_shown(view.copies_shown);
+    match &view.job {
+        Some(job) => {
+            host.set_preview_job_done(job.done());
+            host.set_preview_job_says(job.says.as_str().into());
+            host.set_preview_job_shown(true);
+        }
+        None => {
+            host.set_preview_job_shown(false);
+            host.set_preview_job_done(0.0);
+            host.set_preview_job_says("".into());
+        }
+    }
+    host.set_preview_image_label(view.image_label.into());
 }
 
 /// The box the image is fitted into, in whole physical pixels: the pane's own

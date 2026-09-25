@@ -3,14 +3,23 @@
 //! These are the tests that would have caught the D101 mis-mapping: they assert
 //! on the exact command sequence and payload widths that go out, per flow.
 
-use relabel_core::job::{PrintOptions, Timeouts, print};
-use relabel_core::session::Session;
-use relabel_core::transport::mock::{MockHandle, MockTransport};
-use relabel_core::{JobError, SessionError};
-use relabel_proto::{
-    BitPlane, EncodedPage, HeadSpec, PrintDirection, PrintFlow, PrinterErrorCode, encode_page,
+use relabel_core::job::{
+    PrintOptions, Reached, RunEnd, RunNews, RunReport, Timeouts, print, print_labels,
 };
+use relabel_core::session::Session;
+use relabel_core::transport::mock::{
+    FakeCounts, FakePrinter, MockHandle, MockTransport, Responder, d110_m_out_of_labels_on_second,
+};
+use relabel_core::{Identity, JobError, SessionError, handshake};
+use relabel_proto::payload::HeartbeatKind;
+use relabel_proto::{
+    BitPlane, EncodedPage, Frame, HeadSpec, PrintDirection, PrintFlow, PrinterErrorCode,
+    encode_page, models,
+};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::time::Instant;
 
 /// A printer that acknowledges everything and advances its page counter as a
 /// real one would.
@@ -533,4 +542,443 @@ async fn a_printer_that_keeps_refusing_stops_the_job() {
         &[0xF3, 0xDC],
         "PrintEnd, then the discarded heartbeat this flow ends on"
     );
+}
+
+// The editor's way in: `print_labels`, a liveness check and then one one-copy
+// job per label, against a fake D110_M that counts pages per job.
+
+/// The author's D110_M as its handshake reads it.
+fn d110_m() -> Identity {
+    let candidates: Vec<_> = models::by_wire_id(2320).collect();
+    Identity {
+        protocol: 4,
+        model_id: Some(2320),
+        model: candidates.first().copied(),
+        candidates,
+        ..Identity::default()
+    }
+}
+
+/// A 40-row label across the D110_M's 96-dot head. Drawn already turned, so
+/// its columns are the head's dots.
+fn label() -> EncodedPage {
+    let mut p = BitPlane::new(96, 40);
+    p.set(0, 0, true);
+    p.set(95, 39, true);
+    encode_page(&p, &HeadSpec::new(96, PrintDirection::Top)).unwrap()
+}
+
+fn on(fake: FakePrinter) -> (Session, MockHandle, FakeCounts) {
+    let (responder, counts) = fake.build();
+    let (t, handle) = MockTransport::new(responder);
+    (Session::start(Box::new(t)), handle, counts)
+}
+
+/// `print_labels` as the editor runs it on the D110_M, with every piece of
+/// news kept.
+async fn run(
+    session: &Session,
+    labels: u16,
+    stop: &AtomicBool,
+    mut also: impl FnMut(RunNews),
+) -> (RunReport, Vec<RunNews>) {
+    let id = d110_m();
+    let mut news = Vec::new();
+    let report = print_labels(
+        session,
+        id.flow(),
+        &label(),
+        &PrintOptions::for_identity(&id, None),
+        labels,
+        HeartbeatKind::for_protocol(id.protocol),
+        stop,
+        |n| {
+            also(n);
+            news.push(n);
+        },
+    )
+    .await;
+    (report, news)
+}
+
+fn count(frames: &[Frame], id: u8) -> usize {
+    frames.iter().filter(|f| f.id == id).count()
+}
+
+/// The pin on the editor's path: after its one heartbeat, a run of labels is
+/// byte for byte the command line's loop of one-copy jobs.
+#[tokio::test(start_paused = true)]
+async fn print_labels_is_one_heartbeat_then_the_cli_loop() {
+    let (s, handle, _) = on(FakePrinter::d110_m());
+    let (report, news) = run(&s, 3, &AtomicBool::new(false), |_| {}).await;
+    assert_eq!(
+        report,
+        RunReport {
+            printed: 3,
+            of: 3,
+            end: RunEnd::Done
+        }
+    );
+    assert_eq!(news.first(), Some(&RunNews::Checking));
+    assert_eq!(news.last(), Some(&RunNews::Printed { n: 3, of: 3 }));
+
+    // What relabel-cli label sends for three labels.
+    let (cli, cli_handle, _) = on(FakePrinter::d110_m());
+    let id = d110_m();
+    let opts = PrintOptions::for_identity(&id, None);
+    for _ in 0..3 {
+        print(&cli, id.flow(), &[label()], &opts, |_| {})
+            .await
+            .unwrap();
+    }
+
+    let editor = handle.received();
+    assert_eq!(editor[0], Frame::new(0xDC, [4]), "one Advanced2 heartbeat");
+    assert_eq!(editor[1..], cli_handle.received()[..]);
+    assert_eq!(count(&editor, 0x01), 3);
+}
+
+#[tokio::test(start_paused = true)]
+async fn print_labels_never_sends_a_multi_copy_job() {
+    for labels in [1, 2, 99] {
+        let (s, handle, counts) = on(FakePrinter::d110_m().per_label(Duration::from_millis(500)));
+        let (report, _) = run(&s, labels, &AtomicBool::new(false), |_| {}).await;
+        assert_eq!(report.end, RunEnd::Done, "{labels} labels");
+        let frames = handle.received();
+        for start in frames.iter().filter(|f| f.id == 0x01) {
+            assert_eq!(start.data[0..2], [0, 1], "PrintStart declares one page");
+        }
+        for size in frames.iter().filter(|f| f.id == 0x13) {
+            assert_eq!(size.data[4..6], [0, 1], "SetPageSize carries one copy");
+        }
+        assert_eq!(count(&frames, 0x13), usize::from(labels));
+        assert_eq!(counts.labels_out(), labels);
+    }
+}
+
+/// When each request reached the printer, and what it was answered.
+type Log = Arc<Mutex<Vec<(Instant, u8, Option<u8>)>>>;
+
+fn logged(mut inner: Responder, log: Log) -> Responder {
+    Box::new(move |req| {
+        let replies = inner(req);
+        let byte = replies.first().and_then(|r| r.data.first().copied());
+        log.lock().unwrap().push((Instant::now(), req.id, byte));
+        replies
+    })
+}
+
+/// The D110_M refuses the next job's first command for a moment after each
+/// `PrintEnd`; one resend 200 ms later is taken, as on the hardware.
+#[tokio::test(start_paused = true)]
+async fn the_label_after_each_print_end_is_resent_once() {
+    let log: Log = Arc::default();
+    let (t, _handle) =
+        MockTransport::new(logged(FakePrinter::d110_m().responder(), Arc::clone(&log)));
+    let s = Session::start(Box::new(t));
+    let (report, _) = run(&s, 3, &AtomicBool::new(false), |_| {}).await;
+    assert_eq!(report.printed, 3);
+    assert_eq!(report.end, RunEnd::Done);
+
+    let log = log.lock().unwrap();
+    let label_types: Vec<_> = log.iter().filter(|(_, id, _)| *id == 0x23).collect();
+    assert_eq!(label_types.len(), 5, "1 + 2 + 2: {label_types:?}");
+    for pair in label_types.windows(2) {
+        let [(refused_at, _, refused), (again_at, _, taken)] = pair else {
+            unreachable!()
+        };
+        if *refused == Some(0x00) {
+            assert_eq!(*taken, Some(0x01));
+            assert_eq!(*again_at - *refused_at, Duration::from_millis(200));
+        }
+    }
+    assert_eq!(
+        label_types
+            .iter()
+            .filter(|(_, _, b)| *b == Some(0x00))
+            .count(),
+        2,
+        "one refusal after each of the first two labels"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn sending_is_said_before_the_rows() {
+    let (s, handle, _) = on(FakePrinter::d110_m());
+    let watching = handle.clone();
+    let mut last_figures: Option<(u16, u8, u8)> = None;
+    let (report, news) = run(&s, 3, &AtomicBool::new(false), |n| match n {
+        RunNews::Sending { .. } => {
+            assert_eq!(watching.received().last().map(|f| f.id), Some(0x13));
+        }
+        RunNews::Printer {
+            n,
+            print_percent,
+            feed_percent,
+            ..
+        } => {
+            let last = watching.received().last().map(|f| f.id);
+            assert!(matches!(last, Some(0xE3 | 0xA3)), "{last:?}");
+            let now = (n, print_percent, feed_percent);
+            assert_ne!(last_figures, Some(now), "the same figures twice");
+            last_figures = Some(now);
+        }
+        _ => {}
+    })
+    .await;
+    assert_eq!(report.end, RunEnd::Done);
+    let sending: Vec<_> = news
+        .iter()
+        .filter(|n| matches!(n, RunNews::Sending { .. }))
+        .collect();
+    assert_eq!(sending.len(), 3);
+}
+
+#[tokio::test(start_paused = true)]
+async fn stop_is_read_before_each_label() {
+    let (s, handle, _) = on(FakePrinter::d110_m());
+    let stop = AtomicBool::new(false);
+    let (report, _) = run(&s, 3, &stop, |n| {
+        if n == (RunNews::Starting { n: 2, of: 3 }) {
+            stop.store(true, Ordering::SeqCst);
+        }
+    })
+    .await;
+    assert_eq!(
+        report,
+        RunReport {
+            printed: 2,
+            of: 3,
+            end: RunEnd::Stopped
+        }
+    );
+    let frames = handle.received();
+    assert_eq!(count(&frames, 0x01), 2);
+    assert_eq!(count(&frames, 0xF3), 2);
+    assert_eq!(frames.last().map(|f| f.id), Some(0xDC), "the V5 heartbeat");
+}
+
+#[tokio::test(start_paused = true)]
+async fn stop_before_the_first_label_sends_only_the_heartbeat() {
+    let (s, handle, _) = on(FakePrinter::d110_m());
+    let (report, _) = run(&s, 3, &AtomicBool::new(true), |_| {}).await;
+    assert_eq!(
+        report,
+        RunReport {
+            printed: 0,
+            of: 3,
+            end: RunEnd::Stopped
+        }
+    );
+    assert_eq!(handle.received_ids(), [0xDC]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn stop_during_the_last_label_is_done() {
+    let (s, _handle, _) = on(FakePrinter::d110_m());
+    let stop = AtomicBool::new(false);
+    let (report, _) = run(&s, 3, &stop, |n| {
+        if n == (RunNews::Starting { n: 3, of: 3 }) {
+            stop.store(true, Ordering::SeqCst);
+        }
+    })
+    .await;
+    assert_eq!(
+        report,
+        RunReport {
+            printed: 3,
+            of: 3,
+            end: RunEnd::Done
+        }
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_fault_in_the_wait_ends_the_run_in_doubt() {
+    let (t, handle) = MockTransport::new(d110_m_out_of_labels_on_second());
+    let s = Session::start(Box::new(t));
+    let (report, _) = run(&s, 3, &AtomicBool::new(false), |_| {}).await;
+    assert_eq!(report.printed, 1);
+    let RunEnd::Failed {
+        label,
+        reached,
+        error,
+    } = report.end
+    else {
+        panic!("{report:?}");
+    };
+    assert_eq!(label, 2);
+    assert!(reached >= Reached::Rows, "{reached:?}");
+    assert_eq!(
+        error,
+        JobError::Session(SessionError::Printer(PrinterErrorCode::LackPaper))
+    );
+    let frames = handle.received();
+    assert_eq!(count(&frames, 0xF3), 2);
+    assert_eq!(count(&frames, 0x01), 2, "no third PrintStart");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refusal_that_never_ends_sends_no_rows() {
+    let (s, handle, _) = on(FakePrinter::d110_m().refusing_forever());
+    let (report, _) = run(&s, 3, &AtomicBool::new(false), |_| {}).await;
+    assert_eq!(
+        report,
+        RunReport {
+            printed: 0,
+            of: 3,
+            end: RunEnd::Failed {
+                label: 1,
+                reached: Reached::Settings,
+                error: JobError::Refused {
+                    step: "SetLabelType"
+                }
+            }
+        }
+    );
+    let ids = handle.received_ids();
+    assert_eq!(ids.iter().filter(|i| **i == 0x23).count(), 10);
+    assert!(!ids.iter().any(|i| matches!(i, 0x83..=0x85)), "{ids:?}");
+    assert_eq!(ids[ids.len() - 2..], [0xF3, 0xDC]);
+}
+
+/// The corrected note in `run`: a fault report on a setting is not skipped.
+#[tokio::test(start_paused = true)]
+async fn a_fault_on_a_setting_sends_no_rows() {
+    let (s, handle, _) = on(FakePrinter::d110_m().fault_on_setting(0x10));
+    let (report, _) = run(&s, 2, &AtomicBool::new(false), |_| {}).await;
+    assert_eq!(
+        report.end,
+        RunEnd::Failed {
+            label: 1,
+            reached: Reached::Settings,
+            error: JobError::Session(SessionError::Printer(PrinterErrorCode::WrongPaper))
+        }
+    );
+    let ids = handle.received_ids();
+    assert!(
+        !ids.iter().any(|i| matches!(i, 0x01 | 0x83..=0x85)),
+        "{ids:?}"
+    );
+    assert_eq!(ids[ids.len() - 2..], [0xF3, 0xDC]);
+}
+
+/// A printer that went quiet after connecting is found out by the check, and
+/// no job is started on it.
+#[tokio::test(start_paused = true)]
+async fn the_check_sends_no_job_to_a_silent_printer() {
+    let (s, handle, _) = on(FakePrinter::d110_m().silent_after_handshake());
+    handshake(&s, &Timeouts::default()).await.unwrap();
+    let before = handle.received().len();
+    let asked = Instant::now();
+    let (report, news) = run(&s, 3, &AtomicBool::new(false), |_| {}).await;
+    assert_eq!(asked.elapsed(), Duration::from_secs(1));
+    assert!(
+        matches!(
+            report.end,
+            RunEnd::Failed {
+                label: 1,
+                reached: Reached::Check,
+                error: JobError::Session(SessionError::Timeout { .. })
+            }
+        ),
+        "{report:?}"
+    );
+    assert_eq!(report.printed, 0);
+    assert_eq!(handle.received_ids()[before..], [0xDC]);
+    assert_eq!(news, [RunNews::Checking]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_check_accepts_not_supported() {
+    let (s, handle, _) = on(FakePrinter::d110_m().heartbeat_not_supported());
+    let (report, _) = run(&s, 1, &AtomicBool::new(false), |_| {}).await;
+    assert_eq!(
+        report,
+        RunReport {
+            printed: 1,
+            of: 1,
+            end: RunEnd::Done
+        }
+    );
+    assert_eq!(count(&handle.received(), 0x01), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_fault_on_the_check_sends_no_job() {
+    let (s, handle, _) = on(FakePrinter::d110_m().heartbeat_fault(0x01));
+    let (report, _) = run(&s, 3, &AtomicBool::new(false), |_| {}).await;
+    assert_eq!(
+        report.end,
+        RunEnd::Failed {
+            label: 1,
+            reached: Reached::Check,
+            error: JobError::Session(SessionError::Printer(PrinterErrorCode::CoverOpen))
+        }
+    );
+    assert_eq!(handle.received_ids(), [0xDC]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn no_labels_sends_nothing() {
+    let (s, handle, _) = on(FakePrinter::d110_m());
+    let (report, news) = run(&s, 0, &AtomicBool::new(false), |_| {}).await;
+    assert_eq!(
+        report,
+        RunReport {
+            printed: 0,
+            of: 0,
+            end: RunEnd::Done
+        }
+    );
+    assert!(news.is_empty());
+    assert!(handle.received().is_empty());
+}
+
+/// A printer that takes the job and never counts a page ends each label at
+/// its own 25-second budget, with the label said to be in doubt.
+#[tokio::test(start_paused = true)]
+async fn a_stuck_printer_ends_the_label_at_its_budget() {
+    let (s, handle, _) = on(FakePrinter::d110_m().stuck());
+    let (report, _) = run(&s, 3, &AtomicBool::new(false), |_| {}).await;
+    assert_eq!(
+        report.end,
+        RunEnd::Failed {
+            label: 1,
+            reached: Reached::Waiting,
+            error: JobError::DeadlineExceeded { ms: 25_000 }
+        }
+    );
+    assert_eq!(count(&handle.received(), 0x01), 1);
+}
+
+/// Why the editor never sends the multi-copy job: one job's budget is shared
+/// by all of its copies, and each label of a run has its own.
+#[tokio::test(start_paused = true)]
+async fn each_label_has_its_own_budget() {
+    let slow = || FakePrinter::d110_m().per_label(Duration::from_secs(20));
+
+    let (s, _handle, counts) = on(slow());
+    let asked = Instant::now();
+    let (report, _) = run(&s, 3, &AtomicBool::new(false), |_| {}).await;
+    assert_eq!(report.end, RunEnd::Done);
+    let took = asked.elapsed();
+    assert!(
+        took >= Duration::from_secs(60) && took < Duration::from_secs(62),
+        "{took:?}"
+    );
+    assert_eq!(counts.labels_out(), 3);
+
+    let (s, _handle, counts) = on(slow());
+    let id = d110_m();
+    let opts = PrintOptions {
+        copies: 3,
+        ..PrintOptions::for_identity(&id, None)
+    };
+    let e = print(&s, id.flow(), &[label()], &opts, |_| {})
+        .await
+        .unwrap_err();
+    assert_eq!(e, JobError::DeadlineExceeded { ms: 25_000 });
+    assert_eq!(counts.labels_out(), 1);
+    assert_eq!(counts.labels_cut(), 1, "PrintEnd arrived mid-label");
 }

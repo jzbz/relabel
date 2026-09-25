@@ -1,5 +1,5 @@
 //! The rendered label, as one Slint image: the canvas's, at the view's zoom, and
-//! the Preview pane's, fitted to a box.
+//! the print pane's, fitted to a box.
 //!
 //! Thin on purpose: `relabel-render`'s own `preview` module owns the pixels and
 //! the scaling, and everything here is about handing them over correctly once.
@@ -90,7 +90,7 @@ impl Pane {
 }
 
 /// A plane at the largest scale that fits a box of `box_w` by `box_h` physical
-/// pixels, and that scale: the Preview pane's image, which shows a plane the
+/// pixels, and that scale: the print pane's image, which shows a plane the
 /// caller already drew rather than drawing one.
 ///
 /// A fresh buffer every time, for [`Pane::draw`]'s reason. `None` only when the

@@ -1,9 +1,11 @@
-import { Button, Palette } from "std-widgets.slint";
+import { Button, LineEdit, Palette, ProgressIndicator } from "std-widgets.slint";
 import { IssueRow, ChoiceRow } from "types.slint";
 
-// The Preview pane: what would print, why it could not, and the printer link.
+// The print pane: what will print, why it could not, the printer link, and Print.
 // Every word, face, flag and focus target comes from Rust (`proof`, `printing`);
-// the pane decides nothing, and nothing in it is editable.
+// the pane decides nothing. Its one field, Copies, is filled once as the pane
+// opens and never bound: what is typed goes to Rust on every edit, and Rust keeps
+// it for the next opening.
 //
 // A popup in the file popups' one place, for their reasons (files.slint): no-auto-
 // close, so a click elsewhere reaches nothing and no chord acts on the document
@@ -49,6 +51,20 @@ export component PreviewPane inherits PopupWindow {
     in property <bool> primary-shown;
     in property <bool> primary-default;
     in property <string> close-says;
+    in property <string> copies-start;
+    in property <string> copies-says;
+    in property <bool> copies-shown;
+    // The job slot: Print, or Stop after this label. Never the default button, so
+    // Return in the pane never prints.
+    in property <string> print-face;
+    in property <string> print-says;
+    in property <bool> print-shown;
+    // The job line, while a job runs: labels printed as a share of the job, and
+    // what is happening now in the printer's own figures.
+    in property <bool> job-shown;
+    in property <float> job-done;
+    in property <string> job-says;
+    in property <string> image-label;
     // Where the keyboard goes: 0 the primary slot, 1 Close, 2 the first choice
     // (`printing::Focus::token`). Read as the pane opens, and again whenever Rust
     // moves the serial, which it does only while the pane is open.
@@ -59,14 +75,16 @@ export component PreviewPane inherits PopupWindow {
     // chosen the list steps aside for the choices.
     in property <length> room;
 
-    // 0 the primary slot, 1 Close.
+    // 0 the primary slot, 1 Close, 2 the job slot.
     callback act(what: int);
     callback choose(index: int);
+    callback copies-edited(text: string);
 
     close-policy: PopupClosePolicy.no-auto-close;
     height: Math.min(layout.preferred-height, root.room);
 
     init => {
+        copies.text = root.copies-start;
         root.land();
     }
     changed focus-serial => {
@@ -89,7 +107,7 @@ export component PreviewPane inherits PopupWindow {
         border-color: Palette.border;
         border-radius: 4px;
         accessible-role: AccessibleRole.groupbox;
-        accessible-label: "Preview";
+        accessible-label: "Print";
 
         FocusScope {
             focus-on-tab-navigation: false;
@@ -107,7 +125,7 @@ export component PreviewPane inherits PopupWindow {
                 padding: 16px;
                 spacing: 8px;
                 Text {
-                    text: "Preview";
+                    text: "Print";
                     font-weight: 600;
                     // The group box already announces it.
                     accessible-role: AccessibleRole.none;
@@ -144,7 +162,8 @@ export component PreviewPane inherits PopupWindow {
                         image-fit: fill;
                         image-rendering: pixelated;
                         accessible-role: AccessibleRole.image;
-                        accessible-label: "What would print";
+                        // What will print, or what is printing while a job runs.
+                        accessible-label: root.image-label;
                         accessible-description: root.plane-says;
                     }
                 }
@@ -236,6 +255,32 @@ export component PreviewPane inherits PopupWindow {
                         clicked => { root.choose(3); }
                     }
                 }
+                // Not live, and never a Tab stop: the status line says a job's start,
+                // a stop, a close held for it and its end, and nothing between. The
+                // bar is never indeterminate: its value is labels printed, and the
+                // printer's own percentages are the words beside it.
+                if root.job-shown: HorizontalLayout {
+                    spacing: 8px;
+                    VerticalLayout {
+                        alignment: center;
+                        ProgressIndicator {
+                            width: 120px;
+                            height: 6px;
+                            progress: root.job-done;
+                            accessible-label: "Print job";
+                            accessible-description: root.job-says;
+                        }
+                    }
+                    Text {
+                        text: root.job-says;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        accessible-role: AccessibleRole.text;
+                        accessible-label: "Print job";
+                        accessible-value: root.job-says;
+                    }
+                }
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: end;
@@ -249,6 +294,48 @@ export component PreviewPane inherits PopupWindow {
                         accessible-description: root.primary-says;
                         clicked => {
                             root.act(0);
+                        }
+                    }
+                    // Shown with Print, and gone from the row otherwise, for the
+                    // choice slot's reason. Return in it does nothing: only the job
+                    // slot prints.
+                    Rectangle {
+                        visible: root.copies-shown;
+                        horizontal-stretch: 0;
+                        min-width: root.copies-shown ? copies-row.min-width : 0px;
+                        max-width: root.copies-shown ? copies-row.preferred-width : 0px;
+                        copies-row := HorizontalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "Copies";
+                                vertical-alignment: center;
+                                // The field is named for it.
+                                accessible-role: AccessibleRole.none;
+                            }
+                            copies := LineEdit {
+                                accessible-label: "Copies";
+                                accessible-description: root.copies-says;
+                                // Also how a count written by an assistive technology
+                                // arrives (fluent/lineedit.slint:16).
+                                edited(text) => {
+                                    root.copies-edited(text);
+                                }
+                            }
+                        }
+                    }
+                    // Print, or Stop after this label, and gone from the row
+                    // otherwise. Rust reads what the slot holds, never this face.
+                    Rectangle {
+                        visible: root.print-shown;
+                        horizontal-stretch: 0;
+                        min-width: root.print-shown ? job-button.min-width : 0px;
+                        max-width: root.print-shown ? job-button.preferred-width : 0px;
+                        job-button := Button {
+                            text: root.print-face;
+                            accessible-description: root.print-says;
+                            clicked => {
+                                root.act(2);
+                            }
                         }
                     }
                     close-button := Button {

@@ -65,7 +65,7 @@ pub struct Canvas<H: CanvasHost> {
     /// keep: whether the work is unsaved can change with any outcome, a typed digit
     /// included. A closure for `push_ins`'s reason.
     push_file: Option<PanePush<H>>,
-    /// Told after every outcome, after the title, when there is a Preview pane: an
+    /// Told after every outcome, after the title, when there is a print pane: an
     /// assistive technology can edit behind the open pane, and what it shows must
     /// follow. A closure for `push_ins`'s reason.
     push_print: Option<PanePush<H>>,
@@ -123,7 +123,7 @@ impl<H: CanvasHost> Canvas<H> {
         self.push_file = Some(push);
     }
 
-    /// Install the Preview pane's push, which `refresh_because` calls after the
+    /// Install the print pane's push, which `refresh_because` calls after the
     /// title's. It is handed the document and must not borrow the canvas, which is
     /// borrowed while it runs.
     pub(crate) fn tell_print(&mut self, push: PanePush<H>) {

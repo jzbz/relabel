@@ -59,7 +59,7 @@ export component Designer {
     // --- the printer, pushed by crate::print ---
     // What is connected, beside the File bar.
     in property <string> printer-line;
-    // The Preview pane's contents, pushed before it opens and whenever they change
+    // The print pane's contents, pushed before it opens and whenever they change
     // while it is open. Every sentence is `proof`'s or `printing`'s.
     in property <string> preview-verdict;
     in property <string> preview-step;
@@ -75,6 +75,16 @@ export component Designer {
     in property <bool> preview-primary-shown;
     in property <bool> preview-primary-default;
     in property <string> preview-close-says;
+    in property <string> preview-copies-start;
+    in property <string> preview-copies-says;
+    in property <bool> preview-copies-shown;
+    in property <string> preview-print-face;
+    in property <string> preview-print-says;
+    in property <bool> preview-print-shown;
+    in property <bool> preview-job-shown;
+    in property <float> preview-job-done;
+    in property <string> preview-job-says;
+    in property <string> preview-image-label;
     in property <int> preview-focus-to;
     in property <int> preview-focus-serial;
 
@@ -160,9 +170,11 @@ export component Designer {
     callback new-make(text: string);
     callback new-preset(token: int);
     callback new-cancel();
-    // The Preview pane: 0 its primary slot, 1 Close; and an offered printer.
+    // The print pane: 0 its primary slot, 1 Close, 2 its job slot; an offered
+    // printer; and the Copies field's text, on every edit.
     callback preview-act(what: int);
     callback preview-choose(index: int);
+    callback preview-copies-edited(text: string);
 
     // On the device size rather than on `width`: a move to a display of another
     // scale changes the first and not the second (measured, reach run4.log). Late by
@@ -224,8 +236,8 @@ export component Designer {
         preview-pane.show();
     }
 
-    // Called from Rust before it shows the question, the preview or closes the
-    // window: a close abandons the New label pane and the preview, and no popup
+    // Called from Rust before it shows the question, the print pane or closes the
+    // window: a close abandons the New label pane and the print pane, and no popup
     // ever opens over another.
     public function close-file-popups() {
         unsaved.close();
@@ -706,9 +718,20 @@ export component Designer {
         primary-shown: root.preview-primary-shown;
         primary-default: root.preview-primary-default;
         close-says: root.preview-close-says;
+        copies-start: root.preview-copies-start;
+        copies-says: root.preview-copies-says;
+        copies-shown: root.preview-copies-shown;
+        print-face: root.preview-print-face;
+        print-says: root.preview-print-says;
+        print-shown: root.preview-print-shown;
+        job-shown: root.preview-job-shown;
+        job-done: root.preview-job-done;
+        job-says: root.preview-job-says;
+        image-label: root.preview-image-label;
         focus-to: root.preview-focus-to;
         focus-serial: root.preview-focus-serial;
         act(what) => { root.preview-act(what); }
         choose(index) => { root.preview-choose(index); }
+        copies-edited(text) => { root.preview-copies-edited(text); }
     }
 }

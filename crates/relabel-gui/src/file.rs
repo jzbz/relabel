@@ -1,6 +1,10 @@
 //! The file commands' wiring: the File bar, the chords, the question about unsaved
-//! work, the New label pane, opening the Preview pane and the window's close
+//! work, the New label pane, opening the print pane and the window's close
 //! button, driven through [`Filing`].
+//!
+//! A close while a print job runs is `print`'s first: it is held there, and asked
+//! for again through [`Filing`] once the job has ended, by the replay [`wire`]
+//! returns.
 //!
 //! Every route is one call to `drive`, which does the same five things in order:
 //! commit what a field is holding, unless an element is held; read the document
@@ -30,6 +34,11 @@ use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 
+/// The window's close asked for again, from outside its handler: what
+/// [`wire`] returns, for the print pane to call once a job the close was held
+/// for has ended.
+pub type CloseReplay<H> = Rc<dyn Fn(&H)>;
+
 /// Everything `drive` needs, shared by every callback.
 struct Files<H: FileHost> {
     host: slint::Weak<H>,
@@ -43,8 +52,13 @@ struct Files<H: FileHost> {
     /// The printer the New label pane was opened for, which its answers are read
     /// against, and whether it was assumed, which the status line then says.
     printer: Cell<Option<fresh::Printer>>,
-    /// Opens the Preview pane, which is `print`'s.
+    /// Opens the print pane, which is `print`'s.
     preview: Rc<dyn Fn(&H)>,
+    /// Holds the window's close while a print job runs: `print`'s, and true when
+    /// it held it.
+    hold_close: Rc<dyn Fn(&H) -> bool>,
+    /// Whether a print job is running, which no hide may cut short.
+    busy: Rc<dyn Fn() -> bool>,
     /// The connected printer, written by `print` and offered by the New label
     /// pane when a new label can be made for it.
     connected: Rc<Cell<Option<fresh::Connected>>>,
@@ -56,8 +70,15 @@ struct Files<H: FileHost> {
 /// `viewer` is the view's state from [`crate::view::wire`], which a document
 /// opened in place of another starts afresh. `chooser` asks the operator for a
 /// file: [`crate::choose::NativeChooser`] in the application, a script in a test.
-/// `filing` is shared with the Preview pane, which closes through it; `preview`
+/// `filing` is shared with the print pane, which closes through it; `preview`
 /// opens that pane, and `connected` is the printer it has connected to.
+/// `hold_close` is asked first whenever the window is asked to close, and holds
+/// the close while a print job runs; `busy` says whether one is running.
+///
+/// Returns the close replayed: the close button's request again, through the
+/// file commands, for the pane to call once the job the close was held for has
+/// ended. It holds the file commands weakly, so it makes no cycle through them.
+#[allow(clippy::too_many_arguments)]
 pub fn wire<H: FileHost>(
     host: &H,
     canvas: &Rc<RefCell<Canvas<H>>>,
@@ -65,8 +86,10 @@ pub fn wire<H: FileHost>(
     chooser: Rc<dyn Chooser>,
     filing: Rc<RefCell<Filing>>,
     preview: Rc<dyn Fn(&H)>,
+    hold_close: Rc<dyn Fn(&H) -> bool>,
+    busy: Rc<dyn Fn() -> bool>,
     connected: Rc<Cell<Option<fresh::Connected>>>,
-) {
+) -> CloseReplay<H> {
     let name = filing.borrow().name();
     let files = Rc::new(Files {
         host: host.as_weak(),
@@ -77,6 +100,8 @@ pub fn wire<H: FileHost>(
         filing,
         printer: Cell::new(None),
         preview,
+        hold_close,
+        busy,
         connected,
     });
 
@@ -190,9 +215,10 @@ pub fn wire<H: FileHost>(
     });
 
     // The title bar's close, Alt+F4 and anything else the platform turns into a
-    // close request. Only a clean document, or a close nothing is holding up,
-    // answers HideWindow here; any other close is the question's, which hides the
-    // window itself once it has been answered, after this handler has returned.
+    // close request. A print job holds it first, and the replay below asks again
+    // once the job has ended. Only a clean document, or a close nothing is holding
+    // up, answers HideWindow here; any other close is the question's, which hides
+    // the window itself once it has been answered, after this handler has returned.
     // Nothing here dispatches another close request or sets a handler: the toolkit
     // has taken this handler out while it runs, so a nested request would be
     // answered HideWindow, and setting one panics (i-slint-core callbacks.rs:34-42).
@@ -202,12 +228,25 @@ pub fn wire<H: FileHost>(
             let Some(host) = files.host.upgrade() else {
                 return CloseRequestResponse::HideWindow;
             };
+            if (files.hold_close)(&host) {
+                return CloseRequestResponse::KeepWindowShown;
+            }
             match drive(&files, &host, FileCmd::Want(Want::Close)) {
                 Next::Allow => CloseRequestResponse::HideWindow,
                 _ => CloseRequestResponse::KeepWindowShown,
             }
         });
     }
+
+    // The same close, asked for from outside the handler once a job has ended:
+    // where the handler would answer HideWindow, this hides the window itself.
+    let weak = Rc::downgrade(&files);
+    Rc::new(move |host: &H| {
+        let Some(files) = weak.upgrade() else { return };
+        if drive(&files, host, FileCmd::Want(Want::Close)) == Next::Allow {
+            files.perform(host, Next::Hide);
+        }
+    })
 }
 
 /// One file command, start to finish. Returns what the command itself came to,
@@ -345,6 +384,7 @@ impl<H: FileHost> Files<H> {
                 self.open(host, Source::New(spec), made);
             }
             Next::Hide => {
+                debug_assert!(!(self.busy)(), "a print job holds the window");
                 host.invoke_close_file_popups();
                 // Only fails when the platform is gone, and then the window is too.
                 let _ = host.hide();

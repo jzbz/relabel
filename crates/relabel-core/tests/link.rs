@@ -1,20 +1,27 @@
 //! The printer link's actor, against printers that exist only in memory.
 //!
-//! All but the last test run the actor from `link::parts` on tokio's paused
-//! clock, so the 15-second connect deadline and the handshake's timeouts take no
-//! wall-clock time and every timing assertion is exact. The last two run the
-//! real threaded link, on real time, the way the editor does.
+//! All but the last three tests run the actor from `link::parts` on tokio's
+//! paused clock, so the 15-second connect deadline and the handshake's timeouts
+//! take no wall-clock time and every timing assertion is exact. The last three
+//! run the real threaded link, on real time, the way the editor does.
 
 use async_trait::async_trait;
+use relabel_core::job::{PrintOptions, Reached, RunEnd, RunNews, RunReport, print_labels};
 use relabel_core::link::mock::{self, Behaviour, D110_M_NAME, MockDevice, MockLink, MockOpener};
 use relabel_core::link::{
-    self, DeviceKey, Events, Failure, Finished, Heard, Link, NotPrintable, Opened, Opener, Order,
-    Seen,
+    self, CLOSE_WITHIN, DeviceKey, Events, Failure, Finished, Heard, Link, LinkAfter, NotPrintable,
+    Opened, Opener, Order, PrintRefusal, Seen,
 };
-use relabel_core::transport::mock::{MockHandle, MockTransport, Responder, identifying, silent};
-use relabel_core::{HandshakeStep, Session};
-use relabel_proto::PrintDirection;
-use relabel_proto::payload::InfoField;
+use relabel_core::transport::mock::{
+    MockHandle, MockTransport, Responder, d110_m_quick, d110_m_silent_after_handshake, identifying,
+    silent,
+};
+use relabel_core::{HandshakeStep, Identity, JobError, Session, SessionError, TransportError};
+use relabel_proto::payload::{HeartbeatKind, InfoField};
+use relabel_proto::{
+    BitPlane, EncodedPage, Frame, HeadSpec, LabelType, PrintDirection, encode_page, models,
+};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -537,6 +544,620 @@ async fn stop_waiting_after_ready_closes_the_link() {
     assert!(mock.transport().unwrap().is_closed());
 }
 
+// Printing. `MockDevice::d110_m` is a `FakePrinter` taking a tenth of a
+// second a label.
+
+/// A 40-row label as wide as a head `head` dots wide. Drawn already turned,
+/// so its columns are the head's dots.
+fn page(head: u16) -> EncodedPage {
+    let mut p = BitPlane::new(head, 40);
+    p.set(0, 0, true);
+    encode_page(&p, &HeadSpec::new(head, PrintDirection::Top)).unwrap()
+}
+
+fn count(frames: &[Frame], id: u8) -> usize {
+    frames.iter().filter(|f| f.id == id).count()
+}
+
+/// Everything heard up to and including the first that `last` picks.
+async fn until(events: &mut Events, what: &str, last: impl Fn(&Heard) -> bool) -> Vec<Heard> {
+    let mut heard = Vec::new();
+    loop {
+        let h = next(events, what).await;
+        let done = last(&h);
+        heard.push(h);
+        if done {
+            return heard;
+        }
+    }
+}
+
+fn is_news(news: RunNews) -> impl Fn(&Heard) -> bool {
+    move |h| matches!(h, Heard::Job { news: n, .. } if *n == news)
+}
+
+/// Everything heard up to and including JobEnded, and that JobEnded's report
+/// and link.
+async fn until_ended(events: &mut Events) -> (Vec<Heard>, RunReport, LinkAfter) {
+    let heard = until(events, "JobEnded", |h| matches!(h, Heard::JobEnded { .. })).await;
+    let Some(Heard::JobEnded { report, link, .. }) = heard.last().cloned() else {
+        unreachable!()
+    };
+    (heard, report, link)
+}
+
+fn done(n: u16) -> RunReport {
+    RunReport {
+        printed: n,
+        of: n,
+        end: RunEnd::Done,
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn print_runs_one_job_per_label_and_answers_once() {
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 3,
+        },
+    )
+    .unwrap();
+    let (heard, report, after) = until_ended(&mut events).await;
+    assert_eq!((report, after), (done(3), LinkAfter::Up));
+    for h in &heard {
+        assert!(
+            matches!(
+                h,
+                Heard::Job { ticket: 1, .. } | Heard::JobEnded { ticket: 1, .. }
+            ),
+            "{h:?}"
+        );
+    }
+    assert_eq!(quiet_for(&mut events, Duration::from_secs(30)).await, None);
+
+    let t = mock.transport().unwrap();
+    let starts: Vec<_> = t.received().into_iter().filter(|f| f.id == 0x01).collect();
+    assert_eq!(starts.len(), 3);
+    for start in starts {
+        assert_eq!(start.data[..2], [0, 1], "one page a job");
+    }
+
+    link.send(1, Order::Close).unwrap();
+    assert_eq!(
+        next(&mut events, "Closed").await,
+        Heard::Closed { ticket: 1 }
+    );
+    assert!(t.is_closed());
+}
+
+/// What the actor sends is `print_labels` and nothing else.
+#[tokio::test(start_paused = true)]
+async fn print_frames_are_the_loops() {
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    let t = mock.transport().unwrap();
+    let before = t.received().len();
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 3,
+        },
+    )
+    .unwrap();
+    let (_, report, _) = until_ended(&mut events).await;
+    assert_eq!(report, done(3));
+
+    let candidates: Vec<_> = models::by_wire_id(2320).collect();
+    let id = Identity {
+        protocol: 4,
+        model_id: Some(2320),
+        model: candidates.first().copied(),
+        candidates,
+        ..Identity::default()
+    };
+    let (fresh, handle) = MockTransport::new(d110_m_quick());
+    let s = Session::start(Box::new(fresh));
+    let alone = print_labels(
+        &s,
+        id.flow(),
+        &page(96),
+        &PrintOptions::for_identity(&id, None),
+        3,
+        HeartbeatKind::Advanced2,
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .await;
+    assert_eq!(alone, done(3));
+    assert_eq!(t.received()[before..], handle.received()[..]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn facts_carry_what_the_job_sends() {
+    let (opener, _mock) = MockOpener::new(vec![MockDevice::d110_m()]);
+    let (link, mut events, _actor) = start(opener);
+    let seen = find(&link, &mut events).await;
+    link.send(1, Order::Open { key: seen[0].key }).unwrap();
+    let heard = until_settled(&mut events).await;
+    let Some(Heard::Ready { facts, .. }) = heard.last() else {
+        panic!("{heard:?}");
+    };
+    assert_eq!(facts.print_density, 3);
+    assert_eq!(facts.print_label_type, LabelType::Gap);
+    assert_eq!(*facts, mock::facts(2320, D110_M_NAME));
+}
+
+#[tokio::test(start_paused = true)]
+async fn stop_after_label_is_read_between_labels() {
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 3,
+        },
+    )
+    .unwrap();
+    until(
+        &mut events,
+        "Sending 1",
+        is_news(RunNews::Sending { n: 1, of: 3 }),
+    )
+    .await;
+    link.send(1, Order::StopAfterLabel).unwrap();
+    let (_, report, after) = until_ended(&mut events).await;
+    assert_eq!(
+        (report, after),
+        (
+            RunReport {
+                printed: 1,
+                of: 3,
+                end: RunEnd::Stopped
+            },
+            LinkAfter::Up
+        )
+    );
+    let frames = mock.transport().unwrap().received();
+    assert_eq!(count(&frames, 0x01), 1);
+    assert_eq!(frames.last().map(|f| f.id), Some(0xDC));
+}
+
+#[tokio::test(start_paused = true)]
+async fn print_then_stop_at_once_prints_nothing() {
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    let t = mock.transport().unwrap();
+    let before = t.received().len();
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 3,
+        },
+    )
+    .unwrap();
+    link.send(1, Order::StopAfterLabel).unwrap();
+    let (_, report, _) = until_ended(&mut events).await;
+    assert_eq!(
+        report,
+        RunReport {
+            printed: 0,
+            of: 3,
+            end: RunEnd::Stopped
+        }
+    );
+    assert_eq!(t.received_ids()[before..], [0xDC]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn close_mid_job_finishes_the_label_then_closes() {
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 3,
+        },
+    )
+    .unwrap();
+    until(&mut events, "Printer 1", |h| {
+        matches!(
+            h,
+            Heard::Job {
+                news: RunNews::Printer { n: 1, .. },
+                ..
+            }
+        )
+    })
+    .await;
+    link.send(1, Order::Close).unwrap();
+    let (_, report, _) = until_ended(&mut events).await;
+    assert_eq!(
+        report,
+        RunReport {
+            printed: 1,
+            of: 3,
+            end: RunEnd::Stopped
+        }
+    );
+    assert_eq!(
+        next(&mut events, "Closed").await,
+        Heard::Closed { ticket: 1 }
+    );
+    let t = mock.transport().unwrap();
+    assert!(t.is_closed());
+    assert_eq!(count(&t.received(), 0xF3), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn find_mid_job_waits_for_the_label() {
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 3,
+        },
+    )
+    .unwrap();
+    until(
+        &mut events,
+        "Sending 1",
+        is_news(RunNews::Sending { n: 1, of: 3 }),
+    )
+    .await;
+    link.send(2, Order::Find { secs: SCAN }).unwrap();
+    let (heard, report, _) = until_ended(&mut events).await;
+    assert!(
+        !heard.iter().any(|h| matches!(h, Heard::Found { .. })),
+        "{heard:?}"
+    );
+    assert_eq!(report.printed, 1);
+    assert!(matches!(
+        next(&mut events, "Found").await,
+        Heard::Found { ticket: 2, .. }
+    ));
+    let t = mock.transport().unwrap();
+    assert!(t.is_closed());
+    assert_eq!(count(&t.received(), 0xF3), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_mid_job_finishes_the_label() {
+    let (link, mut events, actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 3,
+        },
+    )
+    .unwrap();
+    until(
+        &mut events,
+        "Sending 1",
+        is_news(RunNews::Sending { n: 1, of: 3 }),
+    )
+    .await;
+    link.send(2, Order::Shutdown).unwrap();
+    tokio::time::timeout(Duration::from_secs(60), actor)
+        .await
+        .expect("the actor ends")
+        .unwrap();
+    let t = mock.transport().unwrap();
+    assert!(t.is_closed());
+    let ids = t.received_ids();
+    assert_eq!(count(&t.received(), 0x01), 1, "no second label");
+    assert_eq!(
+        ids[ids.len() - 2..],
+        [0xF3, 0xDC],
+        "the label ended properly"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_every_sender_mid_job_finishes_the_label_and_ends() {
+    let (link, mut events, actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 3,
+        },
+    )
+    .unwrap();
+    until(
+        &mut events,
+        "Sending 1",
+        is_news(RunNews::Sending { n: 1, of: 3 }),
+    )
+    .await;
+    drop(link);
+    tokio::time::timeout(Duration::from_secs(60), actor)
+        .await
+        .expect("the actor ends, and does not spin")
+        .unwrap();
+    let t = mock.transport().unwrap();
+    assert!(t.is_closed());
+    assert_eq!(count(&t.received(), 0x01), 1);
+    assert_eq!(count(&t.received(), 0xF3), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_drop_mid_job_ends_it_at_once() {
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 3,
+        },
+    )
+    .unwrap();
+    until(&mut events, "Printer 2", |h| {
+        matches!(
+            h,
+            Heard::Job {
+                news: RunNews::Printer { n: 2, .. },
+                ..
+            }
+        )
+    })
+    .await;
+    let dropped = Instant::now();
+    mock.drop_link();
+    let (_, report, after) = until_ended(&mut events).await;
+    assert!(dropped.elapsed() <= CLOSE_WITHIN);
+    assert_eq!(after, LinkAfter::Gone);
+    assert_eq!(report.printed, 1);
+    let RunEnd::Failed {
+        label,
+        reached,
+        error,
+    } = report.end
+    else {
+        panic!("{report:?}");
+    };
+    assert_eq!(label, 2);
+    assert!(
+        matches!(reached, Reached::Rows | Reached::Waiting),
+        "{reached:?}"
+    );
+    assert_eq!(error, JobError::Session(SessionError::Ended));
+    assert_eq!(
+        quiet_for(&mut events, Duration::from_secs(10)).await,
+        None,
+        "no Dropped"
+    );
+
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        next(&mut events, "PrintRefused").await,
+        Heard::PrintRefused {
+            ticket: 1,
+            why: PrintRefusal::NotConnected
+        }
+    );
+}
+
+/// A write that never returns keeps the job, and the session's close, waiting
+/// on it; the platform's word still ends the job within the close's bound.
+#[tokio::test(start_paused = true)]
+async fn a_hung_write_does_not_hold_the_actor() {
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 3,
+        },
+    )
+    .unwrap();
+    until(
+        &mut events,
+        "Sending 1",
+        is_news(RunNews::Sending { n: 1, of: 3 }),
+    )
+    .await;
+    mock.transport().unwrap().hang_writes();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let dropped = Instant::now();
+    mock.drop_link();
+    let (_, _, after) = until_ended(&mut events).await;
+    assert_eq!(after, LinkAfter::Gone);
+    assert!(
+        dropped.elapsed() <= CLOSE_WITHIN + Duration::from_secs(1),
+        "{:?}",
+        dropped.elapsed()
+    );
+    link.send(1, Order::Close).unwrap();
+    assert_eq!(
+        next(&mut events, "Closed").await,
+        Heard::Closed { ticket: 1 }
+    );
+}
+
+/// A write that fails with the platform saying nothing: the link is taken to
+/// have gone, and is closed.
+#[tokio::test(start_paused = true)]
+async fn a_failed_write_mid_job_closes_the_link() {
+    // Eleven handshake requests, the check, then SetLabelType and SetDensity;
+    // the link dies as PrintStart is written.
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::new(
+        D110_M_NAME,
+        true,
+        Behaviour::DropsAfter(14, mock::d110_m),
+    )])
+    .await;
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 2,
+        },
+    )
+    .unwrap();
+    let (_, report, after) = until_ended(&mut events).await;
+    assert_eq!(after, LinkAfter::Gone);
+    assert_eq!(
+        report.end,
+        RunEnd::Failed {
+            label: 1,
+            reached: Reached::Settings,
+            error: JobError::Session(SessionError::Transport(TransportError::Disconnected))
+        }
+    );
+    assert!(mock.transport().unwrap().is_closed());
+    assert_eq!(
+        quiet_for(&mut events, Duration::from_secs(10)).await,
+        None,
+        "no Dropped"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn print_refusals_send_nothing() {
+    let refused = |why| Heard::PrintRefused { ticket: 1, why };
+    let print = |labels, head| Order::Print {
+        page: page(head),
+        labels,
+    };
+
+    let (opener, _mock) = MockOpener::new(vec![]);
+    let (link, mut events, _actor) = start(opener);
+    link.send(1, print(1, 96)).unwrap();
+    assert_eq!(
+        next(&mut events, "a refusal").await,
+        refused(PrintRefusal::NotConnected)
+    );
+
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    let t = mock.transport().unwrap();
+    let before = t.received().len();
+    for (order, why) in [
+        (print(0, 96), PrintRefusal::BadCount),
+        (print(100, 96), PrintRefusal::BadCount),
+        (print(1, 104), PrintRefusal::WrongHead),
+    ] {
+        link.send(1, order).unwrap();
+        assert_eq!(next(&mut events, "a refusal").await, refused(why));
+    }
+    assert_eq!(t.received().len(), before);
+
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::new(
+        "D110-X",
+        true,
+        Behaviour::Answers(ambiguous),
+    )])
+    .await;
+    let t = mock.transport().unwrap();
+    let before = t.received().len();
+    link.send(1, print(1, 96)).unwrap();
+    assert_eq!(
+        next(&mut events, "a refusal").await,
+        refused(PrintRefusal::WrongHead)
+    );
+    assert_eq!(t.received().len(), before);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_second_print_mid_job_is_busy() {
+    let (link, mut events, _actor, _mock) = connected(vec![MockDevice::d110_m()]).await;
+    let print = Order::Print {
+        page: page(96),
+        labels: 2,
+    };
+    link.send(1, print.clone()).unwrap();
+    link.send(2, print).unwrap();
+    let (heard, report, _) = until_ended(&mut events).await;
+    let busy: Vec<_> = heard
+        .iter()
+        .filter(|h| matches!(h, Heard::PrintRefused { .. }))
+        .collect();
+    assert_eq!(
+        busy,
+        [&Heard::PrintRefused {
+            ticket: 2,
+            why: PrintRefusal::Busy
+        }]
+    );
+    assert_eq!(report, done(2));
+    assert_eq!(quiet_for(&mut events, Duration::from_secs(30)).await, None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_silent_printer_fails_the_check_and_keeps_the_link() {
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::new(
+        D110_M_NAME,
+        true,
+        Behaviour::Answers(d110_m_silent_after_handshake),
+    )])
+    .await;
+    let t = mock.transport().unwrap();
+    let before = t.received().len();
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 2,
+        },
+    )
+    .unwrap();
+    let (_, report, after) = until_ended(&mut events).await;
+    assert_eq!(after, LinkAfter::Up);
+    assert!(
+        matches!(
+            report.end,
+            RunEnd::Failed {
+                label: 1,
+                reached: Reached::Check,
+                error: JobError::Session(SessionError::Timeout { .. })
+            }
+        ),
+        "{report:?}"
+    );
+    assert_eq!(t.received_ids()[before..], [0xDC]);
+    link.send(1, Order::Close).unwrap();
+    assert_eq!(
+        next(&mut events, "Closed").await,
+        Heard::Closed { ticket: 1 }
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn job_news_carries_the_open_ticket_and_idle_stop_is_ignored() {
+    let (link, mut events, _actor, mock) = connected(vec![MockDevice::d110_m()]).await;
+    link.send(1, Order::StopAfterLabel).unwrap();
+    assert_eq!(quiet_for(&mut events, Duration::from_secs(5)).await, None);
+
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 2,
+        },
+    )
+    .unwrap();
+    let (heard, report, _) = until_ended(&mut events).await;
+    assert_eq!(report, done(2), "the idle stop was not kept");
+    assert!(heard.iter().all(|h| h.ticket() == 1), "{heard:?}");
+
+    mock.drop_link();
+    assert_eq!(
+        next(&mut events, "Dropped").await,
+        Heard::Dropped { ticket: 1 }
+    );
+}
+
 /// The editor's arrangement: the actor on its own thread and runtime, orders
 /// sent and news read from a thread with no runtime at all.
 #[test]
@@ -634,4 +1255,52 @@ fn a_panic_on_the_link_thread_still_closes_the_link() {
     assert_eq!(link.shutdown(Duration::from_secs(5)), Finished::Clean);
     let handle = transport.lock().unwrap().clone().unwrap();
     assert!(handle.is_closed());
+}
+
+/// The editor's arrangement again, printing: `MockDevice::d110_m` finishes its
+/// labels on real time too.
+#[test]
+fn the_threaded_link_prints() {
+    let (opener, mock) = MockOpener::new(vec![MockDevice::d110_m()]);
+    let (link, mut events) =
+        Link::start(Box::new(opener.with_scan(Duration::from_millis(10)))).unwrap();
+    link.send(1, Order::Find { secs: SCAN }).unwrap();
+    let seen = match events.wait(Duration::from_secs(2)) {
+        Some(Heard::Found { ticket: 1, seen }) => seen,
+        other => panic!("{other:?}"),
+    };
+    link.send(1, Order::Open { key: seen[0].key }).unwrap();
+    let wait_for = |events: &mut Events, last: &dyn Fn(&Heard) -> bool| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match events.wait(left) {
+                Some(h) if last(&h) => return h,
+                Some(_) => {}
+                None => panic!("nothing heard"),
+            }
+        }
+    };
+    wait_for(&mut events, &|h| matches!(h, Heard::Ready { .. }));
+    link.send(
+        1,
+        Order::Print {
+            page: page(96),
+            labels: 2,
+        },
+    )
+    .unwrap();
+    let ended = wait_for(&mut events, &|h| matches!(h, Heard::JobEnded { .. }));
+    assert_eq!(
+        ended,
+        Heard::JobEnded {
+            ticket: 1,
+            report: done(2),
+            link: LinkAfter::Up
+        }
+    );
+    assert_eq!(link.shutdown(Duration::from_secs(5)), Finished::Clean);
+    let t = mock.transport().unwrap();
+    assert!(t.is_closed());
+    assert_eq!(count(&t.received(), 0x01), 2);
 }

@@ -15,7 +15,9 @@ pub mod table;
 pub mod transport;
 
 pub use error::{JobError, SessionError, TransportError};
-pub use job::{PrintOptions, Progress, Timeouts, print};
+pub use job::{
+    PrintOptions, Progress, Reached, RunEnd, RunNews, RunReport, Timeouts, print, print_labels,
+};
 pub use printer::{HandshakeStep, Identity, handshake, handshake_with};
 pub use session::{PrinterEvent, Session, TraceEntry};
 pub use table::{CsvError, CsvTable, read_csv};

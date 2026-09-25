@@ -1,7 +1,8 @@
-//! What a screen reader is told about the printer link and the Preview pane: a
+//! What a screen reader is told about the printer link and the print pane: a
 //! connect said three times on the status line and once more by the verdict,
 //! every control in the pane named and reached by Tab, the issues as list
-//! items, and the Printer line as plain text.
+//! items, the Printer line as plain text, and a job's progress as a number that
+//! is read, never announced.
 //!
 //! Through the probe window, wired by `relabel_gui::wire_window` with a printer
 //! link that keeps every order and hears only what the test says it heard.
@@ -10,9 +11,9 @@
 mod support;
 
 use i_slint_backend_testing::{AccessibleLiveness, AccessibleRole, ElementHandle, ElementQuery};
-use relabel_core::HandshakeStep;
 use relabel_core::link::mock::{self, D110_M_NAME};
 use relabel_core::link::{DeviceKey, Heard, Order, Seen};
+use relabel_core::{HandshakeStep, RunNews};
 use relabel_gui::view::Opening;
 use relabel_gui::{start, wire_window};
 use relabel_proto::payload::IDENTITY_READS;
@@ -107,7 +108,7 @@ fn handshake_steps() -> Vec<HandshakeStep> {
 /// The issue list's items in index order, for `rows_of`'s trap: a repeated item
 /// is found once per source element merged into it.
 fn issue_items(ui: &InsProbe) -> Vec<ElementHandle> {
-    let list = group_of(ui, "Preview")
+    let list = group_of(ui, "Print")
         .expect("the preview is shown")
         .query_descendants()
         .match_accessible_role(AccessibleRole::List)
@@ -143,7 +144,7 @@ fn connect_is_announced_three_times_and_the_verdict_once() {
             .to_string()
     };
     let verdict = || {
-        group_of(&ui, "Preview")
+        group_of(&ui, "Print")
             .expect("the preview is shown")
             .query_descendants()
             .match_accessible_role(AccessibleRole::Text)
@@ -188,7 +189,7 @@ fn connect_is_announced_three_times_and_the_verdict_once() {
     for step in steps {
         hear(&plug, Heard::Step { ticket: 1, step });
         note(&mut said, &mut verdicts);
-        let line = group_of(&ui, "Preview")
+        let line = group_of(&ui, "Print")
             .expect("the preview is shown")
             .query_descendants()
             .match_accessible_role(AccessibleRole::Text)
@@ -248,16 +249,13 @@ fn every_pane_control_is_named_and_reachable_by_tab() {
                 "{name}"
             );
         }
-        let image = group_of(&ui, "Preview")
+        let image = group_of(&ui, "Print")
             .unwrap()
             .query_descendants()
             .match_accessible_role(AccessibleRole::Image)
             .find_first()
             .expect("the image");
-        assert_eq!(
-            image.accessible_label().as_deref(),
-            Some("What would print")
-        );
+        assert_eq!(image.accessible_label().as_deref(), Some("What will print"));
         assert!(
             image
                 .accessible_description()
@@ -281,10 +279,7 @@ fn every_pane_control_is_named_and_reachable_by_tab() {
         }
         key(&ui, Key::Return);
         let at = tabs % stops;
-        let (ordered, open) = (
-            !plug.orders().is_empty(),
-            group_of(&ui, "Preview").is_some(),
-        );
+        let (ordered, open) = (!plug.orders().is_empty(), group_of(&ui, "Print").is_some());
         match at {
             0 => assert_eq!(
                 (ordered, open),
@@ -373,5 +368,158 @@ fn the_printer_line_is_plain_text() {
     for id in 1..=3 {
         key(&ui, Key::Tab);
         assert_eq!(ui.get_selected(), id);
+    }
+}
+
+/// Control+P, Connect, and the author's D110_M found and connected on the first
+/// ticket, with the keyboard on Close.
+fn connected(ui: &InsProbe, plug: &HeldPlug) {
+    open_preview(ui);
+    button_of(ui, "Connect").invoke_accessible_default_action();
+    settle();
+    hear(
+        plug,
+        Heard::Found {
+            ticket: 1,
+            seen: vec![Seen {
+                key: DeviceKey(0),
+                name: D110_M_NAME.into(),
+                heard: true,
+            }],
+        },
+    );
+    hear(
+        plug,
+        Heard::Ready {
+            ticket: 1,
+            facts: mock::facts(2320, D110_M_NAME),
+        },
+    );
+}
+
+fn in_pane(ui: &InsProbe, role: AccessibleRole, label: &str) -> ElementHandle {
+    let wanted = label.to_string();
+    group_of(ui, "Print")
+        .expect("the print pane is shown")
+        .query_descendants()
+        .match_accessible_role(role)
+        .match_predicate(move |h| h.accessible_label().is_some_and(|l| l == wanted.as_str()))
+        .find_first()
+        .unwrap_or_else(|| panic!("no {role:?} in the pane is called {label:?}"))
+}
+
+fn news(plug: &HeldPlug, news: RunNews) {
+    hear(plug, Heard::Job { ticket: 1, news });
+}
+
+fn is_live(h: &ElementHandle) -> bool {
+    matches!(
+        h.accessible_live_region(),
+        Some(AccessibleLiveness::Polite | AccessibleLiveness::Assertive)
+    )
+}
+
+/// The job bar is a progress indicator with a number a screen reader reads on
+/// request: labels printed as a share of the job, from 0 to 1, described by the
+/// job line's words. Neither the bar nor the words are live; the status line is.
+#[test]
+fn the_job_bar_is_a_numeric_progress_indicator() {
+    let (_dir, a) = saved("job_bar", &reference_label().to_json().unwrap());
+    let plug = Rc::new(HeldPlug::default());
+    let (ui, _wired) = probe(&a, plug.clone());
+    connected(&ui, &plug);
+    in_pane(&ui, AccessibleRole::TextInput, "Copies").set_accessible_value("3");
+    settle();
+    button_of(&ui, "Print").invoke_accessible_default_action();
+    settle();
+    news(&plug, RunNews::Checking);
+    news(&plug, RunNews::Starting { n: 1, of: 3 });
+    news(&plug, RunNews::Printed { n: 1, of: 3 });
+    let bar = group_of(&ui, "Print")
+        .expect("the print pane is shown")
+        .query_descendants()
+        .match_accessible_role(AccessibleRole::ProgressIndicator)
+        .find_first()
+        .expect("the job bar");
+    let value: f64 = bar
+        .accessible_value()
+        .expect("a value")
+        .parse()
+        .expect("a number");
+    assert!((value - 1.0 / 3.0).abs() < 1e-6, "{value}");
+    assert_eq!(bar.accessible_value_minimum(), Some(0.0));
+    assert_eq!(bar.accessible_value_maximum(), Some(1.0));
+    assert_eq!(bar.accessible_label().as_deref(), Some("Print job"));
+    let text = in_pane(&ui, AccessibleRole::Text, "Print job");
+    let says = text.accessible_value().unwrap_or_default();
+    assert!(!says.is_empty());
+    assert_eq!(bar.accessible_description(), Some(says));
+    assert!(!is_live(&bar), "{:?}", bar.accessible_live_region());
+    assert!(!is_live(&text), "{:?}", text.accessible_live_region());
+    assert_eq!(
+        status_of(&ui).accessible_live_region(),
+        Some(AccessibleLiveness::Polite)
+    );
+}
+
+/// Copies, Print and Stop after this label each say what they do, and Shift+Tab
+/// from Close goes to Print, then Copies, then Disconnect. Where Return lands
+/// tells which stop has the keyboard: Print orders a print, Copies does nothing,
+/// and Disconnect orders a close.
+#[test]
+fn copies_print_and_stop_say_what_they_do() {
+    let (_dir, a) = saved("copies_print_stop", &reference_label().to_json().unwrap());
+    let plug = Rc::new(HeldPlug::default());
+    let (ui, _wired) = probe(&a, plug.clone());
+    connected(&ui, &plug);
+    let copies = in_pane(&ui, AccessibleRole::TextInput, "Copies");
+    assert_eq!(
+        copies.accessible_description().as_deref(),
+        Some("How many labels to print, from 1 to 99")
+    );
+    assert_eq!(copies.accessible_value().as_deref(), Some("1"));
+    copies.set_accessible_value("3");
+    settle();
+    let print = button_of(&ui, "Print");
+    assert_eq!(
+        print.accessible_description().as_deref(),
+        Some(
+            "Print 3 labels, 40 \u{d7} 12 mm, on D110_M-GB28010920 at density 3 on labels with gaps"
+        )
+    );
+    print.invoke_accessible_default_action();
+    settle();
+    news(&plug, RunNews::Checking);
+    news(&plug, RunNews::Starting { n: 1, of: 3 });
+    assert_eq!(
+        button_of(&ui, "Stop after this label")
+            .accessible_description()
+            .as_deref(),
+        Some("Finish the label in progress, then print no more")
+    );
+
+    for back in 1..=3 {
+        let plug = Rc::new(HeldPlug::default());
+        let (ui, _wired) = probe(&a, plug.clone());
+        connected(&ui, &plug);
+        let sent = plug.orders().len();
+        for _ in 0..back {
+            press(ui.window(), Key::Tab, true, false);
+            settle();
+        }
+        key(&ui, Key::Return);
+        let new: Vec<Order> = plug.orders()[sent..]
+            .iter()
+            .map(|(_, o)| o.clone())
+            .collect();
+        let open = group_of(&ui, "Print").is_some();
+        match back {
+            1 => assert!(
+                matches!(new.as_slice(), [Order::Print { labels: 1, .. }]),
+                "one Shift+Tab is Print: {new:?}"
+            ),
+            2 => assert!(new.is_empty() && open, "two is Copies: {new:?}"),
+            _ => assert_eq!(new, [Order::Close], "three is Disconnect"),
+        }
     }
 }

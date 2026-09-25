@@ -1,7 +1,7 @@
 //! What would print: the exact one-bit plane a job would encode, preflight's
 //! issues, and every reason the editor could not print it here.
 //!
-//! No toolkit type in any signature, for `geom`'s reason: the Preview pane shows
+//! No toolkit type in any signature, for `geom`'s reason: the print pane shows
 //! what [`prove`] made and the sentences [`Proof`] says, and every rule is reached
 //! by an ordinary unit test.
 //!
@@ -23,7 +23,8 @@
 //! moved onto the printer's head: a label silently re-fitted is a label that does
 //! not print as it was drawn. So when nothing is stopped, the connected printer's
 //! target is the document's own, and the page kept here is the page that printer
-//! is sent.
+//! is sent, never encoded again, with the density and label type the proof
+//! records from the printer's facts.
 //!
 //! # When a proof is stale
 //!
@@ -34,11 +35,11 @@
 
 use crate::doc::Doc;
 use crate::fresh;
-use crate::printing::counted;
+use crate::printing::{counted, label_type_says};
 use relabel_core::link::{Facts, NotPrintable};
 use relabel_core::session::wire_len;
 use relabel_proto::image::EncodedPage;
-use relabel_proto::{BitPlane, HeadSpec, PrintDirection, encode_page};
+use relabel_proto::{BitPlane, HeadSpec, LabelType, PrintDirection, encode_page};
 use relabel_render::bind::{Bindings, bind, uses_clock};
 use relabel_render::datetime::CivilTime;
 use relabel_render::document::{DataBinding, KnownBinding};
@@ -213,6 +214,9 @@ pub struct Proof {
     pub printer: Option<(String, &'static str)>,
     /// The model the label says it was made for.
     pub made_for: Option<String>,
+    /// The connected printer's density and label type: what a print of this
+    /// proof sends besides the page.
+    pub settings: Option<(u8, LabelType)>,
 }
 
 /// Prove `doc`, against the connected printer's facts when there is one.
@@ -236,6 +240,7 @@ pub fn prove(doc: &Doc, printer: Option<&Facts>, generation: u64) -> Proof {
             .authored_for
             .as_ref()
             .and_then(|a| a.model.clone()),
+        settings: printer.map(|f| (f.print_density, f.print_label_type)),
     };
 
     // 1. What the editor does not print.
@@ -406,10 +411,17 @@ impl Proof {
         )
     }
 
-    /// The line under the image: the size, and what the page costs to send.
+    /// The label's size, as Print's description says it: "40 × 12 mm".
+    pub fn size_says(&self) -> String {
+        let ((feed_mm, head_mm), _) = self.sizes();
+        format!("{feed_mm} \u{d7} {head_mm} mm")
+    }
+
+    /// The line under the image: the size, what the page costs to send, and,
+    /// when it would print, the settings it is sent with.
     pub fn facts_line(&self) -> String {
-        let ((feed_mm, head_mm), (feed, head)) = self.sizes();
-        let mut line = format!("{feed_mm} \u{d7} {head_mm} mm \u{b7} {feed} \u{d7} {head} dots");
+        let (_, (feed, head)) = self.sizes();
+        let mut line = format!("{} \u{b7} {feed} \u{d7} {head} dots", self.size_says());
         if let Some(page) = &self.page {
             let frames = page.frames.len();
             let secs = frames as f64 * MS_PER_FRAME / 1000.0;
@@ -417,6 +429,14 @@ impl Proof {
                 " \u{b7} {}, {}, about {secs:.1} s to send",
                 counted(frames as u64, "frame", "frames"),
                 counted(page.wire_bytes() as u64, "byte", "bytes")
+            ));
+        }
+        if self.printable()
+            && let Some((density, label_type)) = self.settings
+        {
+            line.push_str(&format!(
+                " \u{b7} density {density}, {}",
+                label_type_says(label_type)
             ));
         }
         if self.printable()
@@ -797,6 +817,49 @@ mod tests {
         );
         // Unconnected, there is no printer to compare with.
         assert!(!alone.facts_line().contains("Made for"));
+    }
+
+    /// Connected and printable, the facts line says what the job will send
+    /// besides the page: the density and the label type, after the send time
+    /// and before the clause about the model the label was made for.
+    #[test]
+    fn the_facts_line_names_the_settings_a_print_sends() {
+        let doc = open(reference_label());
+        let alone = prove(&doc, None, 0);
+        assert_eq!(alone.settings, None);
+        assert!(!alone.facts_line().contains("density"));
+
+        let connected = prove(&doc, Some(&d110_m()), 1);
+        assert_eq!(connected.settings, Some((3, LabelType::Gap)));
+        let line = connected.facts_line();
+        assert_eq!(
+            line,
+            format!("{} \u{b7} density 3, labels with gaps", alone.facts_line())
+        );
+        assert_eq!(connected.size_says(), "40 \u{d7} 12 mm");
+
+        // Made for another model it matches: the settings, then the model.
+        let mut label = reference_label();
+        label.meta.authored_for = Some(AuthoredFor {
+            model: Some("D110".into()),
+            head_px: 96,
+            dpi: 203,
+        });
+        let line = prove(&open(label), Some(&d110_m()), 1).facts_line();
+        assert!(
+            line.ends_with(
+                " \u{b7} density 3, labels with gaps \u{b7} Made for a D110; prints the same on \
+                 this D110_M."
+            ),
+            "{line}"
+        );
+
+        // Not printable, it says no settings: nothing would be sent.
+        let proof = prove(&open(with(Kind::Text, 4, "{dt}")), Some(&d110_m()), 1);
+        assert!(!proof.facts_line().contains("density"));
+        let proof = prove(&open(with(Kind::Barcode, 4, "{sku}")), Some(&d110_m()), 1);
+        assert!(!proof.printable());
+        assert!(!proof.facts_line().contains("density"));
     }
 
     #[test]

@@ -270,6 +270,24 @@ fn a_label_for_another_head_is_refused() {
     assert!(p.refused());
 }
 
+/// A label drawn for another head is only noted, and the note claims no
+/// re-fit: preflight never moves a label onto another head, and the editor
+/// stops one drawn for another printer rather than printing it re-fitted.
+#[test]
+fn authored_elsewhere_does_not_claim_a_refit() {
+    let says = IssueKind::AuthoredElsewhere {
+        head_px: 384,
+        dpi: 300,
+    }
+    .to_string();
+    assert!(says.contains("384-dot head at 300 dpi"), "{says}");
+    assert!(!says.contains("re-fitted"), "{says}");
+    assert_eq!(
+        says,
+        "the label was drawn for a 384-dot head at 300 dpi, not the one it is checked against here"
+    );
+}
+
 #[test]
 fn data_with_no_rows_is_refused() {
     let data = table(&["sku", "name", "$times"], &[]);

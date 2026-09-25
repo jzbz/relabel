@@ -1,5 +1,6 @@
 //! The seam between the editor and the printer link: orders out, news back, and
-//! the one implementation that starts a real link.
+//! the one implementation that starts a real link. A print is an order like any
+//! other, and its job's news is news like any other: nothing here knows a job.
 //!
 //! No toolkit type and no runtime type appears in [`Plug`], so the wiring in
 //! [`crate::print`] and every test of it are written against these types alone.
@@ -47,7 +48,8 @@ pub trait Plug {
     /// caller holds no borrow across it.
     fn order(&self, ticket: u64, order: Order);
     /// Close the link, waiting up to `within`: called once, after the window has
-    /// closed. Blocks the calling thread.
+    /// closed. A job still running finishes the label in hand first, and starts
+    /// no other (relabel-core `link`, "Printing"). Blocks the calling thread.
     fn finish(&self, within: Duration);
 }
 

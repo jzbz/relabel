@@ -53,6 +53,16 @@ export component AppWindow inherits Window {
     in property <bool> preview-primary-shown <=> shell.preview-primary-shown;
     in property <bool> preview-primary-default <=> shell.preview-primary-default;
     in property <string> preview-close-says <=> shell.preview-close-says;
+    in property <string> preview-copies-start <=> shell.preview-copies-start;
+    in property <string> preview-copies-says <=> shell.preview-copies-says;
+    in property <bool> preview-copies-shown <=> shell.preview-copies-shown;
+    in property <string> preview-print-face <=> shell.preview-print-face;
+    in property <string> preview-print-says <=> shell.preview-print-says;
+    in property <bool> preview-print-shown <=> shell.preview-print-shown;
+    in property <bool> preview-job-shown <=> shell.preview-job-shown;
+    in property <float> preview-job-done <=> shell.preview-job-done;
+    in property <string> preview-job-says <=> shell.preview-job-says;
+    in property <string> preview-image-label <=> shell.preview-image-label;
     in property <int> preview-focus-to <=> shell.preview-focus-to;
     in property <int> preview-focus-serial <=> shell.preview-focus-serial;
 
@@ -97,6 +107,7 @@ export component AppWindow inherits Window {
     callback new-cancel();
     callback preview-act(what: int);
     callback preview-choose(index: int);
+    callback preview-copies-edited(text: string);
 
     public function show-fields() {
         shell.show-fields();
@@ -168,5 +179,6 @@ export component AppWindow inherits Window {
         new-cancel() => { root.new-cancel(); }
         preview-act(w) => { root.preview-act(w); }
         preview-choose(i) => { root.preview-choose(i); }
+        preview-copies-edited(t) => { root.preview-copies-edited(t); }
     }
 }

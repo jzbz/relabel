@@ -52,9 +52,27 @@
 //! [`Order::StopWaiting`] then), at shutdown, or when the platform says the
 //! device is gone - and it closes that session straight away before carrying
 //! out the order.
+//!
+//! A print job is held to a stricter rule, because dropping one skips the
+//! `PrintEnd` that feeds its label out. Its future is dropped only when the
+//! platform says the device is gone, when nothing more can be sent anyway, and
+//! its session is closed straight after. Any other order that arrives
+//! mid-job - Stop waiting, Close, Find, Open, Shutdown, or every sender being
+//! dropped - stops the run after the label in hand, and the last of them is
+//! carried out once the job has ended (a Shutdown, once heard, is never
+//! replaced). [`Order::StopAfterLabel`] does only the stopping, and a second
+//! [`Order::Print`] is refused as busy.
+//!
+//! # Printing
+//!
+//! [`Order::Print`] runs [`crate::job::print_labels`] on the connected printer:
+//! a liveness check, then one one-copy job per label, with the options
+//! `relabel-cli label` uses ([`PrintOptions::for_identity`]). Every Print gets
+//! exactly one answer: [`Heard::PrintRefused`] with nothing sent, or
+//! [`Heard::JobEnded`], with [`Heard::Job`] news before it.
 
-use crate::error::TransportError;
-use crate::job::Timeouts;
+use crate::error::{JobError, SessionError, TransportError};
+use crate::job::{PrintOptions, Reached, RunEnd, RunNews, RunReport, Timeouts, print_labels};
 use crate::printer::{HandshakeStep, Identity, handshake_with};
 use crate::session::{Closer, Session};
 use crate::transport::ble::{self, BleTransport};
@@ -62,10 +80,12 @@ use async_trait::async_trait;
 use btleplug::api::{Central as _, Peripheral as _};
 use btleplug::platform::{Adapter, PeripheralId};
 use futures_util::future::BoxFuture;
-use relabel_proto::{ModelSpec, PrintDirection};
+use relabel_proto::payload::HeartbeatKind;
+use relabel_proto::{EncodedPage, LabelType, ModelSpec, PrintDirection};
 use std::collections::HashMap;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -85,6 +105,8 @@ pub const ABANDON_WITHIN: Duration = Duration::from_secs(2);
 pub const CLOSE_WITHIN: Duration = Duration::from_secs(2);
 /// How long to spend stopping a scan.
 pub const STOP_FINDING_WITHIN: Duration = Duration::from_secs(1);
+/// The most labels one [`Order::Print`] may ask for.
+pub const MAX_LABELS: u16 = 99;
 
 /// Names a device the last [`Order::Find`] reported. Only meaningful to the
 /// opener that issued it.
@@ -117,6 +139,35 @@ pub enum Order {
     Close,
     /// Stop whatever is in progress, close any link, and end the actor.
     Shutdown,
+    /// Print this page as `labels` labels, one one-copy job each, on the
+    /// connected printer. Answered with [`Heard::JobEnded`] or
+    /// [`Heard::PrintRefused`], and nothing else.
+    Print { page: EncodedPage, labels: u16 },
+    /// Start no more labels once the one in hand has printed. Ignored, with no
+    /// answer, when no job is running.
+    StopAfterLabel,
+}
+
+/// Why a [`Order::Print`] was refused, with nothing sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrintRefusal {
+    /// No printer is connected.
+    NotConnected,
+    /// A job is already running.
+    Busy,
+    /// The labels asked for are not 1 to [`MAX_LABELS`].
+    BadCount,
+    /// The printer's head is unknown or ambiguous, or narrower than the page.
+    WrongHead,
+}
+
+/// Whether the link was still up when a job ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkAfter {
+    Up,
+    /// The link went during the job, and has been closed. No
+    /// [`Heard::Dropped`] follows.
+    Gone,
 }
 
 /// What the link tells the editor.
@@ -146,6 +197,21 @@ pub enum Heard {
     Closed {
         ticket: u64,
     },
+    /// How a job is getting on. Carries the ticket of the Print.
+    Job {
+        ticket: u64,
+        news: RunNews,
+    },
+    /// A job has ended, and how.
+    JobEnded {
+        ticket: u64,
+        report: RunReport,
+        link: LinkAfter,
+    },
+    PrintRefused {
+        ticket: u64,
+        why: PrintRefusal,
+    },
 }
 
 impl Heard {
@@ -156,7 +222,10 @@ impl Heard {
             | Heard::Ready { ticket, .. }
             | Heard::Failed { ticket, .. }
             | Heard::Dropped { ticket }
-            | Heard::Closed { ticket } => *ticket,
+            | Heard::Closed { ticket }
+            | Heard::Job { ticket, .. }
+            | Heard::JobEnded { ticket, .. }
+            | Heard::PrintRefused { ticket, .. } => *ticket,
         }
     }
 }
@@ -182,6 +251,10 @@ pub struct Facts {
     pub max_write: usize,
     /// Whether relabel can draw for this printer at all.
     pub printable: Result<(), NotPrintable>,
+    /// The density a print on it is sent with.
+    pub print_density: u8,
+    /// The label type a print on it is sent with.
+    pub print_label_type: LabelType,
 }
 
 /// Why relabel cannot print on a printer it connected to.
@@ -196,22 +269,8 @@ pub enum NotPrintable {
 
 impl Facts {
     pub fn of(id: &Identity, name: &str, max_write: usize) -> Facts {
-        let head_of = |m: &ModelSpec| (m.printhead_px, m.dpi, m.direction);
         let (head, dpi, direction) = id.model.map(head_of).unwrap_or((0, 0, PrintDirection::Top));
-        let printable = match id.model {
-            Some(m) if m.printhead_px != 0 => {
-                if id.candidates.iter().all(|c| head_of(c) == head_of(m)) {
-                    Ok(())
-                } else {
-                    Err(NotPrintable::CandidatesDisagree {
-                        names: id.candidates.iter().map(|c| c.name).collect(),
-                    })
-                }
-            }
-            _ => Err(NotPrintable::UnknownModel {
-                model_id: id.model_id,
-            }),
-        };
+        let opts = PrintOptions::for_identity(id, None);
         Facts {
             name: name.to_owned(),
             model: id.model,
@@ -225,8 +284,32 @@ impl Facts {
             dpi,
             direction,
             max_write,
-            printable,
+            printable: printable(id),
+            print_density: opts.density,
+            print_label_type: opts.label_type,
         }
+    }
+}
+
+fn head_of(m: &ModelSpec) -> (u16, u16, PrintDirection) {
+    (m.printhead_px, m.dpi, m.direction)
+}
+
+/// Whether relabel can draw for this printer: see [`Facts::printable`].
+fn printable(id: &Identity) -> Result<(), NotPrintable> {
+    match id.model {
+        Some(m) if m.printhead_px != 0 => {
+            if id.candidates.iter().all(|c| head_of(c) == head_of(m)) {
+                Ok(())
+            } else {
+                Err(NotPrintable::CandidatesDisagree {
+                    names: id.candidates.iter().map(|c| c.name).collect(),
+                })
+            }
+        }
+        _ => Err(NotPrintable::UnknownModel {
+            model_id: id.model_id,
+        }),
     }
 }
 
@@ -248,6 +331,8 @@ impl PartialEq for Facts {
             && self.direction == other.direction
             && self.max_write == other.max_write
             && self.printable == other.printable
+            && self.print_density == other.print_density
+            && self.print_label_type == other.print_label_type
     }
 }
 
@@ -512,6 +597,8 @@ struct Live {
     gone: BoxFuture<'static, ()>,
     /// The ticket of the open, for [`Heard::Dropped`].
     ticket: u64,
+    /// What the handshake read, for printing.
+    identity: Identity,
 }
 
 struct Actor {
@@ -542,6 +629,77 @@ enum Shake {
 
 /// What a device is called when nothing says. Starts a sentence.
 const UNNAMED: &str = "The printer";
+
+/// How a job's select ended.
+enum JobOver {
+    Report(RunReport),
+    Gone,
+}
+
+/// How far a job has got, as its news left it, for a drop that ends it from
+/// outside.
+struct JobSoFar {
+    printed: u16,
+    /// The label in hand, or the next one to start.
+    label: u16,
+    reached: Reached,
+    /// Whether a label's job has started and not yet ended.
+    in_flight: bool,
+}
+
+impl JobSoFar {
+    fn heard(&mut self, news: RunNews) {
+        match news {
+            RunNews::Checking => self.reached = Reached::Check,
+            RunNews::Starting { n, .. } => {
+                self.label = n;
+                self.reached = Reached::Settings;
+                self.in_flight = true;
+            }
+            RunNews::Sending { .. } => self.reached = Reached::Rows,
+            RunNews::Printer { .. } => self.reached = Reached::Waiting,
+            RunNews::Printed { n, .. } => {
+                self.printed = n;
+                self.label = n.saturating_add(1);
+                self.reached = Reached::Settings;
+                self.in_flight = false;
+            }
+        }
+    }
+
+    /// The report for a job whose link went: nothing more was sent after the
+    /// news this was left at.
+    fn gone(&self, of: u16, stopping: bool) -> RunReport {
+        let end = if self.printed == of {
+            RunEnd::Done
+        } else if stopping && !self.in_flight {
+            RunEnd::Stopped
+        } else {
+            RunEnd::Failed {
+                label: self.label,
+                reached: self.reached,
+                error: JobError::Session(SessionError::Ended),
+            }
+        };
+        RunReport {
+            printed: self.printed,
+            of,
+            end,
+        }
+    }
+}
+
+/// Whether a job's error means the link itself has gone: a write failed, or
+/// the session ended, and the platform has not said so.
+fn link_failed(end: &RunEnd) -> bool {
+    matches!(
+        end,
+        RunEnd::Failed {
+            error: JobError::Session(SessionError::Transport(_) | SessionError::Ended),
+            ..
+        }
+    )
+}
 
 /// Every sender dropped means nobody can order anything again.
 fn or_shutdown(order: Option<(u64, Order)>) -> (u64, Order) {
@@ -584,6 +742,11 @@ impl Actor {
                     self.close_link().await;
                     return;
                 }
+                Order::Print { page, labels } => {
+                    next = self.print(ticket, page, labels).await;
+                }
+                // Nothing is running, so there is nothing to stop.
+                Order::StopAfterLabel => {}
             }
         }
     }
@@ -684,6 +847,7 @@ impl Actor {
                     session,
                     gone,
                     ticket,
+                    identity,
                 });
                 self.say(Heard::Ready { ticket, facts });
                 None
@@ -712,6 +876,113 @@ impl Actor {
                 Some(order)
             }
         }
+    }
+
+    /// Print `page` as `labels` one-copy jobs on the connected printer. See
+    /// the module note.
+    ///
+    /// Returns the order to carry out next: the last one that arrived
+    /// mid-job other than Print and StopAfterLabel, except that a Shutdown,
+    /// once kept, stays.
+    async fn print(&mut self, ticket: u64, page: EncodedPage, labels: u16) -> Option<(u64, Order)> {
+        let refuse = |why| Heard::PrintRefused { ticket, why };
+        let Some(live) = self.link.as_mut() else {
+            self.say(refuse(PrintRefusal::NotConnected));
+            return None;
+        };
+        if !(1..=MAX_LABELS).contains(&labels) {
+            self.say(refuse(PrintRefusal::BadCount));
+            return None;
+        }
+        let head = live.identity.printhead_px();
+        if head == 0 || printable(&live.identity).is_err() || page.cols > head {
+            self.say(refuse(PrintRefusal::WrongHead));
+            return None;
+        }
+
+        let flow = live.identity.flow();
+        let opts = PrintOptions::for_identity(&live.identity, None);
+        let check = HeartbeatKind::for_protocol(live.identity.protocol);
+        let stop = AtomicBool::new(false);
+        let mut next: Option<(u64, Order)> = None;
+        let mut orders_open = true;
+        let mut so_far = JobSoFar {
+            printed: 0,
+            label: 1,
+            reached: Reached::Check,
+            in_flight: false,
+        };
+
+        let over = {
+            let heard = &self.heard;
+            let so_far = &mut so_far;
+            let job = print_labels(
+                &live.session,
+                flow,
+                &page,
+                &opts,
+                labels,
+                check,
+                &stop,
+                |news| {
+                    so_far.heard(news);
+                    let _ = heard.send(Heard::Job { ticket, news });
+                },
+            );
+            tokio::pin!(job);
+            loop {
+                tokio::select! {
+                    // Orders first, so a stop is set before the job is polled
+                    // again; then the platform, so a drop ends the job at once.
+                    biased;
+                    order = self.orders.recv(), if orders_open => match order {
+                        Some((_, Order::StopAfterLabel)) => stop.store(true, Ordering::SeqCst),
+                        Some((busy, Order::Print { .. })) => {
+                            let _ = heard.send(Heard::PrintRefused {
+                                ticket: busy,
+                                why: PrintRefusal::Busy,
+                            });
+                        }
+                        Some(order) => {
+                            stop.store(true, Ordering::SeqCst);
+                            if !matches!(next, Some((_, Order::Shutdown))) {
+                                next = Some(order);
+                            }
+                        }
+                        // Nobody can order anything again. Not polled after
+                        // this, or it would answer None at once forever.
+                        None => {
+                            orders_open = false;
+                            stop.store(true, Ordering::SeqCst);
+                            next = Some((0, Order::Shutdown));
+                        }
+                    },
+                    () = &mut live.gone => break JobOver::Gone,
+                    report = &mut job => break JobOver::Report(report),
+                }
+            }
+        };
+
+        let (report, link) = match over {
+            JobOver::Report(report) if link_failed(&report.end) => (report, LinkAfter::Gone),
+            JobOver::Report(report) => (report, LinkAfter::Up),
+            JobOver::Gone => (
+                so_far.gone(labels, stop.load(Ordering::SeqCst)),
+                LinkAfter::Gone,
+            ),
+        };
+        if link == LinkAfter::Gone {
+            // As a drop mid-handshake is: nothing more can be sent, so the
+            // session is closed now, and its `gone` goes with it so no
+            // Dropped follows.
+            self.close_link().await;
+        }
+        self.say(Heard::JobEnded {
+            ticket,
+            report,
+            link,
+        });
+        next
     }
 
     /// The platform said the link went.

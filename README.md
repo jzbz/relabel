@@ -15,8 +15,9 @@ label document format and draws text, rectangles, lines, linear barcodes, QR
 codes, DataMatrix symbols and placed images, with halftoning for photographs.
 It binds a label to rows of CSV data and checks every row before anything
 prints, and `relabel-cli label` prints the result. The GUI makes, opens, edits
-and saves labels, and connects to a printer over Bluetooth to show exactly what
-would print on it; it does not print yet. See
+and saves labels, connects to a printer over Bluetooth, shows exactly what will
+print on it, and prints it, up to 99 copies at a time; printing from the GUI
+has yet to be checked on paper. See
 [Milestones](docs/DESIGN.md#7-milestones) and
 [the renderer's plan](docs/RENDER-PLAN.md) for the order things land in.
 
@@ -39,10 +40,10 @@ Bluetooth-first and MIT at once.
 | `crates/relabel-core` | Transports (BLE, and an in-memory printer), the session that owns reassembly and request/response matching, the print-job engine, the printer link the GUI talks to on a thread of its own, and the CSV reader for variable data. |
 | `crates/relabel-render` | The label document format, and the rasteriser that turns it into dots: whole-dot geometry, halftoning with per-element zones, text, images and SVG, linear barcodes, QR and DataMatrix, and a calibration ruler. Variable data, the preflight that checks every row before a run, fold-over and cable-flag geometry, and the pixels a preview pane draws. No device, no clock, no async, no GUI types. |
 | `crates/relabel-cli` | Headless driver for hardware bring-up. Not a shipped binary. |
-| `crates/relabel-gui` | The desktop app, in Slint. Starts a new label or opens one, draws it at whole dots, edits it by pointer or keyboard, and saves it through the platform's own file dialog. Connects to a printer, and previews the exact dots a job would send it. Early: it does not print yet. |
+| `crates/relabel-gui` | The desktop app, in Slint. Starts a new label or opens one, draws it at whole dots, edits it by pointer or keyboard, and saves it through the platform's own file dialog. Connects to a printer, shows the exact dots a job will send it, and prints them, one job per label. Early. |
 
-`relabel-gui` starts, opens, edits and saves labels, connects to a printer and
-previews what would print, and does not print yet.
+`relabel-gui` starts, opens, edits and saves labels, connects to a printer,
+shows what will print, and prints it.
 
 The split is deliberate. `relabel-proto` is pure and synchronous, so the fuzz
 target builds in a second and the protocol tests need neither a Bluetooth stack
@@ -147,9 +148,10 @@ cargo test --workspace
 
 ## Bring-up
 
-The GUI does not print yet, so `relabel-cli` is how the stack gets pointed at a
-printer. The GUI's own route is Control+P, which opens a preview of the open
-label, and Connect in it, which finds the printer and identifies it:
+`relabel-cli` is how the stack gets pointed at a printer while something is
+being brought up. The GUI's own route is Control+P, which opens the print pane
+on the open label; Connect in it finds the printer and identifies it, and Print,
+with Copies beside it, prints what the pane shows:
 
 ```bash
 cargo run -p relabel-gui -- crates/relabel-render/tests/corpus/v1/kitchen-sink.relabel

@@ -276,6 +276,20 @@ fn closing_a_clean_document_closes_at_once() {
     assert!(find_button(&ui, "Don't save").is_none());
 }
 
+/// With no print job running, nothing holds the close: a clean document's close
+/// is answered HideWindow by the handler itself, as it always was, and the file
+/// commands' machine is the one that saw it.
+#[test]
+fn closing_is_not_held_without_a_job() {
+    let (_dir, a) = with_a("close_not_held");
+    let (ui, wired) = on_file(&a, Rc::new(Scripted::default()));
+    assert!(!wired.prints.busy());
+    let status = ui.get_status();
+    close(&ui);
+    assert!(!ui.window().is_visible(), "HideWindow, at once");
+    assert_eq!(ui.get_status(), status, "nothing was said about a job");
+}
+
 #[test]
 fn save_from_the_question_writes_and_closes() {
     let (_dir, a) = with_a("save_then_close");
@@ -641,7 +655,7 @@ fn the_file_bar_buttons_carry_their_chords_and_are_not_tab_stops() {
         ("Open label", "Control+O"),
         ("Save label", "Control+S"),
         ("Save label as", "Control+Shift+S"),
-        ("Preview the label for the printer", "Control+P"),
+        ("Print the label", "Control+P"),
     ] {
         assert_eq!(
             button_of(&ui, name).accessible_description().as_deref(),

@@ -3,10 +3,10 @@
 //! Two panes: the label as dots, with a frame round every element, placement and
 //! size by pointer or by keyboard, and a bar to add and delete elements; and beside
 //! it the selected element's fields. Above them, a bar to make, open, save and
-//! preview a label, and a line saying which printer is connected. The Preview pane
-//! shows what would print and connects to a printer; nothing prints yet. The
-//! document lives in Rust; the `.slint` side holds flat models of rows and slots
-//! and no rules at all.
+//! print a label, and a line saying which printer is connected. The print pane
+//! shows what will print, connects to a printer and prints on it, each copy its
+//! own one-copy job. The document lives in Rust; the `.slint` side holds flat
+//! models of rows and slots and no rules at all.
 
 pub mod a11y;
 pub mod canvas;
@@ -158,8 +158,9 @@ pub fn wire_window<H: PrintHost>(
     // window manager's first sizes are provisional, and a fit taken once here would
     // be stale.
     let viewer = view::wire(host, &canvas, opening);
-    // One machine for the file commands and the preview, which share the popups'
-    // one place (filing.rs); the printer before the files, which open its pane.
+    // One machine for the file commands and the print pane, which share the
+    // popups' one place (filing.rs); the printer before the files, which open its
+    // pane and whose job holds the window's close.
     let filing = Rc::new(RefCell::new(Filing::new(path)));
     let connected = Rc::new(Cell::new(None));
     let prints = print::wire(host, &canvas, &filing, plug, connected.clone());
@@ -167,15 +168,26 @@ pub fn wire_window<H: PrintHost>(
         let prints = prints.clone();
         Rc::new(move |host: &H| prints.open(host))
     };
-    file::wire(
+    let hold_close: Rc<dyn Fn(&H) -> bool> = {
+        let prints = prints.clone();
+        Rc::new(move |host: &H| prints.hold_close(host))
+    };
+    let busy: Rc<dyn Fn() -> bool> = {
+        let prints = prints.clone();
+        Rc::new(move || prints.busy())
+    };
+    let replay = file::wire(
         host,
         &canvas,
         viewer,
         chooser,
         filing.clone(),
         preview,
+        hold_close,
+        busy,
         connected,
     );
+    prints.set_close_replay(replay);
     host.set_status(note.as_str().into());
     // So the window opens with the keyboard in the canvas: F6 is a capture, and
     // the capture list is built from the focused item's ancestor chain, which is
@@ -188,6 +200,22 @@ pub fn wire_window<H: PrintHost>(
     }
 }
 
+/// How long the printer link is given to close once the window has, with no job
+/// running.
+const FINISH_IDLE: Duration = Duration::from_secs(5);
+
+/// The same with a job running: the label in hand finishes first. The link reads
+/// a stop only before a label starts, so at most that one label runs, and the
+/// check before the first label never adds to it: a stop heard during the check
+/// starts no label. The label ends by its 25-second budget, which runs from its
+/// start, then a status poll in flight and the pause after it (about 1 s) and
+/// `PrintEnd`'s 2.5 s: about 28.6 s. Then the session's close (relabel-core
+/// `link::CLOSE_WITHIN`, 2 s) and the runtime's own second. The budget is first
+/// checked once `PrintStart` is taken, so a printer answering each refused
+/// setting only at the end of its timeout could take longer; the D110_M takes a
+/// new job within a few hundred milliseconds of the last.
+const FINISH_PRINTING: Duration = Duration::from_secs(35);
+
 /// Open the window on the label at `path`, or on a new one, and run it until it
 /// closes.
 pub fn run_app(path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
@@ -198,13 +226,21 @@ pub fn run_app(path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     let ui = AppWindow::new()?;
     let chooser = Rc::new(NativeChooser::new(&ui));
     let plug = Rc::new(NativePlug::new());
-    wire_window(&ui, started, chooser, plug.clone(), Opening::Fit);
+    let wired = wire_window(&ui, started, chooser, plug.clone(), Opening::Fit);
     let ran = ui.run();
     // Whatever the loop ended with, the printer link is closed before the process
     // goes: a scan stopped, a connect abandoned, a session closed. Five seconds
     // covers each of those at its own cap (relabel-core `link`), and past it the
-    // process leaves anyway rather than hang with no window.
-    plug.finish(Duration::from_secs(5));
+    // process leaves anyway rather than hang with no window. The close button
+    // never ends the loop while a job runs (`print`, "Closing the window during a
+    // job"), but a platform may end it another way, and then the label in hand
+    // is let finish first: see `FINISH_PRINTING`.
+    let within = if wired.prints.busy() {
+        FINISH_PRINTING
+    } else {
+        FINISH_IDLE
+    };
+    plug.finish(within);
     ran?;
     Ok(())
 }

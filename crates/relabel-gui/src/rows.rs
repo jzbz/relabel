@@ -636,7 +636,7 @@ macro_rules! impl_file_host {
     };
 }
 
-/// One row of the Preview pane's issue list, whichever compiled component it
+/// One row of the print pane's issue list, whichever compiled component it
 /// belongs to.
 pub trait IssueItem: Clone + 'static {
     fn of(text: &str) -> Self;
@@ -644,18 +644,18 @@ pub trait IssueItem: Clone + 'static {
     fn text(&self) -> &str;
 }
 
-/// One of the Preview pane's printer choices: the face, and what the button
+/// One of the print pane's printer choices: the face, and what the button
 /// announces as its description.
 pub trait ChoiceItem: Clone + 'static {
     fn of(text: &str, says: &str) -> Self;
 }
 
 /// The print half of a window: the Printer line beside the File bar, and the
-/// Preview pane.
+/// print pane.
 ///
 /// Over the file half rather than beside it, because the pane is opened by a file
 /// command and shares the popups' one place (`filing`), and closing it is a file
-/// command too. Setters, the one getter the focus serial needs, and the two
+/// command too. Setters, the one getter the focus serial needs, and the three
 /// callbacks: every sentence, face, flag and focus target is `printing`'s or
 /// `proof`'s, and the pane decides nothing.
 pub trait PrintHost: FileHost {
@@ -677,6 +677,21 @@ pub trait PrintHost: FileHost {
     fn set_preview_primary_shown(&self, shown: bool);
     fn set_preview_primary_default(&self, default: bool);
     fn set_preview_close_says(&self, says: slint::SharedString);
+    /// The Copies field's text as it opens: read by the pane as it opens, and
+    /// never bound, so what is typed stays.
+    fn set_preview_copies_start(&self, text: slint::SharedString);
+    fn set_preview_copies_says(&self, says: slint::SharedString);
+    fn set_preview_copies_shown(&self, shown: bool);
+    /// The job slot: Print, or Stop after this label.
+    fn set_preview_print_face(&self, face: slint::SharedString);
+    fn set_preview_print_says(&self, says: slint::SharedString);
+    fn set_preview_print_shown(&self, shown: bool);
+    /// The job line: shown while a job runs, with labels printed as a share of
+    /// the job, from 0 to 1, and what is happening now.
+    fn set_preview_job_shown(&self, shown: bool);
+    fn set_preview_job_done(&self, done: f32);
+    fn set_preview_job_says(&self, says: slint::SharedString);
+    fn set_preview_image_label(&self, label: slint::SharedString);
     /// Where the keyboard goes: `printing::Focus::token`. Read by the pane when it
     /// opens, and again whenever the serial below changes.
     fn set_preview_focus_to(&self, to: i32);
@@ -684,10 +699,12 @@ pub trait PrintHost: FileHost {
     fn get_preview_focus_serial(&self) -> i32;
     fn invoke_show_preview(&self);
 
-    /// 0 is the primary slot, 1 is Close.
+    /// 0 is the primary slot, 1 is Close, 2 is the job slot.
     fn on_preview_act(&self, f: impl FnMut(i32) + 'static);
     /// An offered printer, by its place among the choices.
     fn on_preview_choose(&self, f: impl FnMut(i32) + 'static);
+    /// The Copies field's text, on every edit.
+    fn on_preview_copies_edited(&self, f: impl FnMut(slint::SharedString) + 'static);
 }
 
 /// Bind a compiled shell window and its two structs to [`crate::print`]. Once for
@@ -762,6 +779,36 @@ macro_rules! impl_print_host {
             fn set_preview_close_says(&self, says: slint::SharedString) {
                 <$win>::set_preview_close_says(self, says)
             }
+            fn set_preview_copies_start(&self, text: slint::SharedString) {
+                <$win>::set_preview_copies_start(self, text)
+            }
+            fn set_preview_copies_says(&self, says: slint::SharedString) {
+                <$win>::set_preview_copies_says(self, says)
+            }
+            fn set_preview_copies_shown(&self, shown: bool) {
+                <$win>::set_preview_copies_shown(self, shown)
+            }
+            fn set_preview_print_face(&self, face: slint::SharedString) {
+                <$win>::set_preview_print_face(self, face)
+            }
+            fn set_preview_print_says(&self, says: slint::SharedString) {
+                <$win>::set_preview_print_says(self, says)
+            }
+            fn set_preview_print_shown(&self, shown: bool) {
+                <$win>::set_preview_print_shown(self, shown)
+            }
+            fn set_preview_job_shown(&self, shown: bool) {
+                <$win>::set_preview_job_shown(self, shown)
+            }
+            fn set_preview_job_done(&self, done: f32) {
+                <$win>::set_preview_job_done(self, done)
+            }
+            fn set_preview_job_says(&self, says: slint::SharedString) {
+                <$win>::set_preview_job_says(self, says)
+            }
+            fn set_preview_image_label(&self, label: slint::SharedString) {
+                <$win>::set_preview_image_label(self, label)
+            }
             fn set_preview_focus_to(&self, to: i32) {
                 <$win>::set_preview_focus_to(self, to)
             }
@@ -779,6 +826,9 @@ macro_rules! impl_print_host {
             }
             fn on_preview_choose(&self, f: impl FnMut(i32) + 'static) {
                 <$win>::on_preview_choose(self, f)
+            }
+            fn on_preview_copies_edited(&self, f: impl FnMut(slint::SharedString) + 'static) {
+                <$win>::on_preview_copies_edited(self, f)
             }
         }
     };

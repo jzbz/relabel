@@ -9,7 +9,7 @@
 use super::{DeviceKey, Facts, Failure, Opened, Opener, Seen};
 use crate::printer::Identity;
 use crate::session::Session;
-use crate::transport::mock::{MockHandle, MockTransport, Responder, identifying};
+use crate::transport::mock::{MockHandle, MockTransport, Responder, d110_m_quick};
 use async_trait::async_trait;
 use relabel_proto::models;
 use std::sync::{Arc, Mutex};
@@ -19,9 +19,12 @@ use tokio::sync::oneshot;
 /// The name the author's printer advertises.
 pub const D110_M_NAME: &str = "D110_M-GB28010920";
 
-/// The author's D110_M as its handshake reads it: wire id 2320, level 4.
+/// The author's D110_M: wire id 2320, level 4, as its handshake reads it, and
+/// printing a label every tenth of a second, so a job finishes on real time
+/// as well as on a paused clock. See
+/// [`FakePrinter`](crate::transport::mock::FakePrinter).
 pub fn d110_m() -> Responder {
-    identifying(2320, Some((3, 1)), true)
+    d110_m_quick()
 }
 
 /// How a device behaves when opened.

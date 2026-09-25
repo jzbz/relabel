@@ -130,8 +130,10 @@ pub enum IssueKind {
     MediaGeometry(GeometryFault),
     /// The element is on the canvas and still cannot put a readable mark there.
     Keepout(Keepout),
-    /// The label was drawn for another printer's head. Advisory only: the canvas
-    /// has been re-fitted, and `TargetMismatch` is what refuses one that has not.
+    /// The label says it was drawn for another printer's head than the target it
+    /// is checked against. Advisory only: nothing is re-fitted here, the canvas
+    /// already matches the target, and `TargetMismatch` is what refuses one that
+    /// does not.
     AuthoredElsewhere {
         head_px: u16,
         dpi: u16,
@@ -211,7 +213,7 @@ impl fmt::Display for IssueKind {
             }
             IssueKind::AuthoredElsewhere { head_px, dpi } => write!(
                 f,
-                "the label was drawn for a {head_px}-dot head at {dpi} dpi, and has been re-fitted to this one"
+                "the label was drawn for a {head_px}-dot head at {dpi} dpi, not the one it is checked against here"
             ),
         }
     }
