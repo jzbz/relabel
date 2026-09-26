@@ -20,6 +20,10 @@
 //!   the stack, which aborts the process rather than failing;
 //! - at most 64 isolated groups (masks, clips, opacity), nested at most 8
 //!   deep, because each costs a full offscreen layer;
+//! - at most a million dashes over the whole drawing, counted from each
+//!   dashed path's length before anything is drawn: tiny-skia gives up past a
+//!   million in one path, but not across paths, and a few thousand short
+//!   paths each dashed far finer than a dot cost minutes of work;
 //! - at most 2 MiB of XML, 100 000 nodes, and 262 144 dots of output.
 //!
 //! Text is refused rather than drawn: drawing it needs resvg's `text` feature,
@@ -44,8 +48,11 @@ const MAX_BYTES: usize = 2 << 20;
 const MAX_NODES: u32 = 100_000;
 const MAX_ISOLATED: usize = 64;
 const MAX_ISOLATION_DEPTH: usize = 8;
-const MAX_DOTS: u64 = 1 << 18;
+const MAX_DOTS: u64 = crate::artwork::SVG_MAX_DOTS;
 const MAX_CLIPS: usize = 64;
+/// tiny-skia's own cap for one path (`dash.rs`, `MAX_DASH_COUNT`), here for
+/// the whole drawing.
+const MAX_DASHES: f64 = 1_000_000.0;
 const REFUSED: [&str; 6] = [
     "foreignObject",
     "filter",
@@ -131,6 +138,14 @@ pub(crate) fn rasterise(
     if deepest > MAX_ISOLATION_DEPTH {
         return Err(refuse(SvgRefusal::TooDeep(deepest)));
     }
+    let mut dashes = 0.0;
+    count_dashes(tree.root(), &mut dashes);
+    // A NaN is refused too.
+    if dashes.is_nan() || dashes > MAX_DASHES {
+        return Err(refuse(SvgRefusal::TooManyDashes(
+            dashes.min(u64::MAX as f64) as u64,
+        )));
+    }
 
     let size = tree.size();
     let natural = (dots(size.width()), dots(size.height()));
@@ -149,6 +164,12 @@ pub(crate) fn rasterise(
             if *fit == ImageFit::Dots && raster != natural {
                 notes.push(ImportNote::Cropped {
                     from: natural,
+                    to: raster,
+                });
+            }
+            if *fit == ImageFit::Cover && raster != (p.bw, p.bh) {
+                notes.push(ImportNote::CoverCropped {
+                    from: (p.bw, p.bh),
                     to: raster,
                 });
             }
@@ -239,6 +260,59 @@ fn isolation(g: &usvg::Group, depth: usize, count: &mut usize, deepest: &mut usi
         }
         child.subroots(|sg| isolation(sg, depth, count, deepest));
     }
+}
+
+/// Add up the dashes every dashed stroke will be cut into, as tiny-skia counts
+/// them: a path's length over its dash period, times the dashes in a period.
+/// Both are in the path's own units, so no transform changes the count. The
+/// length is each segment's control polygon, which is never shorter than the
+/// curve, so a count that passes here passes there.
+fn count_dashes(g: &usvg::Group, total: &mut f64) {
+    for child in g.children() {
+        match child {
+            usvg::Node::Group(cg) => count_dashes(cg, total),
+            usvg::Node::Path(p) => {
+                if let Some(array) = p.stroke().and_then(|s| s.dasharray()) {
+                    let period: f64 = array.iter().map(|&v| f64::from(v)).sum();
+                    let per = (array.len() / 2) as f64;
+                    *total += outline_length(p.data()) * per / period;
+                }
+            }
+            _ => {}
+        }
+        child.subroots(|sg| count_dashes(sg, total));
+    }
+}
+
+/// The length of every segment's control polygon, closing lines included.
+fn outline_length(path: &usvg::tiny_skia_path::Path) -> f64 {
+    use usvg::tiny_skia_path::{PathSegment, Point};
+    let dist = |a: Point, b: Point| f64::from(a.distance(b));
+    let (mut len, mut at, mut start) = (0.0, Point::zero(), Point::zero());
+    for seg in path.segments() {
+        match seg {
+            PathSegment::MoveTo(p) => {
+                (at, start) = (p, p);
+            }
+            PathSegment::LineTo(p) => {
+                len += dist(at, p);
+                at = p;
+            }
+            PathSegment::QuadTo(c, p) => {
+                len += dist(at, c) + dist(c, p);
+                at = p;
+            }
+            PathSegment::CubicTo(c1, c2, p) => {
+                len += dist(at, c1) + dist(c1, c2) + dist(c2, p);
+                at = p;
+            }
+            PathSegment::Close => {
+                len += dist(at, start);
+                at = start;
+            }
+        }
+    }
+    len
 }
 
 /// A length in dots, at least one; `as` saturates and takes NaN to zero.

@@ -18,6 +18,7 @@ pub mod file;
 pub mod filing;
 pub mod fresh;
 pub mod geom;
+pub mod import;
 pub mod ins;
 pub mod make;
 pub mod plug;
@@ -33,6 +34,7 @@ use choose::{Chooser, NativeChooser};
 use doc::Doc;
 use filing::Filing;
 use fresh::NewSpec;
+use import::{Importer, ThreadImporter};
 use plug::{NativePlug, Plug};
 use rows::PrintHost;
 use std::cell::{Cell, RefCell};
@@ -142,12 +144,13 @@ pub struct Wired<H: PrintHost> {
 /// wiring.
 ///
 /// `plug` carries orders to the printer link, and nothing is sent through it until
-/// Connect is pressed.
+/// Connect is pressed. `importer` reads and decodes artwork off the event loop.
 pub fn wire_window<H: PrintHost>(
     host: &H,
     started: Started,
     chooser: Rc<dyn Chooser>,
     plug: Rc<dyn Plug>,
+    importer: Rc<dyn Importer>,
     opening: Opening,
 ) -> Wired<H> {
     let Started { doc, path, note } = started;
@@ -181,6 +184,7 @@ pub fn wire_window<H: PrintHost>(
         &canvas,
         viewer,
         chooser,
+        importer,
         filing.clone(),
         preview,
         hold_close,
@@ -226,7 +230,8 @@ pub fn run_app(path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     let ui = AppWindow::new()?;
     let chooser = Rc::new(NativeChooser::new(&ui));
     let plug = Rc::new(NativePlug::new());
-    let wired = wire_window(&ui, started, chooser, plug.clone(), Opening::Fit);
+    let importer = Rc::new(ThreadImporter::new());
+    let wired = wire_window(&ui, started, chooser, plug.clone(), importer, Opening::Fit);
     let ran = ui.run();
     // Whatever the loop ended with, the printer link is closed before the process
     // goes: a scan stopped, a connect abandoned, a session closed. Five seconds

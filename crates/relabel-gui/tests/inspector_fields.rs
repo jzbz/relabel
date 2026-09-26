@@ -8,7 +8,7 @@
 #[path = "support/mod.rs"]
 mod support;
 
-use i_slint_backend_testing::{AccessibleLiveness, AccessibleRole, ElementQuery};
+use i_slint_backend_testing::{AccessibleLiveness, AccessibleRole, ElementHandle, ElementQuery};
 use relabel_gui::canvas::{Canvas, wire};
 use relabel_gui::doc::Doc;
 use relabel_gui::geom;
@@ -18,7 +18,8 @@ use slint::{ComponentHandle, Model};
 use std::cell::RefCell;
 use std::rc::Rc;
 use support::{
-    every_kind_label, field_of, fields_of, find_field, frame, rect, reference_label, status_of,
+    action_of, every_kind_label, field_of, fields_of, find_field, frame, rect, reference_label,
+    status_of,
 };
 
 include!(concat!(env!("OUT_DIR"), "/ins-probe.rs"));
@@ -54,7 +55,26 @@ fn role_of(shape: Shape) -> AccessibleRole {
         Shape::Number => AccessibleRole::Spinbox,
         Shape::Word => AccessibleRole::TextInput,
         Shape::Read => AccessibleRole::Text,
+        Shape::Action => AccessibleRole::Button,
         Shape::Unused => AccessibleRole::None,
+    }
+}
+
+/// The name a slot announces: its field's, or an action's face.
+fn name_of(s: &ins::Slot) -> &str {
+    if s.shape == Shape::Action {
+        &s.face
+    } else {
+        s.field.label()
+    }
+}
+
+/// The one node a slot is: a field by its name, an action's button by its face.
+fn node_of(ui: &InsProbe, s: &ins::Slot) -> ElementHandle {
+    if s.shape == Shape::Action {
+        action_of(ui, &s.face)
+    } else {
+        field_of(ui, s.field.label())
     }
 }
 
@@ -65,10 +85,16 @@ fn every_field_is_one_accessibility_node_with_a_name_a_value_and_a_role() {
         ui.invoke_select(id);
         let slots = slots(&canvas);
         for s in &slots {
-            let h = field_of(&ui, s.field.label());
+            let h = node_of(&ui, s);
             assert_eq!(h.accessible_role(), Some(role_of(s.shape)), "{:?}", s.field);
+            // A button has no value; what it acts on is its description.
+            let told = if s.shape == Shape::Action {
+                h.accessible_description()
+            } else {
+                h.accessible_value()
+            };
             assert_eq!(
-                h.accessible_value().as_deref(),
+                told.as_deref(),
                 Some(s.value.as_str()),
                 "{:?} of element {id}",
                 s.field
@@ -167,7 +193,7 @@ fn each_kind_publishes_its_own_fields_and_only_those() {
         ui.invoke_select(id);
         let expected: Vec<String> = slots(&canvas)
             .iter()
-            .map(|s| s.field.label().to_string())
+            .map(|s| name_of(s).to_string())
             .collect();
         let published: Vec<String> = fields_of(&ui)
             .iter()
@@ -330,7 +356,7 @@ fn the_name_every_field_announces_is_the_name_rust_gives_it() {
     for id in 1..=7 {
         ui.invoke_select(id);
         for s in slots(&canvas) {
-            field_of(&ui, s.field.label());
+            node_of(&ui, &s);
             seen.push(s.field);
         }
     }

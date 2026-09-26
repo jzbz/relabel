@@ -23,6 +23,69 @@ pub enum Ask {
         folder: Option<PathBuf>,
         name: String,
     },
+    /// An image file to import: for a new image when `again` is `None`, and
+    /// otherwise into the element it names, "Image element 3".
+    Artwork {
+        folder: Option<PathBuf>,
+        again: Option<String>,
+    },
+}
+
+/// A dialog as it is shown: what [`NativeChooser`] hands the platform for an
+/// [`Ask`], worked out here so a test can read it without a dialog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Face {
+    pub title: String,
+    /// Each filter's name and the extensions it shows, without the dot.
+    pub filters: Vec<(&'static str, &'static [&'static str])>,
+    pub folder: Option<PathBuf>,
+    /// The name a save starts with.
+    pub name: Option<String>,
+    /// A save dialog, which may name a file that does not exist yet; otherwise
+    /// one that picks an existing file.
+    pub save: bool,
+}
+
+/// What an artwork dialog shows. Each extension in both cases: the portal matches
+/// its globs case-sensitively, and a camera writes `.JPG`. The decode sniffs the
+/// bytes and never trusts a name, so a filter can hide a file but never let a bad
+/// one through; "All files" is there for artwork saved under the wrong extension.
+/// It shows a file with no extension only through the portal: rfd 0.17.2 passes
+/// `*` to the portal as it is, but writes every extension as `*.{ext}` for zenity,
+/// and the `*.*` that makes there matches no such file.
+const IMAGES: &[&str] = &[
+    "png", "PNG", "jpg", "JPG", "jpeg", "JPEG", "gif", "GIF", "bmp", "BMP", "webp", "WEBP", "svg",
+    "SVG",
+];
+
+/// What the dialog for `ask` shows.
+pub fn face(ask: &Ask) -> Face {
+    match ask {
+        Ask::Open { folder } => Face {
+            title: "Open a label".into(),
+            filters: vec![("relabel label", &["relabel"])],
+            folder: folder.clone(),
+            name: None,
+            save: false,
+        },
+        Ask::SaveAs { folder, name } => Face {
+            title: "Save the label as".into(),
+            filters: vec![("relabel label", &["relabel"])],
+            folder: folder.clone(),
+            name: Some(name.clone()),
+            save: true,
+        },
+        Ask::Artwork { folder, again } => Face {
+            title: match again {
+                None => "Add an image to the label".into(),
+                Some(heading) => format!("Import the artwork of {heading} again"),
+            },
+            filters: vec![("Images", IMAGES), ("All files", &["*"])],
+            folder: folder.clone(),
+            name: None,
+            save: false,
+        },
+    }
 }
 
 /// What a file dialog answered.
@@ -87,32 +150,35 @@ impl<H: slint::ComponentHandle + 'static> Chooser for NativeChooser<H> {
     fn ask(&self, ask: Ask, answer: Answer) -> Result<(), NoDialog> {
         let host = self.window.upgrade().ok_or(NoDialog::Gone)?;
         let asked = Instant::now();
-        let (open, folder, name) = match ask {
-            Ask::Open { folder } => (true, folder, None),
-            Ask::SaveAs { folder, name } => (false, folder, Some(name)),
-        };
-        let mut dialog = rfd::AsyncFileDialog::new()
-            .set_title(if open {
-                "Open a label"
-            } else {
-                "Save the label as"
-            })
-            .add_filter("relabel label", &["relabel"]);
+        let Face {
+            title,
+            filters,
+            folder,
+            name,
+            save,
+        } = face(&ask);
+        let mut dialog = rfd::AsyncFileDialog::new().set_title(title);
+        for (filter, extensions) in filters {
+            dialog = dialog.add_filter(filter, extensions);
+        }
         if let Some(folder) = folder {
             dialog = dialog.set_directory(folder);
         }
         if let Some(name) = name {
-            dialog = dialog.set_file_name(name).set_can_create_directories(true);
+            dialog = dialog.set_file_name(name);
+        }
+        if save {
+            dialog = dialog.set_can_create_directories(true);
         }
         // Read now, while the window is on screen: rfd takes the raw handle when it
         // is set, and a handle that cannot be read leaves the dialog with no parent
         // rather than failing (rfd file_dialog.rs:96-102).
         let dialog = dialog.set_parent(&host.window().window_handle());
         slint::spawn_local(async move {
-            let chosen = if open {
-                dialog.pick_file().await
-            } else {
+            let chosen = if save {
                 dialog.save_file().await
+            } else {
+                dialog.pick_file().await
             };
             answer(match chosen {
                 Some(file) => Picked::Path(file.path().to_path_buf()),
@@ -124,5 +190,74 @@ impl<H: slint::ComponentHandle + 'static> Chooser for NativeChooser<H> {
         // an error here is the only answer there will be.
         .map(drop)
         .map_err(|e| NoDialog::Spawn(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_artwork_dialog_offers_images_in_both_cases_and_all_files() {
+        let new = face(&Ask::Artwork {
+            folder: Some(PathBuf::from("/a")),
+            again: None,
+        });
+        assert_eq!(
+            new,
+            Face {
+                title: "Add an image to the label".into(),
+                filters: vec![
+                    (
+                        "Images",
+                        &[
+                            "png", "PNG", "jpg", "JPG", "jpeg", "JPEG", "gif", "GIF", "bmp", "BMP",
+                            "webp", "WEBP", "svg", "SVG"
+                        ][..]
+                    ),
+                    ("All files", &["*"][..]),
+                ],
+                folder: Some(PathBuf::from("/a")),
+                name: None,
+                save: false,
+            }
+        );
+        let again = face(&Ask::Artwork {
+            folder: None,
+            again: Some("Image element 3".into()),
+        });
+        assert_eq!(again.title, "Import the artwork of Image element 3 again");
+        assert_eq!((again.folder, again.save), (None, false));
+    }
+
+    #[test]
+    fn the_label_dialogs_keep_their_faces() {
+        let open = face(&Ask::Open {
+            folder: Some(PathBuf::from("/l")),
+        });
+        assert_eq!(
+            open,
+            Face {
+                title: "Open a label".into(),
+                filters: vec![("relabel label", &["relabel"][..])],
+                folder: Some(PathBuf::from("/l")),
+                name: None,
+                save: false,
+            }
+        );
+        let save_as = face(&Ask::SaveAs {
+            folder: None,
+            name: "a.relabel".into(),
+        });
+        assert_eq!(
+            save_as,
+            Face {
+                title: "Save the label as".into(),
+                filters: vec![("relabel label", &["relabel"][..])],
+                folder: None,
+                name: Some("a.relabel".into()),
+                save: true,
+            }
+        );
     }
 }

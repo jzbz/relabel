@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 use support::{
-    Held, HeldPlug, Scripted, button_of, down, field_of, find_button, frame, frame_of, group_of,
-    move_to, press, rect, reference_label, rows_of, tmp_dir, type_text, up,
+    Held, HeldPlug, InlineImporter, Scripted, button_of, down, field_of, find_button, frame,
+    frame_of, group_of, move_to, press, rect, reference_label, rows_of, tmp_dir, type_text, up,
 };
 
 include!(concat!(env!("OUT_DIR"), "/ins-probe.rs"));
@@ -47,7 +47,8 @@ fn probe(started: Started, chooser: Rc<dyn Chooser>) -> (InsProbe, Wired) {
     ui.window()
         .dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.0 });
     let plug = Rc::new(HeldPlug::default());
-    let wired = wire_window(&ui, started, chooser, plug, Opening::Fit);
+    let importer = Rc::new(InlineImporter);
+    let wired = wire_window(&ui, started, chooser, plug, importer, Opening::Fit);
     ui.show().expect("showing a headless window");
     i_slint_backend_testing::mock_elapsed_time(Duration::ZERO);
     (ui, wired)

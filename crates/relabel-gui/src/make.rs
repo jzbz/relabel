@@ -12,17 +12,19 @@ use relabel_proto::PrintDirection;
 use relabel_render::barcode::{self, MIN_MODULE_DOTS, Symbology};
 use relabel_render::code2d::{self, ModuleGrid};
 use relabel_render::document::{
-    BarcodeEl, Common, DataMatrixEl, DmSize, Element, ElementId, ElementOrRaw, GlyphRaster, Label,
-    LineEl, QrEc, QrEl, RectDots, RectEl, Rot, TextAlign, TextEl, TextWeight,
+    BarcodeEl, Common, DataMatrixEl, DmSize, Element, ElementId, ElementOrRaw, GlyphRaster, Ink,
+    Label, LineEl, QrEc, QrEl, RectDots, RectEl, Rot, TextAlign, TextEl, TextWeight,
 };
 use relabel_render::media::{self, Bounds};
 use relabel_render::rasterise::{self, Failure};
 use relabel_render::target::Target;
 use relabel_render::text::{self, TextClip};
 
-/// The kinds an operator can add. Image is not among them: an image with no
-/// artwork draws nothing and preflight refuses it, and artwork comes from an
-/// import, which is file I/O and a slice of its own.
+/// The kinds an operator can add from nothing. Image is not among them: an image
+/// with no artwork draws nothing and preflight refuses it, so an image is only
+/// ever made from artwork, by an import ([`crate::doc::Cmd::Import`]). Its tool is
+/// the seventh button, token [`IMAGE_TOOL`], which no `Kind` answers to, so
+/// [`crate::doc::Cmd::Create`] can never make an image without artwork.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Text,
@@ -112,6 +114,26 @@ impl Kind {
     }
 }
 
+/// The edit bar's seventh tool, which adds an image by importing artwork rather
+/// than making an element from nothing: the token after every [`Kind`]'s.
+pub const IMAGE_TOOL: i32 = 6;
+/// The image tool's face: it opens a dialog, so it ends in an ellipsis.
+pub const IMAGE_CAPTION: &str = "Image\u{2026}";
+/// The image tool's accessible name, for [`Kind::button_name`]'s reason.
+pub const IMAGE_BUTTON_NAME: &str = "Add image";
+/// The image tool's chord, spelled as [`Kind::keys`] spells the others'. I is no
+/// input method's and no platform's with Control and Shift that this build knows of.
+pub const IMAGE_KEYS: &str = "Control+Shift+I";
+
+/// The tool a key's text asks for with Control and Shift held: a [`Kind`]'s token,
+/// [`IMAGE_TOOL`] for I in either case, and -1 for any other text.
+pub fn tool_of_letter(s: &str) -> i32 {
+    if s.eq_ignore_ascii_case("i") {
+        return IMAGE_TOOL;
+    }
+    Kind::from_letter(s).map_or(-1, Kind::token)
+}
+
 /// The module size a 2D symbol starts at when it fits, and the one a barcode
 /// starts at on a printer whose head lies along the short axis.
 const WIDE_MODULE: u16 = 3;
@@ -138,8 +160,7 @@ pub fn fresh(
     let dpmm = label.canvas.dpmm;
     let mm = geom::millimetre(dpmm);
     let mms = |tenths: i32| dpmm.dots_from_tenths_mm(tenths).max(1);
-    let a = area(label, bounds, target);
-    let [_, _, aw, ah] = a;
+    let [_, _, aw, ah] = area(label, bounds, target);
     let mut notes = Vec::new();
     // Placed at the origin for now: the lengths are what the placement needs.
     let common = |w: i32, h: i32| {
@@ -241,7 +262,30 @@ pub fn fresh(
             thickness_dots: 2,
         }),
     };
-    let c = crate::ins::common_of(&mut e);
+    notes.extend(place(&mut e, label, target, bounds, others));
+    let note = (!notes.is_empty()).then(|| notes.join("; "));
+    (e, note)
+}
+
+/// Put a new element, sized and at the origin, where [`fresh`] puts every new
+/// element: a millimetre inside the area a new element may go, at the first place
+/// clear of the ink in `others` ([`spot`]), kept reachable. Returns what the
+/// operator should hear about where it went: that it overlaps another element, is
+/// larger than the area, runs off the label or lands in a keep-out.
+///
+/// Shared with an imported image, which arrives already sized for its artwork.
+pub fn place(
+    e: &mut Element,
+    label: &Label,
+    target: &Target,
+    bounds: &Bounds,
+    others: &[geom::Solid],
+) -> Vec<String> {
+    let mm = geom::millimetre(label.canvas.dpmm);
+    let a = area(label, bounds, target);
+    let [_, _, aw, ah] = a;
+    let mut notes = Vec::new();
+    let c = crate::ins::common_of(e);
     let (w, h) = target.extent(c.frame.feed_len, c.frame.head_len);
     let at = |x: i32, y: i32| {
         let (feed, head) = geom::to_document(target, x, y);
@@ -281,8 +325,24 @@ pub fn fresh(
             _ => format!("it is {where_}"),
         });
     }
-    let note = (!notes.is_empty()).then(|| notes.join("; "));
-    (e, note)
+    notes
+}
+
+/// The most a new image may be, in canvas dots across and down: the area a new
+/// element may go ([`area`]) less a millimetre each side, which is where
+/// [`place`] can put it clear of the edges. An axis two millimetres long or less
+/// keeps its whole length, since a millimetre either side would leave it none.
+///
+/// What [`relabel_render::artwork::import_within`] shrinks new artwork to fit,
+/// never enlarging it.
+pub fn import_box(label: &Label, bounds: &Bounds, target: &Target) -> (Option<u32>, Option<u32>) {
+    let mm = geom::millimetre(label.canvas.dpmm);
+    let [_, _, aw, ah] = area(label, bounds, target);
+    let less = |len: i32| {
+        let inner = if len > 2 * mm { len - 2 * mm } else { len };
+        u32::try_from(inner).ok().filter(|&v| v > 0)
+    };
+    (less(aw), less(ah))
 }
 
 /// A 2D symbol's module and footprint: three dots a module when the symbol and its
@@ -420,7 +480,10 @@ fn starts(a: i32, alen: i32, len: i32, mm: i32) -> Vec<i32> {
 /// only this element, shown, with no repeat, once each way - rather than restating
 /// its rules and drifting from them. Said: a symbol that will not be drawn and one
 /// that is drawn again, text cut by its frame and text whole again, artwork
-/// resampled or cropped, and a line whose longer side now runs the other way.
+/// resampled or cropped and artwork drawn as imported or whole again, and a line
+/// whose longer side now runs the other way. A fit written in the inspector and a
+/// re-import are asked the same question, since each changes what the frame does
+/// to the artwork.
 ///
 /// Two renders of one element per committed change, never per pointer event: with
 /// embedded artwork each is a PNG decode.
@@ -429,6 +492,29 @@ pub fn render_note(
     target: &Target,
     before: &Element,
     after: &Element,
+) -> Option<String> {
+    frame_notes(label, target, before, after, false)
+}
+
+/// [`render_note`] for artwork just imported again into `after`. Artwork that is
+/// resampled or cropped as it lands is said so whether or not the old artwork
+/// was: the new artwork was meant for the frame, and when the frame changed while
+/// the file was being read, that is the only word the operator gets of it.
+pub fn import_note(
+    label: &Label,
+    target: &Target,
+    before: &Element,
+    after: &Element,
+) -> Option<String> {
+    frame_notes(label, target, before, after, true)
+}
+
+fn frame_notes(
+    label: &Label,
+    target: &Target,
+    before: &Element,
+    after: &Element,
+    imported: bool,
 ) -> Option<String> {
     let c = after.common();
     let who = describe(c.id, &c.name);
@@ -452,13 +538,23 @@ pub fn render_note(
         }
         _ => {}
     }
-    if now.resampled && !was.resampled {
+    if now.resampled && (imported || !was.resampled) {
         notes.push(format!(
             "the artwork of {who} is resampled for its frame until it is imported again"
         ));
     }
-    if now.cropped && !was.cropped {
+    // Only for artwork that is drawn: artwork that stopped drawing is not drawn as
+    // imported, and the failure is said above.
+    if was.resampled && !now.resampled && now.failed.is_none() {
+        notes.push(format!("the artwork of {who} is drawn as imported again"));
+    }
+    if now.cropped && (imported || !was.cropped) {
         notes.push(format!("the artwork of {who} is cropped by its frame"));
+    }
+    if was.cropped && !now.cropped && now.failed.is_none() {
+        notes.push(format!(
+            "the artwork of {who} is no longer cropped by its frame"
+        ));
     }
     if let (Element::Line(_), Element::Line(_)) = (before, after) {
         let along = |e: &Element| {
@@ -484,17 +580,25 @@ struct Issues {
     /// Whether, not how: a frame changed while the artwork was already resampled
     /// is still the same sentence, and the operator has heard it.
     resampled: bool,
+    /// What the renderer reports as clipped, and a cover's crop, which it does not
+    /// ([`crate::ins::cropped_by_frame`]).
     cropped: bool,
 }
 
-fn issues(label: &Label, target: &Target, e: &Element) -> Issues {
+/// A label holding only `e`, shown, on `label`'s canvas and stock.
+fn alone(label: &Label, e: &Element) -> Label {
     let mut one = Label::new(label.canvas.feed, label.canvas.head, label.canvas.dpmm);
     one.canvas = label.canvas;
     one.media = label.media.clone();
     let mut e = e.clone();
-    let id = e.common().id;
     crate::ins::common_of(&mut e).hidden = false;
     one.elements = vec![ElementOrRaw::Known(e)];
+    one
+}
+
+fn issues(label: &Label, target: &Target, e: &Element) -> Issues {
+    let one = alone(label, e);
+    let id = e.common().id;
     let Ok((_, report)) = rasterise::rasterise(&one, target) else {
         return Issues::default();
     };
@@ -510,8 +614,130 @@ fn issues(label: &Label, target: &Target, e: &Element) -> Issues {
             .find(|(i, _)| *i == id)
             .map(|(_, c)| c),
         resampled: report.image_resampled.iter().any(|r| r.0 == id),
-        cropped: report.image_clipped.contains(&id),
+        cropped: report.image_clipped.contains(&id)
+            || match e {
+                Element::Image(i) => rasterise::local_size(&i.common, target)
+                    .is_some_and(|u| crate::ins::cropped_by_frame(i, u)),
+                _ => false,
+            },
     }
+}
+
+/// How many dots element `e` inks drawn on its own, and how many dots its frame
+/// holds: the one-bit plane the printer is sent, with the element's own halftone
+/// and threshold, and no repeat, so each dot is counted once. `None` when it is not
+/// drawn or its frame has no area.
+///
+/// Measured on the element alone, not blended with what lies beneath it: the
+/// share is the element's, and says whether its artwork prints at all. A white
+/// element is measured in black, since the dots it knocks back to paper are none
+/// at all on bare paper: the count is then the dots it knocks out.
+pub fn ink(label: &Label, target: &Target, e: &Element) -> Option<(u64, u64)> {
+    let f = e.common().frame;
+    let area = u64::try_from(f.feed_len).ok()? * u64::try_from(f.head_len).ok()?;
+    if area == 0 {
+        return None;
+    }
+    let mut black = e.clone();
+    crate::ins::common_of(&mut black).ink = Ink::Black;
+    let mut one = alone(label, &black);
+    one.media.fold = None;
+    let (_, plane, report) = rasterise::rasterise_preview(&one, target).ok()?;
+    if report.failed.iter().any(|(i, _)| *i == e.common().id) {
+        return None;
+    }
+    let inked = plane.bits().iter().map(|b| u64::from(b.count_ones())).sum();
+    Some((inked, area))
+}
+
+/// A share of a frame: nothing, every dot, or a whole percentage kept off 0 and
+/// 100, so a few dots are never read as none or all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Share {
+    Nothing,
+    Percent(u64),
+    Every,
+}
+
+impl Share {
+    fn of((inked, area): (u64, u64)) -> Share {
+        if inked == 0 {
+            Share::Nothing
+        } else if inked >= area {
+            Share::Every
+        } else {
+            Share::Percent(((inked * 100 + area / 2) / area).clamp(1, 99))
+        }
+    }
+
+    /// As what the element prints: "34% of its frame".
+    fn said(self) -> String {
+        match self {
+            Share::Nothing => "nothing".into(),
+            Share::Percent(p) => format!("{p}% of its frame"),
+            Share::Every => "every dot of its frame".into(),
+        }
+    }
+
+    /// As what it printed before, in brackets after the new share: "34%".
+    fn short(self) -> String {
+        match self {
+            Share::Nothing => "nothing".into(),
+            Share::Percent(p) => format!("{p}%"),
+            Share::Every => "every dot".into(),
+        }
+    }
+}
+
+/// What an element does to the dots it draws: prints them, or, in white ink,
+/// knocks them out of whatever lies beneath.
+fn verb(e: &Element) -> &'static str {
+    match e.common().ink {
+        Ink::Black => "prints",
+        Ink::White => "knocks out",
+    }
+}
+
+/// How much of its frame `e` prints, as a clause of the sentence an import ends
+/// with: "it prints 34% of its frame", "it prints nothing", and for white ink "it
+/// knocks out 34% of its frame". `None` when it is not drawn, which the sentence
+/// says in its own words.
+pub fn prints(label: &Label, target: &Target, e: &Element) -> Option<String> {
+    ink(label, target, e).map(|i| format!("it {} {}", verb(e), Share::of(i).said()))
+}
+
+/// What a halftone or threshold change from `before` to `after` does to how much
+/// of the frame prints, when that is said differently from before: "Image element
+/// 1 now prints 41% of its frame (was 36%)".
+///
+/// Until the grey half of the print pane is built, this is how a change of
+/// halftone or threshold is judged without looking at the canvas. Two one-element
+/// renders per write: a committed value, or one step of the arrows in the
+/// threshold or halftone field, which is a write of its own; never per typed
+/// character.
+pub fn ink_note(
+    label: &Label,
+    target: &Target,
+    before: &Element,
+    after: &Element,
+) -> Option<String> {
+    let now = Share::of(ink(label, target, after)?);
+    let was = ink(label, target, before).map(Share::of);
+    if was == Some(now) {
+        return None;
+    }
+    let c = after.common();
+    let mut note = format!(
+        "{} {} now {} {}",
+        kind_name(after),
+        describe(c.id, &c.name),
+        verb(after),
+        now.said()
+    );
+    if let Some(w) = was {
+        note.push_str(&format!(" (was {})", w.short()));
+    }
+    Some(note)
 }
 
 /// How text is cut, in the terms the operator can act on: whole lines first, then a
@@ -540,7 +766,7 @@ mod tests {
     use super::*;
     use crate::doc::{Cmd, Doc};
     use crate::ins::Field;
-    use relabel_render::document::{KnownShape, MediaShape};
+    use relabel_render::document::{ImageEl, ImageFit, ImageHalftone, KnownShape, MediaShape};
     use relabel_render::media::Keepout;
     use relabel_render::target::Dpmm;
 
@@ -964,6 +1190,223 @@ mod tests {
         assert_eq!(
             out.note.as_deref(),
             Some("added Text element 2 at feed 8, head 56, 96 by 24 dots")
+        );
+    }
+
+    #[test]
+    fn the_image_tool_is_token_six_and_letter_i() {
+        assert_eq!(IMAGE_TOOL, 6);
+        assert_eq!(tool_of_letter("i"), IMAGE_TOOL);
+        assert_eq!(tool_of_letter("I"), IMAGE_TOOL);
+        assert_eq!(tool_of_letter("t"), Kind::Text.token());
+        assert_eq!(tool_of_letter("L"), Kind::Line.token());
+        assert_eq!(tool_of_letter("q"), -1);
+        assert_eq!(tool_of_letter("ii"), -1);
+        assert_eq!(tool_of_letter(""), -1);
+        assert_eq!(Kind::from_token(IMAGE_TOOL), None);
+        assert_eq!(Kind::ALL.len(), 6);
+        assert_eq!(
+            Kind::from_letter("i"),
+            None,
+            "no kind takes the image's letter"
+        );
+        assert_eq!(
+            (IMAGE_CAPTION, IMAGE_BUTTON_NAME, IMAGE_KEYS),
+            ("Image\u{2026}", "Add image", "Control+Shift+I")
+        );
+    }
+
+    #[test]
+    fn the_import_box_is_the_area_less_a_millimetre() {
+        let box_of = |feed: i32, head: i32| {
+            let doc = open(Label::new(feed, head, Dpmm::DPI_203), PrintDirection::Left);
+            import_box(doc.label(), &Bounds::of(doc.label()), doc.target())
+        };
+        assert_eq!(box_of(320, 96), (Some(304), Some(80)));
+        assert_eq!(box_of(240, 96), (Some(224), Some(80)));
+        // Two millimetres or less: a millimetre either side would leave nothing.
+        assert_eq!(box_of(16, 96), (Some(16), Some(80)));
+        assert_eq!(box_of(320, 12), (Some(304), Some(12)));
+        // A Top printer's head runs across the canvas: the box is in canvas terms.
+        let doc = open(Label::new(240, 384, Dpmm::DPI_203), PrintDirection::Top);
+        assert_eq!(
+            import_box(doc.label(), &Bounds::of(doc.label()), doc.target()),
+            (Some(368), Some(224))
+        );
+    }
+
+    /// An image element holding exactly `art`.
+    fn image(art: relabel_render::artwork::Artwork, f: RectDots, fit: ImageFit) -> Element {
+        Element::Image(ImageEl {
+            common: Common::new(1, f),
+            path: "art.png".into(),
+            png: crate::import::fixtures::stored(art),
+            fit,
+            halftone: Some(ImageHalftone::Threshold),
+            threshold: Some(128),
+        })
+    }
+
+    fn with_fit(e: &Element, fit: ImageFit) -> Element {
+        let mut e = e.clone();
+        if let Element::Image(i) = &mut e {
+            i.fit = fit;
+        }
+        e
+    }
+
+    fn with_frame(e: &Element, f: RectDots) -> Element {
+        let mut e = e.clone();
+        crate::ins::common_of(&mut e).frame = f;
+        e
+    }
+
+    fn with_threshold(e: &Element, t: u8) -> Element {
+        let mut e = e.clone();
+        if let Element::Image(i) = &mut e {
+            i.threshold = Some(t);
+        }
+        e
+    }
+
+    #[test]
+    fn render_note_says_when_artwork_is_drawn_as_imported_again() {
+        let doc = open(Label::new(320, 96, Dpmm::DPI_203), PrintDirection::Left);
+        let (l, t) = (doc.label(), doc.target());
+        let art = crate::import::fixtures::art(48, 32, |x, _| if x < 24 { 0 } else { 255 });
+        let stretched = image(art.clone(), frame(8, 8, 64, 32), ImageFit::Stretch);
+        let contained = with_fit(&stretched, ImageFit::Contain);
+        let note = render_note(l, t, &contained, &stretched).expect("said");
+        assert!(note.contains("resampled for its frame"), "{note}");
+        let note = render_note(l, t, &stretched, &contained).expect("said");
+        assert_eq!(note, "the artwork of element 1 is drawn as imported again");
+
+        let cropped = image(art, frame(8, 8, 40, 32), ImageFit::Dots);
+        let whole = with_frame(&cropped, frame(8, 8, 48, 32));
+        let note = render_note(l, t, &whole, &cropped).expect("said");
+        assert_eq!(note, "the artwork of element 1 is cropped by its frame");
+        let note = render_note(l, t, &cropped, &whole).expect("said");
+        assert_eq!(
+            note,
+            "the artwork of element 1 is no longer cropped by its frame"
+        );
+        // A cover made shallower than the frame it was imported for resamples
+        // nothing, and the renderer reports no clip, but most of it is cut away.
+        let square = crate::import::fixtures::art(32, 32, |x, _| if x < 16 { 0 } else { 255 });
+        let covered = image(square, frame(8, 8, 32, 32), ImageFit::Cover);
+        let shallow = with_frame(&covered, frame(8, 8, 32, 8));
+        let note = render_note(l, t, &covered, &shallow).expect("said");
+        assert_eq!(note, "the artwork of element 1 is cropped by its frame");
+        let note = render_note(l, t, &shallow, &covered).expect("said");
+        assert_eq!(
+            note,
+            "the artwork of element 1 is no longer cropped by its frame"
+        );
+        // Artwork that stops drawing is said to, and not to be drawn as imported.
+        let tiled = with_fit(&stretched, ImageFit::Unknown("tile".into()));
+        let note = render_note(l, t, &stretched, &tiled).expect("said");
+        assert!(note.contains("will not be drawn"), "{note}");
+        assert!(!note.contains("as imported"), "{note}");
+        // Freshly imported artwork that is resampled is said to be, even when the
+        // artwork it replaced was too.
+        assert_eq!(render_note(l, t, &stretched, &stretched), None);
+        let note = import_note(l, t, &stretched, &stretched).expect("said");
+        assert!(note.contains("resampled for its frame"), "{note}");
+    }
+
+    #[test]
+    fn ink_note_says_how_much_of_the_frame_prints() {
+        let doc = open(Label::new(320, 96, Dpmm::DPI_203), PrintDirection::Left);
+        let (l, t) = (doc.label(), doc.target());
+        let ramp = crate::import::fixtures::art(64, 32, |x, _| (x * 4) as u8);
+        let at_128 = image(ramp, frame(8, 8, 64, 32), ImageFit::Contain);
+        let at_180 = with_threshold(&at_128, 180);
+        let note = ink_note(l, t, &at_128, &at_180).expect("said");
+        let pct = |s: &str| -> u64 {
+            s.split('%')
+                .next()
+                .unwrap()
+                .rsplit(' ')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
+        };
+        let (p, q) = (pct(&note), pct(note.split("(was ").nth(1).expect("was")));
+        assert!(
+            note.starts_with("Image element 1 now prints ") && note.ends_with("%)") && p > q,
+            "{note}"
+        );
+        assert_eq!(
+            prints(l, t, &at_128).as_deref(),
+            Some(format!("it prints {q}% of its frame").as_str())
+        );
+        // An unchanged phrase is not said again.
+        assert_eq!(ink_note(l, t, &at_128, &with_threshold(&at_128, 129)), None);
+
+        let white = image(
+            crate::import::fixtures::art(32, 32, |_, _| 255),
+            frame(8, 8, 32, 32),
+            ImageFit::Contain,
+        );
+        let note = ink_note(l, t, &with_threshold(&white, 255), &white).expect("said");
+        assert_eq!(note, "Image element 1 now prints nothing (was every dot)");
+        assert_eq!(prints(l, t, &white).as_deref(), Some("it prints nothing"));
+
+        let black = image(
+            crate::import::fixtures::art(32, 32, |_, _| 0),
+            frame(8, 8, 64, 32),
+            ImageFit::Contain,
+        );
+        let filled = with_fit(&black, ImageFit::Stretch);
+        let note = ink_note(l, t, &black, &filled).expect("said");
+        assert_eq!(
+            note,
+            "Image element 1 now prints every dot of its frame (was 50%)"
+        );
+        // Not drawn is not a share.
+        let unknown = {
+            let mut e = filled.clone();
+            if let Element::Image(i) = &mut e {
+                i.halftone = Some(ImageHalftone::Unknown("blue_noise".into()));
+            }
+            e
+        };
+        assert_eq!(prints(l, t, &unknown), None);
+        assert_eq!(ink_note(l, t, &filled, &unknown), None);
+        let note = ink_note(l, t, &unknown, &filled).expect("said");
+        assert_eq!(note, "Image element 1 now prints every dot of its frame");
+    }
+
+    /// White ink knocks dots back to paper, which drawn alone on paper is no dot at
+    /// all: the share is said as what it knocks out, and a change to it is heard.
+    #[test]
+    fn a_white_image_is_said_by_what_it_knocks_out() {
+        let doc = open(Label::new(320, 96, Dpmm::DPI_203), PrintDirection::Left);
+        let (l, t) = (doc.label(), doc.target());
+        let white = |e: Element| {
+            let mut e = e;
+            crate::ins::common_of(&mut e).ink = relabel_render::document::Ink::White;
+            e
+        };
+        let half = white(image(
+            crate::import::fixtures::art(64, 32, |x, _| if x < 32 { 0 } else { 255 }),
+            frame(8, 8, 64, 32),
+            ImageFit::Contain,
+        ));
+        assert_eq!(
+            prints(l, t, &half).as_deref(),
+            Some("it knocks out 50% of its frame")
+        );
+        let ramp = white(image(
+            crate::import::fixtures::art(64, 32, |x, _| (x * 4) as u8),
+            frame(8, 8, 64, 32),
+            ImageFit::Contain,
+        ));
+        let note = ink_note(l, t, &ramp, &with_threshold(&ramp, 250)).expect("said");
+        assert!(
+            note.starts_with("Image element 1 now knocks out ") && note.ends_with("%)"),
+            "{note}"
         );
     }
 }

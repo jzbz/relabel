@@ -31,8 +31,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 use support::{
-    HeldPlug, Scripted, button_of, down, find_button, frame_of, group_of, press, reference_label,
-    rows_of, status_of, tmp_dir, type_text,
+    HeldPlug, InlineImporter, Scripted, button_of, down, find_button, frame_of, group_of, press,
+    reference_label, rows_of, status_of, tmp_dir, type_text,
 };
 
 include!(concat!(env!("OUT_DIR"), "/ins-probe.rs"));
@@ -68,7 +68,8 @@ fn probe_with(
     ui.window().dispatch_event(WindowEvent::ScaleFactorChanged {
         scale_factor: scale,
     });
-    let wired = wire_window(&ui, started, chooser, plug, Opening::Fit);
+    let importer = Rc::new(InlineImporter);
+    let wired = wire_window(&ui, started, chooser, plug, importer, Opening::Fit);
     ui.show().expect("showing a headless window");
     settle();
     (ui, wired)

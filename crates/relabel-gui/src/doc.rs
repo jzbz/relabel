@@ -29,20 +29,33 @@
 
 use crate::a11y;
 use crate::geom;
+use crate::import::{self, Ready, Sizing};
 use crate::ins::{self, Field};
 use crate::make;
 use relabel_proto::PrintDirection;
-use relabel_render::document::{Canvas, Element, ElementId, ElementOrRaw, Label, RectDots, Rot};
+use relabel_render::document::{
+    Canvas, Common, Element, ElementId, ElementOrRaw, ImageEl, ImageFit, ImageHalftone, Label,
+    RectDots, Rot,
+};
 use relabel_render::media::{Bounds, Keepout};
+use relabel_render::rasterise;
 use relabel_render::target::{Dpmm, Target};
 
 /// How deep the undo stack goes.
 ///
 /// Each step is a whole-document clone, which is 0.3 us and a few kilobytes for
-/// an ordinary label and a megabyte for one carrying a base64 image - there is
-/// no structural sharing inside `ImageEl::png`. Fifty steps of a label with
-/// artwork is the one case this bound exists for; an edit journal is the only
-/// thing that would remove it and it is not worth its inverses yet.
+/// an ordinary label, plus every image's base64 - there is no structural sharing
+/// inside `ImageEl::png`. Fifty steps of a label with artwork is the one case this
+/// bound exists for. What bounds each image is the import: a new image is shrunk
+/// into the usable area, and [`Doc::import_check`] refuses to import for a frame
+/// with more dots than the whole label, so an image this editor stored holds at
+/// most the label's own dots. On a 40 by 12 millimetre label that is 30720 grey
+/// dots: about 19 kilobytes of base64 for a photograph and 41 at worst, for
+/// noise, so fifty clones cost up to about 2 megabytes for each such image the
+/// label holds. Nothing limits how many images are imported, so ten of them are
+/// about 20 megabytes. A label from a file can still carry more, and each of its
+/// steps costs what it carries. Sharing each `png` between snapshots, or an edit
+/// journal, would remove the per-image cost; neither is worth it yet.
 const UNDO_DEPTH: usize = 50;
 
 /// One edit. Every gesture the canvas can make is one of these.
@@ -104,6 +117,10 @@ pub enum Cmd {
     },
     /// A new element of this kind, on top of the others, selected.
     Create(make::Kind),
+    /// Artwork read and decoded, landing: a new image, or an image's artwork
+    /// imported again. Boxed, because the artwork is the one large thing a command
+    /// carries.
+    Import(Box<Import>),
     /// Take away an element: the selection, or `None` when there is none, which is
     /// said rather than ignored because a button or a key asked.
     Delete {
@@ -121,6 +138,18 @@ pub enum Cmd {
         right: i32,
         bottom: i32,
     },
+}
+
+/// Artwork that has been read and decoded, and where it goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Import {
+    /// `None` for a new image; the image to import into otherwise, fixed when the
+    /// import was asked for and never read from the selection again.
+    pub into: Option<ElementId>,
+    /// The file's name, which becomes the element's `path`. Anything before the
+    /// last component is dropped ([`import::crumb_of`]).
+    pub crumb: String,
+    pub ready: Ready,
 }
 
 /// What the view has to refresh, and what to tell the operator.
@@ -470,6 +499,21 @@ impl Doc {
         } else {
             self.bounds.keepout(&drawn)
         };
+        let mut say = a11y::say(
+            kind_name(e),
+            &c.name,
+            c.frame,
+            c.locked,
+            off_canvas,
+            keepout,
+        );
+        // Last, after what is wrong with where it is: an image with nothing to
+        // draw is drawn as nothing, and a reader has only this to find it by.
+        if let Element::Image(i) = e
+            && i.png.is_empty()
+        {
+            say = a11y::flag_no_artwork(say);
+        }
         Shown {
             id: c.id,
             x,
@@ -479,14 +523,7 @@ impl Doc {
             locked: c.locked,
             off_canvas,
             keepout,
-            say: a11y::say(
-                kind_name(e),
-                &c.name,
-                c.frame,
-                c.locked,
-                off_canvas,
-                keepout,
-            ),
+            say,
         }
     }
 
@@ -545,8 +582,12 @@ impl Doc {
         // Everything else writes the staged text first, so a selection, a drag,
         // an undo or a save can never act on an element whose typed number has
         // not landed - and so the order in which the toolkit delivers a focus
-        // change and a pointer press stops mattering.
-        let first = if held {
+        // change and a pointer press stops mattering. Except an import's artwork,
+        // which lands whenever its decode ends rather than when the operator acts,
+        // and so may land half way through a number: the text stays staged, keyed
+        // to the element it was typed into, and a new image leaves the selection
+        // to it.
+        let first = if held || matches!(cmd, Cmd::Import(_)) {
             Outcome::nothing()
         } else {
             self.commit_staged()
@@ -572,11 +613,12 @@ impl Doc {
                 self.pressed = false;
                 out.also(self.commit_staged())
             }
-            Cmd::Create(_) | Cmd::Delete { .. } if self.pressed => {
-                let doing = if matches!(cmd, Cmd::Create(_)) {
-                    "adding"
-                } else {
-                    "deleting"
+            Cmd::Create(_) | Cmd::Delete { .. } | Cmd::Import(_) if self.pressed => {
+                let doing = match &cmd {
+                    Cmd::Create(_) => "adding",
+                    Cmd::Import(i) if i.into.is_none() => "adding",
+                    Cmd::Import(_) => "importing",
+                    _ => "deleting",
                 };
                 Outcome::note(
                     Effect::Nothing,
@@ -584,6 +626,7 @@ impl Doc {
                 )
             }
             Cmd::Create(kind) => self.create(kind),
+            Cmd::Import(i) => self.import(*i),
             Cmd::Delete { id } => self.delete(id),
             Cmd::BeginResize { id, grip } => self.begin_resize(id, grip),
             Cmd::ResizeTo { id, right, bottom } => self.resize_to(id, right, bottom),
@@ -631,7 +674,7 @@ impl Doc {
             length_reach(c, Field::HeadLen),
         );
         let mut slots = ins::common_slots(e, reach, lens);
-        slots.extend(ins::kind_slots(e));
+        slots.extend(ins::kind_slots(e, rasterise::local_size(c, &self.target)));
         debug_assert!(
             slots.len() <= ins::SLOTS,
             "a {} needs {} slots and the pane has {}",
@@ -728,6 +771,22 @@ impl Doc {
             Ok(ins::Wrote::Unchanged) => return Outcome::nothing(),
             Ok(ins::Wrote::Changed(note)) => note,
         };
+        // What the renderer makes of the artwork, for a value this build draws: a
+        // fit changes what the frame does to it, as a resize does, and a halftone
+        // or threshold changes how much of it prints, which is otherwise judged
+        // only by looking. A value it does not draw has its own note above.
+        let drawn = match (&next, field) {
+            (Element::Image(i), Field::Fit) if !matches!(i.fit, ImageFit::Unknown(_)) => {
+                make::render_note(&self.label, &self.target, current, &next)
+            }
+            (Element::Image(i), Field::Halftone | Field::Threshold)
+                if !matches!(i.halftone, Some(ImageHalftone::Unknown(_))) =>
+            {
+                make::ink_note(&self.label, &self.target, current, &next)
+            }
+            _ => None,
+        };
+        let note = both(note, drawn);
         // A quarter turn swaps the drawn frame's sides, so the interval the
         // placement may land in turns with it. Re-clamped in the same undo step,
         // and said, because the operator asked for a rotation and not a move.
@@ -1114,6 +1173,213 @@ impl Doc {
             f.feed_len,
             f.head_len
         );
+        self.push_new(element);
+        Outcome {
+            effect: Effect::Everything,
+            note: both(Some(added), extra),
+        }
+    }
+
+    /// What artwork for `into` is to be sized for, or why it cannot be imported,
+    /// phrased: asked before a file dialog opens, so nothing is asked that would be
+    /// refused, and again before the file is read, since the element may have
+    /// changed behind the dialog.
+    ///
+    /// `None` is a new image, sized into [`make::import_box`]. An image imported
+    /// again is sized for its frame as its content sees it and the fit it keeps,
+    /// from the label's own target rather than a connected printer's. A frame
+    /// with more dots than the whole label is refused - only a frame that cannot
+    /// lie on the label reaches that - because it bounds what one stored image
+    /// holds, and so what every undo step clones and every redraw decodes.
+    pub fn import_check(&self, into: Option<ElementId>) -> Result<Sizing, String> {
+        let Some(id) = into else {
+            let (w, h) = make::import_box(&self.label, &self.bounds, &self.target);
+            return Ok(Sizing::Within(w, h));
+        };
+        let e = self.image_to_import(id)?;
+        let heading = ins::heading(e);
+        let Element::Image(i) = e else {
+            unreachable!("image_to_import answers only an image")
+        };
+        if let ImageFit::Unknown(v) = &i.fit {
+            return Err(format!(
+                "{heading} keeps fit {v:?}, which this build cannot import for: set its fit to \
+                 {} first",
+                ins::spoken_list(Field::Fit.drawable_values())
+            ));
+        }
+        let Some((w, h)) = rasterise::local_size(&i.common, &self.target) else {
+            return Err(format!("{heading}'s frame has no area"));
+        };
+        let (cw, ch) = self.canvas_dots();
+        if u64::from(w) * u64::from(h)
+            > u64::try_from(cw).unwrap_or(0) * u64::try_from(ch).unwrap_or(0)
+        {
+            return Err(format!(
+                "{heading}'s frame is {w} by {h} dots, more than the whole label's {cw} by {ch}: \
+                 make it smaller first"
+            ));
+        }
+        Ok(Sizing::Frame {
+            upright: (w, h),
+            fit: i.fit.clone(),
+        })
+    }
+
+    /// What a message calls element `id`, "Image element 3", when it is one this
+    /// build reads.
+    pub fn heading_of(&self, id: ElementId) -> Option<String> {
+        self.element(id).map(ins::heading)
+    }
+
+    /// The image `id`, when artwork may be imported into it: the three refusals
+    /// that hold whenever the artwork lands, however long the decode took.
+    fn image_to_import(&self, id: ElementId) -> Result<&Element, String> {
+        let Some(e) = self.element(id) else {
+            return Err(format!("element {id} is gone"));
+        };
+        if !matches!(e, Element::Image(_)) {
+            return Err(format!("{} is not an image", ins::heading(e)));
+        }
+        if e.common().locked {
+            return Err(format!("{} is locked", ins::heading(e)));
+        }
+        Ok(e)
+    }
+
+    fn import(&mut self, import: Import) -> Outcome {
+        let Import { into, crumb, ready } = import;
+        let crumb = import::crumb_of(std::path::Path::new(&crumb));
+        match into {
+            None => self.add_image(crumb, ready),
+            Some(id) => self.import_again(id, crumb, ready),
+        }
+    }
+
+    /// A new image, exactly its artwork's size with fit contain, so drawing it is a
+    /// straight copy; placed where [`Cmd::Create`] places a new element; with the
+    /// halftone and threshold import chose written in. One undo step, and said with
+    /// where it went, how big it is, what the file was, why it prints as it does and
+    /// how much of it prints.
+    ///
+    /// Selected, unless a field of the selection is being typed into: the staged
+    /// text stays with its element, and the pane with the field that holds it.
+    fn add_image(&mut self, crumb: String, ready: Ready) -> Outcome {
+        let Some(id) = self.allocate_id() else {
+            return Outcome::note(
+                Effect::Nothing,
+                "no element id is free; nothing was added".into(),
+            );
+        };
+        let Ready { imported, png } = ready;
+        let side = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
+        let (feed_len, head_len) = self
+            .target
+            .extent(side(imported.art.w), side(imported.art.h));
+        let mut element = Element::Image(ImageEl {
+            common: Common::new(id, frame(0, 0, feed_len, head_len)),
+            path: crumb.clone(),
+            png,
+            fit: ImageFit::Contain,
+            halftone: Some(imported.halftone.clone()),
+            threshold: Some(imported.threshold),
+        });
+        let others = self.solids();
+        let placed = make::place(
+            &mut element,
+            &self.label,
+            &self.target,
+            &self.bounds,
+            &others,
+        );
+        let f = element.common().frame;
+        let mut said = vec![
+            format!(
+                "added {} from {crumb} at feed {}, head {}, {} by {} dots: {}",
+                ins::heading(&element),
+                f.feed,
+                f.head,
+                f.feed_len,
+                f.head_len,
+                import::source_says(&imported)
+            ),
+            import::chosen_says(&imported),
+        ];
+        said.extend(make::prints(&self.label, &self.target, &element));
+        said.extend(imported.notes.iter().map(ToString::to_string));
+        said.extend(placed);
+        let typing = self.staged.as_ref().map(|(id, _, _)| *id);
+        let heading = ins::heading(&element);
+        self.push_new(element);
+        if let Some(was) = typing {
+            self.selected = Some(was);
+            let who = self
+                .element(was)
+                .map_or_else(|| format!("element {was}"), ins::heading);
+            said.push(format!(
+                "{heading} is not selected, since a field of {who} is being typed into"
+            ));
+        }
+        Outcome::note(Effect::Everything, said.join("; "))
+    }
+
+    /// New artwork for an image that has some, or should: its artwork and its
+    /// breadcrumb replaced, and nothing else of it touched - frame, turn, ink,
+    /// name, flags, fit and keys this build does not know all stay as they are.
+    ///
+    /// The element's own halftone and threshold are kept, a spelling this build
+    /// cannot draw included, since the usual re-import follows a resize and an
+    /// operator's tuned threshold should survive it; import's are taken only where
+    /// the element has none, and what import would have chosen is said when it
+    /// differs. Written even when the frame or fit changed while the file was being
+    /// read: the operator chose that file, and the note says it is resampled.
+    fn import_again(&mut self, id: ElementId, crumb: String, ready: Ready) -> Outcome {
+        let current = match self.image_to_import(id) {
+            Ok(e) => e,
+            Err(why) => {
+                return Outcome::note(Effect::Nothing, format!("{why}; nothing was imported"));
+            }
+        };
+        let (heading, who) = (ins::heading(current), describe(id, &current.common().name));
+        let Ready { imported, png } = ready;
+        let mut next = current.clone();
+        let Element::Image(i) = &mut next else {
+            unreachable!("image_to_import answers only an image")
+        };
+        let settings = kept_says(i.halftone.as_ref(), i.threshold, &imported);
+        i.png = png;
+        i.path = crumb.clone();
+        i.halftone.get_or_insert_with(|| imported.halftone.clone());
+        i.threshold.get_or_insert(imported.threshold);
+        let unknown = match &i.halftone {
+            Some(ImageHalftone::Unknown(v)) => ins::open_note(&who, Field::Halftone, v),
+            _ => None,
+        };
+        let mut said = vec![
+            format!(
+                "imported {crumb} into {heading}, {} by {} dots: {}",
+                imported.art.w,
+                imported.art.h,
+                import::source_says(&imported)
+            ),
+            settings,
+        ];
+        said.extend(make::prints(&self.label, &self.target, &next));
+        said.extend(make::import_note(&self.label, &self.target, current, &next));
+        said.extend(unknown);
+        said.extend(imported.notes.iter().map(ToString::to_string));
+        let before = (self.label.clone(), self.rev);
+        if let Some(e) = self.element_mut(id) {
+            *e = next;
+        }
+        self.push_undo(before);
+        self.touch();
+        Outcome::note(Effect::Row(id), said.join("; "))
+    }
+
+    /// Put a new element on top of the others and select it: one undo step.
+    fn push_new(&mut self, element: Element) {
+        let id = element.common().id;
         let before = (self.label.clone(), self.rev);
         self.label.elements.push(ElementOrRaw::Known(element));
         debug_assert!(
@@ -1135,10 +1401,6 @@ impl Doc {
         self.push_undo(before);
         self.touch();
         self.selected = Some(id);
-        Outcome {
-            effect: Effect::Everything,
-            note: both(Some(added), extra),
-        }
     }
 
     /// Take away a drawn element. Only that entry leaves the list, so an element
@@ -1371,6 +1633,34 @@ impl Effect {
     }
 }
 
+/// What a re-import did with the element's own `halftone` and `threshold`: kept
+/// where it had one, import's where it had none, and what import would have
+/// chosen, and why, when the result differs. With neither, import's choice and
+/// why.
+fn kept_says(
+    halftone: Option<&ImageHalftone>,
+    threshold: Option<u8>,
+    imported: &relabel_render::artwork::Imported,
+) -> String {
+    let (ih, it) = (&imported.halftone, imported.threshold);
+    let (h, t) = (halftone.unwrap_or(ih), threshold.unwrap_or(it));
+    let spelt = ins::halftone_spelling(h);
+    let kept = match (halftone.is_some(), threshold.is_some()) {
+        (false, false) => return import::chosen_says(imported),
+        (true, true) => format!("kept {}", import::settings_says(h, t)),
+        (true, false) => format!("kept {spelt}, at {t} as import chose"),
+        (false, true) => format!("{spelt} as import chose, at the kept {t}"),
+    };
+    if (h, t) == (ih, it) {
+        kept
+    } else {
+        format!(
+            "{kept}; import would choose {}",
+            import::chosen_says(imported)
+        )
+    }
+}
+
 /// Two sentences as one, in the order they happened.
 fn both(a: Option<String>, b: Option<String>) -> Option<String> {
     match (a, b) {
@@ -1456,7 +1746,7 @@ pub fn rotation(deg: i32) -> Rot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use relabel_render::document::{AuthoredFor, Common, Element, RectEl};
+    use relabel_render::document::{AuthoredFor, RectEl};
 
     fn rect(id: ElementId, f: RectDots, locked: bool) -> ElementOrRaw {
         let mut common = Common::new(id, f);
@@ -3138,5 +3428,639 @@ mod tests {
 
         let doc = self::doc();
         assert_eq!(doc.opening_note(), doc.orientation_note());
+    }
+
+    // Images: a new one from a file, and artwork imported again.
+
+    use crate::import::fixtures::{art, bars, png, ready, stored, thin_logo};
+    use relabel_render::artwork::ImportNote;
+    use relabel_render::document::ImageEl;
+
+    fn blank() -> Doc {
+        Doc::open(Label::new(320, 96, Dpmm::DPI_203), PrintDirection::Left)
+            .expect("a printable label")
+    }
+
+    fn images() -> Doc {
+        let l = Label::from_json(include_str!(
+            "../../relabel-render/tests/corpus/v1/images.relabel"
+        ))
+        .expect("a corpus label");
+        Doc::open(l, PrintDirection::Left).expect("a printable label")
+    }
+
+    /// `bytes` imported as the application would for `into`, after the checks it
+    /// makes before a dialog.
+    fn ready_for(doc: &Doc, into: Option<ElementId>, bytes: &[u8]) -> Ready {
+        let sizing = doc.import_check(into).expect("importable");
+        ready(bytes, &sizing, doc.label().canvas.dpmm)
+    }
+
+    fn import(into: Option<ElementId>, crumb: &str, ready: Ready) -> Cmd {
+        Cmd::Import(Box::new(Import {
+            into,
+            crumb: crumb.into(),
+            ready,
+        }))
+    }
+
+    fn image_of(doc: &Doc, id: ElementId) -> &ImageEl {
+        match doc.element(id) {
+            Some(Element::Image(i)) => i,
+            other => panic!("element {id} is {other:?}"),
+        }
+    }
+
+    /// An image element in JSON, with the rest of its keys after `frame`.
+    fn image_json(frame: &str, rest: &str) -> String {
+        format!(r#"{{"type": "image", "id": 1, "frame": {frame}, {rest}}}"#)
+    }
+
+    const AT_8: &str = r#"{"feed": 8, "head": 8, "feed_len": 64, "head_len": 32}"#;
+    /// Stored 32 by 64: drawn 64 by 32 under a quarter turn, and upright 32 by 64.
+    const TURNED: &str = r#"{"feed": 8, "head": 8, "feed_len": 32, "head_len": 64}"#;
+
+    #[test]
+    fn importing_a_new_image_adds_exactly_its_art_in_one_step() {
+        let mut doc = blank();
+        let before = doc.label().clone();
+        let ready = ready_for(&doc, None, &png(1200, 400, bars));
+        let chose = (ready.imported.halftone.clone(), ready.imported.threshold);
+        let out = doc.apply(import(None, "/home/someone/art/logo.png", ready));
+        assert_eq!(out.effect, Effect::Everything);
+        let id = doc.selected().expect("the new image is selected");
+        let i = image_of(&doc, id);
+        assert_eq!(
+            i.path, "logo.png",
+            "the file's name, and nothing of its folder"
+        );
+        assert_eq!(
+            rasterise::local_size(&i.common, doc.target()),
+            Some((240, 80))
+        );
+        assert_eq!(i.fit, ImageFit::Contain);
+        assert_eq!(
+            (i.halftone.clone(), i.threshold),
+            (Some(chose.0), Some(chose.1))
+        );
+        assert_eq!(doc.label().elements.len(), 1);
+        assert_eq!(doc.undo.len(), 1);
+
+        let (_, report) = rasterise::rasterise(doc.label(), doc.target()).expect("drawn");
+        assert!(report.is_clean(), "drawn as imported: {report:?}");
+        let plane = rasterise::rasterise_plane(doc.label(), doc.target()).expect("drawn");
+        assert_eq!(
+            (i32::from(plane.width()), i32::from(plane.height())),
+            doc.canvas_dots()
+        );
+        let (x0, y0, w, h) = geom::on_canvas(doc.target(), i.common.frame, i.common.rot);
+        let (mut inside, mut outside) = (0, 0);
+        for y in 0..plane.height() {
+            for x in 0..plane.width() {
+                let (x, y) = (i32::from(x), i32::from(y));
+                if plane.get(x as u16, y as u16) {
+                    if (x0..x0 + w).contains(&x) && (y0..y0 + h).contains(&y) {
+                        inside += 1;
+                    } else {
+                        outside += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            inside > 0 && outside == 0,
+            "{inside} inside, {outside} outside"
+        );
+
+        doc.apply(Cmd::Undo);
+        assert_eq!(doc.label(), &before);
+        assert_eq!(doc.selected(), None);
+    }
+
+    /// Stored through the target's axes, so a Top printer's image is the same
+    /// picture as a Left one's, and drawn as imported.
+    #[test]
+    fn a_new_image_is_upright_on_a_printer_whose_head_runs_across() {
+        let mut doc = Doc::open(Label::new(240, 384, Dpmm::DPI_203), PrintDirection::Top)
+            .expect("a printable label");
+        let r = ready_for(&doc, None, &png(64, 32, bars));
+        doc.apply(import(None, "logo.png", r));
+        let i = image_of(&doc, 1);
+        assert_eq!((i.common.frame.feed_len, i.common.frame.head_len), (32, 64));
+        assert_eq!(
+            rasterise::local_size(&i.common, doc.target()),
+            Some((64, 32))
+        );
+        let (_, report) = rasterise::rasterise(doc.label(), doc.target()).expect("drawn");
+        assert!(report.is_clean(), "{report:?}");
+    }
+
+    #[test]
+    fn a_new_image_is_said_with_where_how_big_and_why() {
+        let mut doc = blank();
+        let mut ready = ready_for(&doc, None, &png(1200, 400, bars));
+        ready.imported.notes = vec![
+            ImportNote::OrientationApplied,
+            ImportNote::IccProfileIgnored,
+        ];
+        let note = doc
+            .apply(import(None, "logo.png", ready))
+            .note
+            .expect("said");
+        assert!(
+            note.starts_with(
+                "added Image element 1 from logo.png at feed 8, head 8, 240 by 80 dots: 1200 by \
+                 400 pixels of PNG, reduced; threshold at 187, because it is line art that was \
+                 resampled; it prints "
+            ),
+            "{note}"
+        );
+        let e = doc.element(1).expect("added");
+        let prints = make::prints(doc.label(), doc.target(), e).expect("drawn");
+        let notes = [
+            ImportNote::OrientationApplied,
+            ImportNote::IccProfileIgnored,
+        ]
+        .map(|n| n.to_string())
+        .join("; ");
+        assert!(note.ends_with(&format!("; {prints}; {notes}")), "{note}");
+    }
+
+    /// The verify run's logo, shrunk to 80 dots with strokes a quarter of a dot
+    /// wide, printed nothing at 187 and said so. Its strokes are now drawn whole
+    /// and one dot wide, about a tenth of the frame, and the sentence says why.
+    #[test]
+    fn a_shrunk_thin_stroked_logo_prints_whole_lines_and_says_why() {
+        let mut doc = blank();
+        let ready = ready_for(&doc, None, &png(600, 600, thin_logo));
+        let note = doc
+            .apply(import(None, "logo.png", ready))
+            .note
+            .expect("said");
+        assert!(
+            note.starts_with(
+                "added Image element 1 from logo.png at feed 8, head 8, 80 by 80 dots: 600 \
+                 by 600 pixels of PNG, reduced; threshold at 187, because it is line art \
+                 that was resampled, and its strokes shrunk thinner than a dot are drawn \
+                 whole, one dot wide; it prints 10% of its frame"
+            ),
+            "{note}"
+        );
+        let e = doc.element(1).expect("added");
+        let (inked, area) = make::ink(doc.label(), doc.target(), e).expect("drawn");
+        let share = inked as f64 / area as f64;
+        assert!((0.09..0.11).contains(&share), "{inked} of {area}");
+    }
+
+    #[test]
+    fn blank_artwork_is_added_and_said_to_print_nothing() {
+        let mut doc = blank();
+        let ready = ready_for(&doc, None, &png(64, 64, |_, _| 255));
+        let note = doc
+            .apply(import(None, "white.png", ready))
+            .note
+            .expect("said");
+        assert_eq!(doc.label().elements.len(), 1);
+        assert!(note.contains("; it prints nothing"), "{note}");
+    }
+
+    #[test]
+    fn an_import_waits_while_an_element_is_held() {
+        let mut doc = doc();
+        doc.apply(Cmd::Select(Some(2)));
+        doc.apply(Cmd::BeginMove(1));
+        let before = doc.label().clone();
+        let r = ready_for(&doc, None, &png(64, 64, bars));
+        let out = doc.apply(import(None, "logo.png", r.clone()));
+        assert_eq!(
+            out.note.as_deref(),
+            Some("adding waits until the element is let go")
+        );
+        let out = doc.apply(import(Some(2), "logo.png", r));
+        assert_eq!(
+            out.note.as_deref(),
+            Some("importing waits until the element is let go")
+        );
+        assert_eq!(doc.label(), &before);
+        assert_eq!(doc.undo.len(), 0);
+        assert_eq!(doc.selected(), Some(2));
+    }
+
+    #[test]
+    fn text_typed_into_a_field_is_left_staged_by_an_import() {
+        let mut doc = doc();
+        let named = name_of(&doc, 1);
+        doc.apply(Cmd::Select(Some(1)));
+        stage(&mut doc, Field::Name, "x");
+        let r = ready_for(&doc, None, &png(64, 64, bars));
+        let out = doc.apply(import(None, "logo.png", r));
+        assert_eq!(doc.label().elements.len(), 3);
+        assert_eq!(name_of(&doc, 1), named, "nothing half typed is written");
+        assert_eq!(doc.staged(), Some((1, Field::Name, "x")));
+        assert_eq!(doc.selected(), Some(1), "the field keeps its element");
+        let said = out.note.expect("said");
+        assert!(
+            said.ends_with(
+                "; Image element 3 is not selected, since a field of Rectangle \u{2018}box 1\u{2019} \
+                 is being typed into"
+            ),
+            "{said}"
+        );
+        // Finished where the operator finishes it, as a step of its own after the
+        // image's.
+        doc.apply(Cmd::CommitField);
+        assert_eq!(name_of(&doc, 1), "x");
+        doc.apply(Cmd::Undo);
+        assert_eq!(
+            (doc.label().elements.len(), name_of(&doc, 1)),
+            (3, named.clone())
+        );
+        doc.apply(Cmd::Undo);
+        assert_eq!(doc.label().elements.len(), 2);
+    }
+
+    #[test]
+    fn a_reimport_leaves_text_typed_into_its_frame_staged() {
+        let mut doc = label_holding(&image_json(AT_8, r#""png": """#));
+        doc.apply(Cmd::Select(Some(1)));
+        let len = frame_of(&doc, 1).feed_len;
+        stage(&mut doc, Field::FeedLen, "1");
+        let r = ready_for(&doc, Some(1), &png(64, 64, bars));
+        doc.apply(import(Some(1), "logo.png", r));
+        assert!(!image_of(&doc, 1).png.is_empty());
+        assert_eq!(frame_of(&doc, 1).feed_len, len);
+        assert_eq!(doc.staged(), Some((1, Field::FeedLen, "1")));
+    }
+
+    #[test]
+    fn a_reimport_writes_only_the_artwork_and_its_source() {
+        let old = stored(art(32, 64, |x, _| if x < 16 { 0 } else { 255 }));
+        let mut doc = label_holding(&image_json(
+            TURNED,
+            &format!(
+                r#""name": "logo", "rot": 90, "ink": "white", "later_key": "kept",
+                   "path": "logo.png", "png": "{old}", "fit": "cover", "threshold": 150"#
+            ),
+        ));
+        doc.apply(Cmd::Select(Some(1)));
+        let before = doc.label().clone();
+        let was = image_of(&doc, 1).clone();
+        let r = ready_for(&doc, Some(1), &png(100, 100, bars));
+        assert_eq!(
+            (r.imported.art.w, r.imported.art.h),
+            (32, 64),
+            "sized upright"
+        );
+        let out = doc.apply(import(Some(1), "logo-v2.png", r));
+        assert_eq!(out.effect, Effect::Row(1));
+        // In white ink, so said by what it knocks out rather than as printing
+        // nothing.
+        let said = out.note.expect("said");
+        assert!(said.contains("; it knocks out "), "{said}");
+        let now = image_of(&doc, 1);
+        assert_eq!(now.common, was.common);
+        assert_eq!(now.fit, ImageFit::Cover);
+        assert_ne!(now.png, was.png);
+        assert_eq!(now.path, "logo-v2.png");
+        assert_eq!(now.threshold, Some(150), "kept");
+        assert_eq!(
+            now.halftone,
+            Some(ImageHalftone::Threshold),
+            "import's, where it had none"
+        );
+        assert!(
+            doc.label()
+                .to_json()
+                .expect("saved")
+                .contains(r#""later_key": "kept""#),
+            "the key this build does not know saves back"
+        );
+        assert_eq!((doc.undo.len(), doc.selected()), (1, Some(1)));
+        doc.apply(Cmd::Undo);
+        assert_eq!(doc.label(), &before);
+    }
+
+    #[test]
+    fn a_reimport_keeps_the_elements_own_halftone_and_says_what_import_would_choose() {
+        let frame = r#"{"feed": 8, "head": 8, "feed_len": 240, "head_len": 80}"#;
+        let old = stored(art(240, 80, bars));
+        let mut doc = label_holding(&image_json(
+            frame,
+            &format!(r#""png": "{old}", "halftone": "threshold", "threshold": 150"#),
+        ));
+        let r = ready_for(&doc, Some(1), &png(1200, 400, bars));
+        let note = doc
+            .apply(import(Some(1), "logo-v2.png", r))
+            .note
+            .expect("said");
+        assert!(
+            note.contains("kept threshold at 150; import would choose threshold at 187"),
+            "{note}"
+        );
+        assert!(
+            note.starts_with("imported logo-v2.png into Image element 1, 240 by 80 dots: 1200 by 400 pixels of PNG, reduced; "),
+            "{note}"
+        );
+        let i = image_of(&doc, 1);
+        assert_eq!(
+            (i.halftone.clone(), i.threshold),
+            (Some(ImageHalftone::Threshold), Some(150))
+        );
+
+        let mut doc = label_holding(&image_json(frame, &format!(r#""png": "{old}""#)));
+        let r = ready_for(&doc, Some(1), &png(1200, 400, bars));
+        let note = doc
+            .apply(import(Some(1), "logo-v2.png", r))
+            .note
+            .expect("said");
+        assert!(
+            note.contains("threshold at 187, because it is line art that was resampled"),
+            "{note}"
+        );
+        assert!(!note.contains("kept"), "{note}");
+        let i = image_of(&doc, 1);
+        assert_eq!(
+            (i.halftone.clone(), i.threshold),
+            (Some(ImageHalftone::Threshold), Some(187))
+        );
+    }
+
+    /// Each value is said as kept or as import's, and import's own pair follows
+    /// whenever what the element ends with differs from it.
+    #[test]
+    fn a_reimport_says_which_half_was_kept() {
+        let doc = blank();
+        let line = ready_for(&doc, None, &png(1200, 400, bars)).imported;
+        let fs = ImageHalftone::FloydSteinberg;
+        assert_eq!(
+            kept_says(Some(&fs), None, &line),
+            "kept floyd_steinberg, at 187 as import chose; import would choose threshold at \
+             187, because it is line art that was resampled"
+        );
+        assert_eq!(
+            kept_says(None, Some(150), &line),
+            "threshold as import chose, at the kept 150; import would choose threshold at 187, \
+             because it is line art that was resampled"
+        );
+        assert_eq!(
+            kept_says(Some(&ImageHalftone::Threshold), Some(187), &line),
+            "kept threshold at 187"
+        );
+    }
+
+    /// D3 holds for a thin-stroked logo: a re-import keeps the element's own
+    /// threshold, and where that differs from import's, says what import would
+    /// choose and why. The lines import draws are stored at 187, so a kept 150
+    /// prints none of them, and the sentence says that too.
+    #[test]
+    fn a_reimport_keeps_its_threshold_and_says_import_would_draw_a_thin_logos_lines() {
+        let frame = r#"{"feed": 8, "head": 8, "feed_len": 80, "head_len": 80}"#;
+        let old = stored(art(80, 80, bars));
+        let holding = |t: u8| {
+            label_holding(&image_json(
+                frame,
+                &format!(r#""png": "{old}", "halftone": "threshold", "threshold": {t}"#),
+            ))
+        };
+        let mut doc = holding(150);
+        let r = ready_for(&doc, Some(1), &png(600, 600, thin_logo));
+        let note = doc
+            .apply(import(Some(1), "logo.png", r))
+            .note
+            .expect("said");
+        assert!(
+            note.contains(
+                "; kept threshold at 150; import would choose threshold at 187, because it \
+                 is line art that was resampled, and its strokes shrunk thinner than a dot \
+                 are drawn whole, one dot wide; it prints nothing"
+            ),
+            "{note}"
+        );
+        assert_eq!(image_of(&doc, 1).threshold, Some(150), "kept");
+
+        let mut doc = holding(187);
+        let r = ready_for(&doc, Some(1), &png(600, 600, thin_logo));
+        let note = doc
+            .apply(import(Some(1), "logo.png", r))
+            .note
+            .expect("said");
+        assert!(
+            note.contains("; kept threshold at 187; it prints 10% of its frame"),
+            "{note}"
+        );
+        assert!(!note.contains("import would choose"), "{note}");
+        assert_eq!(image_of(&doc, 1).threshold, Some(187), "kept");
+    }
+
+    #[test]
+    fn a_reimport_keeps_an_unknown_halftone_and_says_it_is_not_drawn() {
+        let mut doc = images();
+        let r = ready_for(&doc, Some(4), &png(64, 64, bars));
+        let note = doc
+            .apply(import(Some(4), "noise-v2.png", r))
+            .note
+            .expect("said");
+        assert_eq!(
+            image_of(&doc, 4).halftone,
+            Some(ImageHalftone::Unknown("blue_noise".into()))
+        );
+        assert!(
+            doc.label()
+                .to_json()
+                .expect("saved")
+                .contains(r#""blue_noise""#)
+        );
+        assert!(
+            note.contains(
+                "element 4 keeps halftone \"blue_noise\", which this build cannot draw: it \
+                 draws threshold, floyd_steinberg, atkinson, sierra3 or bayer8"
+            ),
+            "{note}"
+        );
+        assert!(!note.contains("it prints"), "it is not drawn: {note}");
+    }
+
+    #[test]
+    fn a_reimport_is_refused_for_a_gone_other_or_locked_target() {
+        let mut doc = label_holding(&format!(
+            r#"{}, {{"type": "rect", "id": 2, "frame": {AT_8}}}"#,
+            image_json(AT_8, r#""locked": true"#)
+        ));
+        let before = doc.label().clone();
+        let r = ready_for(&blank(), None, &png(16, 16, bars));
+        for (id, said) in [
+            (9, "element 9 is gone; nothing was imported"),
+            (
+                2,
+                "Rectangle element 2 is not an image; nothing was imported",
+            ),
+            (1, "Image element 1 is locked; nothing was imported"),
+        ] {
+            let out = doc.apply(import(Some(id), "logo.png", r.clone()));
+            assert_eq!(out.note.as_deref(), Some(said));
+            assert_eq!(out.effect, Effect::Nothing);
+            assert_eq!(doc.label(), &before);
+            assert_eq!(doc.undo.len(), 0);
+            let why = said.trim_end_matches("; nothing was imported");
+            assert_eq!(doc.import_check(Some(id)), Err(why.to_string()));
+        }
+    }
+
+    #[test]
+    fn import_check_refuses_before_any_dialog() {
+        assert_eq!(
+            images().import_check(Some(3)),
+            Err(
+                "Image element 3 keeps fit \"tile\", which this build cannot import for: set \
+                 its fit to contain, cover, stretch or dots first"
+                    .into()
+            )
+        );
+        let big = r#"{"feed": 0, "head": 0, "feed_len": 400, "head_len": 400}"#;
+        assert_eq!(
+            label_holding(&image_json(big, r#""path": """#)).import_check(Some(1)),
+            Err(
+                "Image element 1's frame is 400 by 400 dots, more than the whole label's 320 by \
+                 96: make it smaller first"
+                    .into()
+            )
+        );
+        let flat = r#"{"feed": 8, "head": 8, "feed_len": 0, "head_len": 32}"#;
+        assert_eq!(
+            label_holding(&image_json(flat, r#""path": """#)).import_check(Some(1)),
+            Err("Image element 1's frame has no area".into())
+        );
+        assert_eq!(
+            blank().import_check(None),
+            Ok(Sizing::Within(Some(304), Some(80)))
+        );
+        assert_eq!(
+            label_holding(&image_json(TURNED, r#""rot": 90, "fit": "dots""#)).import_check(Some(1)),
+            Ok(Sizing::Frame {
+                upright: (32, 64),
+                fit: ImageFit::Dots
+            })
+        );
+    }
+
+    #[test]
+    fn a_reimport_after_a_resize_is_drawn_as_imported_again() {
+        let mut doc = blank();
+        let r = ready_for(&doc, None, &png(64, 32, bars));
+        doc.apply(import(None, "logo.png", r));
+        let note = commit(&mut doc, Field::FeedLen, "32").note.expect("said");
+        assert!(
+            note.contains("resampled for its frame until it is imported again"),
+            "{note}"
+        );
+        let r = ready_for(&doc, Some(1), &png(64, 32, bars));
+        let note = doc
+            .apply(import(Some(1), "logo.png", r))
+            .note
+            .expect("said");
+        assert!(
+            note.contains("the artwork of element 1 is drawn as imported again"),
+            "{note}"
+        );
+        let (_, report) = rasterise::rasterise(doc.label(), doc.target()).expect("drawn");
+        assert!(report.image_resampled.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn a_reimport_whose_frame_changed_while_it_ran_is_applied_and_said() {
+        let mut doc = blank();
+        let r = ready_for(&doc, None, &png(64, 32, bars));
+        doc.apply(import(None, "logo.png", r));
+        let r = ready_for(&doc, Some(1), &png(128, 64, bars));
+        let png = r.png.clone();
+        commit(&mut doc, Field::FeedLen, "32");
+        let note = doc
+            .apply(import(Some(1), "logo-v2.png", r))
+            .note
+            .expect("said");
+        assert_eq!(image_of(&doc, 1).png, png, "written anyway");
+        assert!(
+            note.contains("resampled for its frame until it is imported again"),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn a_fit_edit_says_what_it_does_to_the_artwork() {
+        let old = stored(art(48, 32, bars));
+        let mut doc = label_holding(&image_json(
+            AT_8,
+            &format!(
+                r#""png": "{old}", "fit": "contain", "halftone": "threshold", "threshold": 128"#
+            ),
+        ));
+        doc.apply(Cmd::Select(Some(1)));
+        let note = commit(&mut doc, Field::Fit, "stretch").note.expect("said");
+        assert!(
+            note.contains("resampled for its frame until it is imported again"),
+            "{note}"
+        );
+        let note = commit(&mut doc, Field::Fit, "contain").note.expect("said");
+        assert!(note.contains("is drawn as imported again"), "{note}");
+        let note = commit(&mut doc, Field::Fit, "tile").note.expect("said");
+        assert_eq!(
+            note,
+            "element 1 keeps fit \"tile\", which this build cannot draw: it draws contain, \
+             cover, stretch or dots"
+        );
+    }
+
+    #[test]
+    fn a_threshold_step_says_how_much_now_prints() {
+        let ramp = stored(art(64, 32, |x, _| (x * 4) as u8));
+        let mut doc = label_holding(&image_json(
+            AT_8,
+            &format!(r#""png": "{ramp}", "halftone": "threshold", "threshold": 128"#),
+        ));
+        doc.apply(Cmd::Select(Some(1)));
+        let note = doc
+            .apply(Cmd::StepField {
+                field: Field::Threshold,
+                by: 40,
+            })
+            .note
+            .expect("said");
+        let pct = |s: &str| -> u64 {
+            s.split('%')
+                .next()
+                .unwrap()
+                .rsplit(' ')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
+        };
+        let (p, q) = (pct(&note), pct(note.split("(was ").nth(1).expect("was")));
+        assert!(
+            note.starts_with("Image element 1 now prints ") && note.ends_with("%)") && p > q,
+            "{note}"
+        );
+        assert_eq!(doc.undo.len(), 1);
+        let note = commit(&mut doc, Field::Threshold, "").note.expect("said");
+        assert!(note.starts_with("Image element 1 now prints "), "{note}");
+        assert_eq!(image_of(&doc, 1).threshold, None);
+        let note = commit(&mut doc, Field::Halftone, "blue_noise")
+            .note
+            .expect("said");
+        assert_eq!(
+            note,
+            "element 1 keeps halftone \"blue_noise\", which this build cannot draw: it draws \
+             threshold, floyd_steinberg, atkinson, sierra3 or bayer8"
+        );
+    }
+
+    #[test]
+    fn an_image_with_no_artwork_says_so_in_its_sentence() {
+        let doc = images();
+        let say = doc.shown_one(5).expect("shown").say;
+        assert!(say.ends_with(", no artwork"), "{say}");
+        assert_eq!(a11y::parse_say(&say), Some((160, 0)));
+        let say = doc.shown_one(1).expect("shown").say;
+        assert!(!say.contains("no artwork"), "{say}");
     }
 }

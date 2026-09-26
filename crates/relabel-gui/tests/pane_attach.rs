@@ -109,7 +109,12 @@ fn every_field_is_inside_the_pane_rather_than_clipped_by_it() {
                 "{:?} of element {id} spans {at}..{end} in a pane spanning {left}..{right}",
                 field.accessible_label()
             );
-            if field.accessible_role() != Some(AccessibleRole::Text) {
+            // A row that is only read has no editor, and an action's button is
+            // the node itself, inside the pane by the check above.
+            if matches!(
+                field.accessible_role(),
+                Some(AccessibleRole::Spinbox | AccessibleRole::TextInput)
+            ) {
                 let editor = editor_of(&field);
                 let editor_end = editor.absolute_position().x + editor.size().width;
                 assert!(

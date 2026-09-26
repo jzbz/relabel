@@ -24,7 +24,7 @@ use slint::platform::WindowEvent;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use support::{LivePlug, Scripted, button_of, find_button, press};
+use support::{InlineImporter, LivePlug, Scripted, button_of, find_button, press};
 
 include!(concat!(env!("OUT_DIR"), "/ins-probe.rs"));
 
@@ -57,6 +57,7 @@ fn probe_over(device: MockDevice) -> (InsProbe, Wired, Rc<LivePlug>) {
         start(None),
         Rc::new(Scripted::default()),
         plug.clone(),
+        Rc::new(InlineImporter),
         Opening::Fit,
     );
     ui.show().expect("showing a headless window");

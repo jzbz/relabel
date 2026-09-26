@@ -1,5 +1,6 @@
 //! The file commands' wiring: the File bar, the chords, the question about unsaved
-//! work, the New label pane, opening the print pane and the window's close
+//! work, the New label pane, importing artwork for the edit bar's Image tool and
+//! the inspector's artwork button, opening the print pane and the window's close
 //! button, driven through [`Filing`].
 //!
 //! A close while a print job runs is `print`'s first: it is held there, and asked
@@ -7,28 +8,32 @@
 //! returns.
 //!
 //! Every route is one call to `drive`, which does the same five things in order:
-//! commit what a field is holding, unless an element is held; read the document
+//! commit what a field is holding, unless an element is held or the command is an
+//! import's answer, which the operator did not ask for then; read the document
 //! into a [`Now`]; apply the command; say the note; and do what [`Next`] says -
-//! show the question or the pane, ask the chooser, write, read, make, or hide the
-//! window - feeding a write's or an open's result back in as the next command.
+//! show the question or the pane, ask the chooser, write, read, make, start an
+//! import or place its artwork, or hide the window - feeding a write's, an open's
+//! or an import's result back in as the next command.
 //!
-//! No `RefCell` is borrowed while the chooser is asked or a result is fed back:
-//! a test's chooser answers at once, from inside `ask`, and that answer is another
-//! `drive`. The keyboard goes to the canvas last of all, after a document has been
-//! replaced, because the canvas surface commits a field when it gets the keyboard
-//! and that borrows the canvas (canvas.slint `surface-focused`, ins.rs
-//! `on_field_commit`).
+//! No `RefCell` is borrowed while the chooser is asked, an import is started or a
+//! result is fed back: a test's chooser and importer answer at once, from inside
+//! `ask` and `start`, and that answer is another `drive`. The keyboard goes to
+//! the canvas last of all, after a document has been replaced, because the canvas
+//! surface commits a field when it gets the keyboard and that borrows the canvas
+//! (canvas.slint `surface-focused`, ins.rs `on_field_commit`).
 
 use crate::canvas::{Canvas, PanePush, said_again};
 use crate::choose::{Answer, Chooser, Picked};
 use crate::disk;
-use crate::doc::{Cmd, Doc};
+use crate::doc::{Cmd, Doc, Effect, Import};
 use crate::filing::{self, FileCmd, Filing, Next, Now, Reply, Source, Want};
 use crate::fresh::{self, NewSpec};
+use crate::import::{Done, Importer, Job};
+use crate::ins::Field;
 use crate::rows::{FileHost, PresetRow, ToolRow};
 use crate::view::Viewer;
 use relabel_proto::PrintDirection;
-use relabel_render::document::{DataBinding, KnownBinding};
+use relabel_render::document::{DataBinding, ElementId, KnownBinding};
 use slint::{CloseRequestResponse, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
 use std::path::Path;
@@ -45,6 +50,8 @@ struct Files<H: FileHost> {
     canvas: Rc<RefCell<Canvas<H>>>,
     viewer: Viewer<H>,
     chooser: Rc<dyn Chooser>,
+    /// Reads and decodes artwork off the event loop.
+    importer: Rc<dyn Importer>,
     filing: Rc<RefCell<Filing>>,
     /// The file name the title shows, kept here for the canvas's push to read, so
     /// that push never borrows the `Filing`.
@@ -70,10 +77,12 @@ struct Files<H: FileHost> {
 /// `viewer` is the view's state from [`crate::view::wire`], which a document
 /// opened in place of another starts afresh. `chooser` asks the operator for a
 /// file: [`crate::choose::NativeChooser`] in the application, a script in a test.
-/// `filing` is shared with the print pane, which closes through it; `preview`
-/// opens that pane, and `connected` is the printer it has connected to.
-/// `hold_close` is asked first whenever the window is asked to close, and holds
-/// the close while a print job runs; `busy` says whether one is running.
+/// `importer` reads and decodes artwork: [`crate::import::ThreadImporter`] in the
+/// application, one that answers at once or when told in a test. `filing` is
+/// shared with the print pane, which closes through it; `preview` opens that pane,
+/// and `connected` is the printer it has connected to. `hold_close` is asked first
+/// whenever the window is asked to close, and holds the close while a print job
+/// runs; `busy` says whether one is running.
 ///
 /// Returns the close replayed: the close button's request again, through the
 /// file commands, for the pane to call once the job the close was held for has
@@ -84,6 +93,7 @@ pub fn wire<H: FileHost>(
     canvas: &Rc<RefCell<Canvas<H>>>,
     viewer: Viewer<H>,
     chooser: Rc<dyn Chooser>,
+    importer: Rc<dyn Importer>,
     filing: Rc<RefCell<Filing>>,
     preview: Rc<dyn Fn(&H)>,
     hold_close: Rc<dyn Fn(&H) -> bool>,
@@ -96,6 +106,7 @@ pub fn wire<H: FileHost>(
         canvas: canvas.clone(),
         viewer,
         chooser,
+        importer,
         name: Rc::new(RefCell::new(name)),
         filing,
         printer: Cell::new(None),
@@ -213,6 +224,26 @@ pub fn wire<H: FileHost>(
     on!(on_new_cancel, |files, host| {
         drive(files, host, FileCmd::Sized(None));
     });
+    // The edit bar's Image tool and its chord, as `edit::wire` passes them on.
+    on!(on_import_artwork, |files, host, id| {
+        drive(
+            files,
+            host,
+            FileCmd::Want(Want::Image(ElementId::try_from(id).ok())),
+        );
+    });
+    // The inspector's artwork button: the selected image's artwork, imported
+    // again. The selection rather than an id the pane carries, since the pane
+    // shows only the selection; a token that is no action's sends nothing.
+    on!(on_field_action, |files, host, token| {
+        if Field::from_token(token) != Some(Field::Artwork) {
+            return;
+        }
+        let selected = files.canvas.borrow().doc().selected();
+        if let Some(id) = selected {
+            drive(files, host, FileCmd::Want(Want::Image(Some(id))));
+        }
+    });
 
     // The title bar's close, Alt+F4 and anything else the platform turns into a
     // close request. A print job holds it first, and the replay below asks again
@@ -255,14 +286,18 @@ fn drive<H: FileHost>(files: &Rc<Files<H>>, host: &H, cmd: FileCmd) -> Next {
     // Typing is work: a Save must write the digits in the field, and a close must
     // ask about them. Not while an element is held, where committing would write
     // inside the gesture; every file command is refused until the release anyway.
+    // Nor for an import's answer, the one command that arrives on its own, from
+    // the importer, whenever the decode ends: the operator may be half way through
+    // a number, and what they are typing is finished by where they take the
+    // keyboard next, as it always is (inspector.slint).
     {
         let mut c = files.canvas.borrow_mut();
-        if !c.doc().pressed() {
+        if !c.doc().pressed() && !matches!(cmd, FileCmd::Imported { .. }) {
             let out = c.doc_mut().apply(Cmd::CommitField);
             c.refresh(host, out);
         }
     }
-    let now = files.now();
+    let now = files.now_for(&cmd);
     let out = files.filing.borrow_mut().apply(cmd, &now);
     files.show_title(host);
     if let Some(note) = out.note {
@@ -273,10 +308,18 @@ fn drive<H: FileHost>(files: &Rc<Files<H>>, host: &H, cmd: FileCmd) -> Next {
 }
 
 impl<H: FileHost> Files<H> {
-    /// The document as the file commands see it.
-    fn now(&self) -> Now {
+    /// The document as the file commands see it, for `cmd`: whether artwork may
+    /// be imported, and into what, is worked out only when artwork is asked for.
+    fn now_for(&self, cmd: &FileCmd) -> Now {
         let c = self.canvas.borrow();
         let (doc, label) = (c.doc(), c.doc().label());
+        let (import_refused, import_target) = match cmd {
+            FileCmd::Want(Want::Image(into)) => (
+                doc.import_check(*into).err(),
+                into.and_then(|id| doc.heading_of(id)),
+            ),
+            _ => (None, None),
+        };
         Now {
             unsaved: doc.unsaved(),
             pressed: doc.pressed(),
@@ -294,6 +337,8 @@ impl<H: FileHost> Files<H> {
                 }
                 _ => None,
             },
+            import_refused,
+            import_target,
         }
     }
 
@@ -382,6 +427,68 @@ impl<H: FileHost> Files<H> {
                 let made =
                     Doc::open(fresh::build(&spec), spec.spec.direction).map_err(|e| e.to_string());
                 self.open(host, Source::New(spec), made);
+            }
+            Next::Import { ticket, path, into } => {
+                // Checked again, since the element may have changed behind the
+                // dialog, and sized for the frame as it is now. Borrowed only for
+                // that: the importer may answer before `start` returns.
+                let checked = {
+                    let c = self.canvas.borrow();
+                    let dpmm = c.doc().label().canvas.dpmm;
+                    c.doc().import_check(into).map(|sizing| (sizing, dpmm))
+                };
+                let result = match checked {
+                    Err(why) => Err(why),
+                    Ok((sizing, dpmm)) => {
+                        let done: Done = {
+                            let files = Rc::downgrade(self);
+                            Box::new(move |result| {
+                                if let Some(files) = files.upgrade()
+                                    && let Some(host) = files.host.upgrade()
+                                {
+                                    drive(&files, &host, FileCmd::Imported { ticket, result });
+                                }
+                            })
+                        };
+                        let job = Job { path, sizing, dpmm };
+                        match self.importer.start(job, done) {
+                            Ok(()) => return,
+                            Err(e) => Err(e.to_string()),
+                        }
+                    }
+                };
+                drive(self, host, FileCmd::Imported { ticket, result });
+            }
+            Next::Place {
+                into,
+                crumb,
+                ready,
+                focus,
+            } => {
+                let added = {
+                    let mut c = self.canvas.borrow_mut();
+                    let out = c.doc_mut().apply(Cmd::Import(Box::new(Import {
+                        into,
+                        crumb,
+                        ready: *ready,
+                    })));
+                    // Selected exactly when nothing is staged (`Doc::add_image`).
+                    let added = out.effect == Effect::Everything && c.doc().staged().is_none();
+                    c.refresh(host, out);
+                    added
+                };
+                // Last, with nothing borrowed, for `open`'s reason, and only when
+                // the new image was added and selected, as `add-kind` does for
+                // every other kind: a refusal leaves the keyboard where it was, and
+                // a re-import leaves it on the button that asked. Decided by the
+                // document rather than by where the keyboard is: a field still
+                // being typed into kept the selection, and the canvas arriving
+                // would commit its half number and take the rest of it, while a
+                // field that holds nothing would be left showing a row of the image
+                // the operator never chose.
+                if focus && added {
+                    host.invoke_focus_canvas();
+                }
             }
             Next::Hide => {
                 debug_assert!(!(self.busy)(), "a print job holds the window");

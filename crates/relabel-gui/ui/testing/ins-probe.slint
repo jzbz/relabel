@@ -88,6 +88,10 @@ export component InsProbe inherits Window {
     callback field-edited(field: int, value: string);
     callback field-commit();
     callback field-stepped(field: int, by: int);
+    callback field-action(field: int);
+    // Rust to Rust: the edit bar's Image tool asks for artwork through it, since
+    // the file commands that ask are wired after the edit bar. -1 is a new image.
+    callback import-artwork(id: int);
     callback zoom-step(by: int);
     callback zoom-one();
     callback zoom-fit();
@@ -169,6 +173,7 @@ export component InsProbe inherits Window {
         field-edited(f, v) => { root.field-edited(f, v); }
         field-commit() => { root.field-commit(); }
         field-stepped(f, b) => { root.field-stepped(f, b); }
+        field-action(f) => { root.field-action(f); }
         zoom-step(by) => { root.zoom-step(by); }
         zoom-one() => { root.zoom-one(); }
         zoom-fit() => { root.zoom-fit(); }

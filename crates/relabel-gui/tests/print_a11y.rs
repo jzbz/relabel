@@ -24,7 +24,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 use support::{
-    HeldPlug, Scripted, button_of, group_of, press, reference_label, status_of, tmp_dir,
+    HeldPlug, InlineImporter, Scripted, button_of, group_of, press, reference_label, status_of,
+    tmp_dir,
 };
 
 include!(concat!(env!("OUT_DIR"), "/ins-probe.rs"));
@@ -56,6 +57,7 @@ fn probe(path: &Path, plug: Rc<HeldPlug>) -> (InsProbe, Wired) {
         start(Some(path)),
         Rc::new(Scripted::default()),
         plug,
+        Rc::new(InlineImporter),
         Opening::Fit,
     );
     ui.show().expect("showing a headless window");

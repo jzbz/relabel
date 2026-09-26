@@ -22,7 +22,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use support::{Scripted, button_of, press};
+use support::{InlineImporter, Scripted, button_of, press};
 
 include!(concat!(env!("OUT_DIR"), "/ins-probe.rs"));
 
@@ -48,6 +48,7 @@ fn the_native_plug_delivers_through_spawn_local() {
         start(None),
         Rc::new(Scripted::default()),
         plug.clone(),
+        Rc::new(InlineImporter),
         Opening::Fit,
     );
     ui.show().expect("showing a headless window");

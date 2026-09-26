@@ -1,15 +1,19 @@
 //! Reading and writing label files: a save replaces the file whole or leaves it
-//! as it was, and a read says what is wrong with a file in words.
+//! as it was, and a read says what is wrong with a file in words. And reading
+//! artwork, which refuses what is not a file, or too long, before it reads a byte.
 
 #[path = "support/mod.rs"]
 mod support;
 
 use relabel_gui::disk::{self, ReadError, SaveError};
+use relabel_gui::import::read_capped;
+use relabel_render::artwork::{ArtworkError, MAX_INPUT};
 use relabel_render::document::{
     Common, Element, ElementOrRaw, GlyphRaster, Label, RectDots, TextAlign, TextEl, TextWeight,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use support::reference_label;
 
 /// A directory of the test's own under the build's scratch space, emptied first
@@ -272,4 +276,68 @@ fn a_saved_label_reads_back_equal() {
     disk::save(&a, &label).expect("the save");
     assert_eq!(disk::read_label(&a).expect("the read"), label);
     assert_eq!(names(&dir), ["a.relabel"]);
+}
+
+/// A folder is never opened, and a device never read: `/dev/zero` would be read
+/// until the cap, and a FIFO would wait for a writer.
+#[test]
+fn a_folder_or_a_device_is_refused_before_it_is_opened() {
+    let dir = scratch("artwork_not_a_file");
+    let folder = dir.join("folder.png");
+    fs::create_dir(&folder).unwrap();
+    assert_eq!(read_capped(&folder), Err("it is not a regular file".into()));
+    #[cfg(unix)]
+    {
+        let began = Instant::now();
+        assert_eq!(
+            read_capped(Path::new("/dev/zero")),
+            Err("it is not a regular file".into())
+        );
+        assert!(began.elapsed() < Duration::from_millis(100));
+    }
+}
+
+/// Refused from the metadata, so a file over the cap costs no read at all. On
+/// unix the file is also made unreadable, so a refusal that came from opening
+/// and reading it would be a different sentence; root reads it anyway, so for
+/// root only the timing is left to tell.
+#[test]
+fn a_file_over_64_mib_is_refused_by_its_length_alone() {
+    let dir = scratch("artwork_too_long");
+    let huge = dir.join("huge.png");
+    // Sparse: no block of it is written.
+    fs::File::create(&huge)
+        .unwrap()
+        .set_len(MAX_INPUT as u64 + 1)
+        .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&huge, fs::Permissions::from_mode(0o000)).unwrap();
+    }
+    let began = Instant::now();
+    let result = read_capped(&huge);
+    let took = began.elapsed();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&huge, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    assert_eq!(
+        result,
+        Err(ArtworkError::InputTooLarge {
+            bytes: MAX_INPUT + 1
+        }
+        .to_string())
+    );
+    assert!(took < Duration::from_millis(100));
+    fs::remove_file(&huge).unwrap();
+
+    assert_eq!(
+        read_capped(&dir.join("gone.png")),
+        Err("it does not exist".into())
+    );
+    let small = dir.join("small.png");
+    fs::write(&small, b"eight by").unwrap();
+    assert_eq!(read_capped(&small), Ok(b"eight by".to_vec()));
 }

@@ -142,6 +142,8 @@ export component Designer {
     callback field-edited(field: int, value: string);
     callback field-commit();
     callback field-stepped(field: int, by: int);
+    // An action slot's button in the inspector: `ins::Field`'s token.
+    callback field-action(field: int);
 
     callback zoom-step(by: int);
     callback zoom-one();
@@ -402,10 +404,13 @@ export component Designer {
                 }
                 // Adding an element: Control+Shift and T, B, R, M, O or L, from
                 // anywhere for Ctrl+Z's reason, after every chord above so none of
-                // theirs can be taken for a kind's. A field inserts nothing for a
-                // Control key (items/text.rs:1057-1059). Not Q, because Command
-                // arrives as control on macOS (i-slint-backend-winit
-                // event_loop.rs:257-270) and Command+Shift+Q logs out there.
+                // theirs can be taken for a kind's. Control+Shift+I imports an
+                // image: Rust answers token 6, and the add comes to nothing until
+                // the artwork is read, so the keyboard stays where it was. A field
+                // inserts nothing for a Control key (items/text.rs:1057-1059). Not
+                // Q, because Command arrives as control on macOS
+                // (i-slint-backend-winit event_loop.rs:257-270) and Command+Shift+Q
+                // logs out there.
                 if (event.modifiers.control && event.modifiers.shift && !event.modifiers.alt
                     && root.add-by-key(root.kind-of-key(event.text))) {
                     return EventResult.accept;
@@ -631,6 +636,7 @@ export component Designer {
                     field-edited(f, v) => { root.field-edited(f, v); }
                     field-commit() => { root.field-commit(); }
                     field-stepped(f, b) => { root.field-stepped(f, b); }
+                    field-action(f) => { root.field-action(f); }
                 }
             }
         }

@@ -33,9 +33,24 @@
 //! never covered. The answer records the document's revision; if the revision has
 //! moved when the replacement is ready, the question is asked again, keeping the
 //! file already chosen or the size already typed.
+//!
+//! # Artwork is a file command too
+//!
+//! Adding an image and importing an element's artwork again each start with a
+//! file dialog, so they take the one dialog's place and keep its rules: its
+//! tickets, "a file dialog is already open", the popups' refusals, the held
+//! pointer and shelving under the close question. Nothing is replaced, so nothing
+//! about unsaved work is asked. The read and the decode run off the event loop
+//! (`import`), and one import at a time is under way beside whatever else is
+//! waiting: while it runs, editing, saving, the print pane and even opening
+//! another label go on. An Open or New that replaces the document lets the import
+//! go - its answer is dropped quietly when it comes - but only that answer frees
+//! the slot, so a second worker never starts beside the first.
 
 use crate::choose::{Ask, Picked};
 use crate::fresh::{self, NewSpec};
+use crate::import::Ready;
+use relabel_render::document::ElementId;
 use std::path::{Path, PathBuf};
 
 /// What the operator asked for.
@@ -50,6 +65,10 @@ pub enum Want {
     Preview,
     /// The window's close button, or anything else that asks the window to go.
     Close,
+    /// A new image, from a file, for `None`; otherwise that image's artwork,
+    /// imported again. The edit bar's seventh tool, Control+Shift+I and the
+    /// inspector's artwork button: none of them is on the File bar.
+    Image(Option<ElementId>),
 }
 
 impl Want {
@@ -109,6 +128,7 @@ impl Want {
             Want::SaveAs => "Save as",
             Want::Preview => "Print",
             Want::Close => "Close",
+            Want::Image(_) => crate::make::IMAGE_CAPTION,
         }
     }
 
@@ -121,6 +141,7 @@ impl Want {
             Want::SaveAs => "Save label as",
             Want::Preview => "Print the label",
             Want::Close => "Close the window",
+            Want::Image(_) => crate::make::IMAGE_BUTTON_NAME,
         }
     }
 
@@ -134,6 +155,7 @@ impl Want {
             Want::SaveAs => "Control+Shift+S",
             Want::Preview => "Control+P",
             Want::Close => "",
+            Want::Image(_) => crate::make::IMAGE_KEYS,
         }
     }
 
@@ -145,6 +167,7 @@ impl Want {
             Want::Save | Want::SaveAs => "nothing was saved",
             Want::Preview => "the print pane was not opened",
             Want::Close => "nothing was closed",
+            Want::Image(into) => Purpose::Artwork(into).undone(),
         }
     }
 }
@@ -205,7 +228,7 @@ impl Intent {
 }
 
 /// The document as the file commands need it, read by the wiring after staged
-/// text is committed.
+/// text is committed - except for an import's answer, which commits nothing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Now {
     /// `Doc::unsaved`: changed since the last save, or text typed and not yet
@@ -224,6 +247,12 @@ pub struct Now {
     /// A data binding's file, when it is a relative path, which is read from the
     /// label's own folder.
     pub csv: Option<String>,
+    /// Why `Doc::import_check` would refuse the artwork asked for, when it would.
+    /// Read only for [`Want::Image`].
+    pub import_refused: Option<String>,
+    /// What an image imported again is called, "Image element 3", for the
+    /// dialog's title. Read only for [`Want::Image`].
+    pub import_target: Option<String>,
 }
 
 /// One thing that happened.
@@ -251,6 +280,11 @@ pub enum FileCmd {
     },
     /// The print pane closed, by its Close button or Escape.
     PreviewClosed,
+    /// What [`Next::Import`] came to. `ticket` is the one it carried.
+    Imported {
+        ticket: u64,
+        result: Result<Box<Ready>, String>,
+    },
 }
 
 /// Where an opened document came from.
@@ -282,6 +316,23 @@ pub enum Next {
     /// Close the window: the question was answered and the work is saved or let
     /// go.
     Hide,
+    /// Read and decode `path` for the image `into`, or a new one, off the event
+    /// loop, and feed the answer back as [`FileCmd::Imported`] with `ticket`.
+    Import {
+        ticket: u64,
+        path: PathBuf,
+        into: Option<ElementId>,
+    },
+    /// Put the artwork in the document: `Cmd::Import`. `focus` is whether the
+    /// keyboard may go to the canvas afterwards, as it does after any add, which is
+    /// only for a new image with nothing else showing; the wiring also leaves it
+    /// in a field of the inspector, which this machine cannot see.
+    Place {
+        into: Option<ElementId>,
+        crumb: String,
+        ready: Box<Ready>,
+        focus: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -308,29 +359,69 @@ impl FileOutcome {
     }
 }
 
+/// What a file dialog is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Purpose {
+    Open,
+    SaveAs,
+    /// Artwork for the image `Some(id)`, or for a new one.
+    Artwork(Option<ElementId>),
+}
+
+impl Purpose {
+    /// How to ask for this dialog again, as the end of a sentence.
+    fn again(self) -> &'static str {
+        match self {
+            Purpose::Open => "choose Open again",
+            Purpose::SaveAs => "choose Save as again",
+            Purpose::Artwork(None) => "choose Image again",
+            Purpose::Artwork(Some(_)) => "press Import again once more",
+        }
+    }
+
+    /// What did not happen when this dialog's answer was dropped, said on its own.
+    fn undone(self) -> &'static str {
+        match self {
+            Purpose::Open => "nothing was opened",
+            Purpose::SaveAs => "nothing was saved",
+            Purpose::Artwork(None) => "nothing was added",
+            Purpose::Artwork(Some(_)) => "nothing was imported",
+        }
+    }
+}
+
 /// A file dialog on screen. `then` is what a save goes on to once it is written;
 /// `consent` is the revision "Don't save" was answered at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Dialog {
     ticket: u64,
-    for_open: bool,
+    purpose: Purpose,
     then: Option<Intent>,
     consent: Option<u64>,
 }
 
 impl Dialog {
-    /// The command that asks for this dialog again.
     fn again(&self) -> &'static str {
-        if self.for_open { "Open" } else { "Save as" }
+        self.purpose.again()
     }
 
     fn undone(&self) -> &'static str {
-        if self.for_open {
-            "nothing was opened"
-        } else {
-            "nothing was saved"
-        }
+        self.purpose.undone()
     }
+}
+
+/// An import under way: its read and decode have started, and their answer is
+/// owed. Beside [`Wait`], not in it, because nothing else waits on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Importing {
+    /// The ticket [`Next::Import`] carried, which the answer carries back.
+    ticket: u64,
+    /// The file's name, which every sentence about the import says.
+    name: String,
+    into: Option<ElementId>,
+    /// The document it was for has been replaced by an Open or a New: its answer
+    /// is dropped quietly, and until it comes no other import starts.
+    let_go: bool,
 }
 
 /// What is open or under way.
@@ -364,6 +455,12 @@ pub struct Filing {
     /// window still open, and an answer that arrives while the question is
     /// showing is said to have been dropped.
     shelved: Option<Dialog>,
+    /// The one import under way, if any.
+    importing: Option<Importing>,
+    /// The folder the last artwork was chosen from, which the next artwork dialog
+    /// starts in: this session's only, never read from a label, so a label from
+    /// someone else cannot steer the dialog.
+    art_folder: Option<PathBuf>,
     /// Whether a path is taken. Injected, so the machine does no I/O of its own
     /// and a test says what exists; asked only when a name chosen for Save as
     /// lacks the extension.
@@ -381,6 +478,8 @@ impl Filing {
             ticket: 0,
             wait: Wait::Idle,
             shelved: None,
+            importing: None,
+            art_folder: None,
             exists: Path::exists,
         }
     }
@@ -414,9 +513,16 @@ impl Filing {
                 }
                 FileOutcome::quiet()
             }
+            FileCmd::Imported { ticket, result } => self.imported(ticket, result, now),
         };
         // A shelved dialog goes with the window, and is pending again once the
-        // question over it has ended any other way.
+        // question over it has ended any other way. An import still running is let
+        // go with the window: nothing lands in a window that has closed.
+        if matches!(out.next, Next::Hide | Next::Allow)
+            && let Some(i) = &mut self.importing
+        {
+            i.let_go = true;
+        }
         if out.next == Next::Hide {
             self.shelved = None;
         } else if self.wait == Wait::Idle
@@ -476,6 +582,9 @@ impl Filing {
             (Wait::Previewing, _) => return FileOutcome::said("close the print pane first"),
             (Wait::Idle | Wait::Writing { .. }, _) => {}
         }
+        if let Want::Image(into) = w {
+            return self.artwork(into, now);
+        }
         self.wait = Wait::Idle;
         let intent = match w {
             Want::Save => return self.save(now, None),
@@ -488,6 +597,7 @@ impl Filing {
             Want::New => Intent::New,
             Want::Open => Intent::Open,
             Want::Close => Intent::Close,
+            Want::Image(_) => unreachable!("artwork is asked for above"),
         };
         if now.unsaved {
             self.wait = Wait::Question(intent);
@@ -526,8 +636,7 @@ impl Filing {
         if let Some(d) = self.shelved.take_if(|d| d.ticket == ticket) {
             return match picked {
                 Picked::Path(p) => FileOutcome::said(format!(
-                    "{}: {} was chosen while the window was asking whether to close; choose \
-                     {} again{}",
+                    "{}: {} was chosen while the window was asking whether to close; {}{}",
                     d.undone(),
                     file_name(&p),
                     d.again(),
@@ -552,34 +661,43 @@ impl Filing {
             && let Picked::Path(p) = &picked
         {
             return FileOutcome::said(format!(
-                "{}: {} was chosen while an element was held; let go, then choose {} \
-                 again{lost}",
+                "{}: {} was chosen while an element was held; let go, then {}{lost}",
                 d.undone(),
                 file_name(p),
                 d.again()
             ));
         }
         let Dialog {
-            for_open,
+            purpose,
             then,
             consent,
             ..
         } = d;
-        match (picked, for_open) {
-            (Picked::Nothing, true) => FileOutcome::said("nothing was opened: no file was chosen"),
-            (Picked::NoDialog, true) => FileOutcome::said(format!(
+        match (picked, purpose) {
+            (Picked::Nothing, Purpose::Open) => {
+                FileOutcome::said("nothing was opened: no file was chosen")
+            }
+            (Picked::NoDialog, Purpose::Open) => FileOutcome::said(format!(
                 "nothing was opened: {NO_DIALOG}; a label opens from the command line: \
                  relabel path/to/label.relabel"
             )),
-            (Picked::Path(p), true) => self.go_ahead(Intent::Read(p), consent, now),
-            (Picked::Nothing, false) => {
+            (Picked::Path(p), Purpose::Open) => self.go_ahead(Intent::Read(p), consent, now),
+            (Picked::Nothing, Purpose::SaveAs) => {
                 FileOutcome::said(format!("nothing was saved: no file was chosen{lost}"))
             }
-            (Picked::NoDialog, false) => FileOutcome::said(format!(
+            (Picked::NoDialog, Purpose::SaveAs) => FileOutcome::said(format!(
                 "nothing was saved: {NO_DIALOG}; relabel path/to/new.relabel starts a label \
                  that Control+S saves there{lost}"
             )),
-            (Picked::Path(p), false) => match with_extension(p, self.exists) {
+            (Picked::Nothing, Purpose::Artwork(_)) => {
+                FileOutcome::said(format!("{}: no file was chosen", purpose.undone()))
+            }
+            (Picked::NoDialog, Purpose::Artwork(_)) => FileOutcome::said(format!(
+                "{}: {NO_DIALOG}, and artwork can be imported no other way",
+                purpose.undone()
+            )),
+            (Picked::Path(p), Purpose::Artwork(into)) => self.import(p, into),
+            (Picked::Path(p), Purpose::SaveAs) => match with_extension(p, self.exists) {
                 Ok(to) => {
                     self.wait = Wait::Writing { then };
                     FileOutcome::then(Next::Write(to))
@@ -636,15 +754,23 @@ impl Filing {
 
     fn opened(&mut self, from: Source, result: Result<String, String>) -> FileOutcome {
         self.wait = Wait::Idle;
+        // The document an import was for has gone, and its answer with it.
+        let let_go = match &mut self.importing {
+            Some(i) if result.is_ok() && !i.let_go => {
+                i.let_go = true;
+                format!("; the import of {} was let go", i.name)
+            }
+            _ => String::new(),
+        };
         match (from, result) {
             (Source::File(p), Ok(note)) => {
-                let said = format!("opened {}: {note}", file_name(&p));
+                let said = format!("opened {}: {note}{let_go}", file_name(&p));
                 self.path = Some(p);
                 FileOutcome::said(said)
             }
             (Source::New(spec), Ok(note)) => {
                 self.path = None;
-                FileOutcome::said(format!("{}: {note}", fresh::made_says(&spec)))
+                FileOutcome::said(format!("{}: {note}{let_go}", fresh::made_says(&spec)))
             }
             (from, Err(why)) => {
                 let current = match self.name() {
@@ -703,7 +829,101 @@ impl Filing {
             folder: self.folder(),
             name: self.name().unwrap_or_else(|| now.suggest.clone()),
         };
-        self.choose(ask, false, then, None)
+        self.choose(ask, Purpose::SaveAs, then, None)
+    }
+
+    /// Ask for artwork, for the image `into` or a new one. Nothing is asked about
+    /// unsaved work, since nothing is replaced; what would be refused once a file
+    /// was chosen is refused before the dialog opens, and one import runs at a
+    /// time.
+    fn artwork(&mut self, into: Option<ElementId>, now: &Now) -> FileOutcome {
+        let undone = Purpose::Artwork(into).undone();
+        if let Some(i) = &self.importing {
+            return FileOutcome::said(still_importing(&i.name));
+        }
+        if let Some(why) = &now.import_refused {
+            return FileOutcome::said(format!("{why}; {undone}"));
+        }
+        let ask = Ask::Artwork {
+            folder: self.art_folder.clone().or_else(|| self.folder()),
+            again: into.and(now.import_target.clone()),
+        };
+        self.choose(ask, Purpose::Artwork(into), None, None)
+    }
+
+    /// A file was chosen for artwork: it is read and decoded off the event loop,
+    /// and nothing else waits on it.
+    fn import(&mut self, path: PathBuf, into: Option<ElementId>) -> FileOutcome {
+        // Never so while the rules above hold: the slot is filled only here, and
+        // a dialog for artwork opens only while it is empty. Checked where it is
+        // filled anyway, because a second worker must never start beside one.
+        if let Some(i) = &self.importing {
+            return FileOutcome::said(format!(
+                "{}: {}",
+                Purpose::Artwork(into).undone(),
+                still_importing(&i.name)
+            ));
+        }
+        self.art_folder = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(Path::to_path_buf);
+        self.ticket += 1;
+        let name = file_name(&path);
+        let note = format!("importing {name}");
+        self.importing = Some(Importing {
+            ticket: self.ticket,
+            name,
+            into,
+            let_go: false,
+        });
+        FileOutcome {
+            next: Next::Import {
+                ticket: self.ticket,
+                path,
+                into,
+            },
+            note: Some(note),
+        }
+    }
+
+    /// An import's answer. It is placed unless the document is mid-gesture or the
+    /// question about unsaved work is showing, where it is dropped and said to be,
+    /// as a dialog's answer is.
+    fn imported(
+        &mut self,
+        ticket: u64,
+        result: Result<Box<Ready>, String>,
+        now: &Now,
+    ) -> FileOutcome {
+        let Some(i) = self.importing.take_if(|i| i.ticket == ticket) else {
+            return FileOutcome::quiet();
+        };
+        if i.let_go {
+            return FileOutcome::quiet();
+        }
+        let purpose = Purpose::Artwork(i.into);
+        let (undone, again, name) = (purpose.undone(), purpose.again(), i.name);
+        if matches!(self.wait, Wait::Question(_)) {
+            return FileOutcome::said(format!(
+                "{undone}: {name} was read while the window was asking about unsaved changes; \
+                 {again}"
+            ));
+        }
+        if now.pressed {
+            return FileOutcome::said(format!(
+                "{undone}: {name} was read while an element was held; let go, then {again}"
+            ));
+        }
+        match result {
+            Err(why) => FileOutcome::said(format!("could not import {name}: {why}; {undone}")),
+            Ok(ready) => FileOutcome::then(Next::Place {
+                into: i.into,
+                crumb: name,
+                ready,
+                focus: i.into.is_none() && self.wait == Wait::Idle,
+            }),
+        }
     }
 
     fn unwritable(&mut self, now: &Now, then: Option<&Intent>) -> Option<FileOutcome> {
@@ -719,14 +939,14 @@ impl Filing {
     fn choose(
         &mut self,
         ask: Ask,
-        for_open: bool,
+        purpose: Purpose,
         then: Option<Intent>,
         consent: Option<u64>,
     ) -> FileOutcome {
         self.ticket += 1;
         self.wait = Wait::Dialog(Dialog {
             ticket: self.ticket,
-            for_open,
+            purpose,
             then,
             consent,
         });
@@ -761,7 +981,7 @@ impl Filing {
                 let ask = Ask::Open {
                     folder: self.folder(),
                 };
-                self.choose(ask, true, None, consent)
+                self.choose(ask, Purpose::Open, None, consent)
             }
             Intent::Make(spec) => FileOutcome::then(Next::Fresh(spec)),
             Intent::Read(p) => FileOutcome::then(Next::Read(p)),
@@ -835,6 +1055,11 @@ fn held(undone: &str) -> String {
     format!("{undone}: let go of the element first")
 }
 
+/// A second import refused while one is under way.
+fn still_importing(name: &str) -> String {
+    format!("{name} is still being imported; nothing else was started")
+}
+
 /// The clause added when a save fails or is refused on the way to something else.
 fn dropped(intent: &Intent) -> String {
     format!("; {}", intent.undone())
@@ -843,6 +1068,8 @@ fn dropped(intent: &Intent) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::import::{Sizing, fixtures};
+    use relabel_render::target::Dpmm;
 
     fn at(p: &str) -> Filing {
         Filing::new(Some(PathBuf::from(p)))
@@ -1882,5 +2109,551 @@ mod tests {
             chosen(&mut f, t, Picked::Path(path("/l/b.relabel")), &clean()).next,
             Next::Read(path("/l/b.relabel"))
         );
+    }
+
+    /// Tiny artwork, as a finished import hands it over.
+    fn art() -> Box<Ready> {
+        Box::new(fixtures::ready(
+            &fixtures::png(8, 8, fixtures::bars),
+            &Sizing::Within(None, None),
+            Dpmm::DPI_203,
+        ))
+    }
+
+    fn imported(
+        f: &mut Filing,
+        ticket: u64,
+        result: Result<Box<Ready>, String>,
+        now: &Now,
+    ) -> FileOutcome {
+        f.apply(FileCmd::Imported { ticket, result }, now)
+    }
+
+    fn import_ticket(out: &FileOutcome) -> u64 {
+        match out.next {
+            Next::Import { ticket, .. } => ticket,
+            ref other => panic!("expected an import, got {other:?}"),
+        }
+    }
+
+    /// Artwork asked for, `p` chosen, and the import started: its ticket.
+    fn importing(f: &mut Filing, into: Option<ElementId>, p: &str, now: &Now) -> u64 {
+        let t = ticket_of(&want(f, Want::Image(into), now));
+        import_ticket(&chosen(f, t, Picked::Path(path(p)), now))
+    }
+
+    /// Nothing is replaced, so nothing is asked about unsaved work, and the dialog
+    /// starts in the label's folder.
+    #[test]
+    fn an_image_asks_for_artwork_without_a_question() {
+        let mut f = at("/l/a.relabel");
+        let out = want(&mut f, Want::Image(None), &unsaved(3));
+        assert_eq!(
+            out,
+            FileOutcome::then(Next::Choose {
+                ticket: 1,
+                ask: Ask::Artwork {
+                    folder: Some(path("/l")),
+                    again: None,
+                },
+            })
+        );
+        // Imported again, the dialog names the element, from what the wiring read.
+        let mut f = Filing::new(None);
+        let now = Now {
+            import_target: Some("Image element 3".into()),
+            ..clean()
+        };
+        assert_eq!(
+            want(&mut f, Want::Image(Some(3)), &now).next,
+            Next::Choose {
+                ticket: 1,
+                ask: Ask::Artwork {
+                    folder: None,
+                    again: Some("Image element 3".into()),
+                },
+            }
+        );
+        // Not on the File bar, and no letter of its own there.
+        assert_eq!(Want::Image(None).token(), None);
+        assert!(!Want::BAR.iter().any(|w| matches!(w, Want::Image(_))));
+    }
+
+    #[test]
+    fn the_next_artwork_dialog_starts_where_the_last_artwork_came_from() {
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/art/logo.png", &clean());
+        assert!(matches!(
+            imported(&mut f, t, Ok(art()), &clean()).next,
+            Next::Place { .. }
+        ));
+        assert_eq!(
+            want(&mut f, Want::Image(None), &clean()).next,
+            Next::Choose {
+                ticket: t + 1,
+                ask: Ask::Artwork {
+                    folder: Some(path("/art")),
+                    again: None,
+                },
+            }
+        );
+        // Only the artwork dialog: Open and Save as still start with the label.
+        let mut f = at("/l/a.relabel");
+        importing(&mut f, None, "/art/logo.png", &clean());
+        assert!(
+            matches!(
+                want(&mut f, Want::Open, &clean()).next,
+                Next::Choose { ask: Ask::Open { folder: Some(ref d) }, .. } if d == Path::new("/l")
+            ),
+            "the label's folder"
+        );
+    }
+
+    /// Everything that would stop the artwork landing is said before a dialog
+    /// opens, and uses no ticket.
+    #[test]
+    fn an_image_is_refused_before_a_dialog() {
+        let pressed = Now {
+            pressed: true,
+            ..clean()
+        };
+        for (into, note) in [
+            (None, "nothing was added: let go of the element first"),
+            (Some(3), "nothing was imported: let go of the element first"),
+        ] {
+            let mut f = at("/l/a.relabel");
+            assert_eq!(
+                want(&mut f, Want::Image(into), &pressed),
+                FileOutcome::said(note)
+            );
+            assert_eq!(ticket_of(&want(&mut f, Want::Open, &clean())), 1);
+        }
+
+        let locked = Now {
+            import_refused: Some("Image element 3 is locked".into()),
+            ..clean()
+        };
+        let mut f = at("/l/a.relabel");
+        assert_eq!(
+            want(&mut f, Want::Image(Some(3)), &locked),
+            FileOutcome::said("Image element 3 is locked; nothing was imported")
+        );
+        assert_eq!(ticket_of(&want(&mut f, Want::Open, &clean())), 1);
+
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::Preview, &clean());
+        assert_eq!(
+            want(&mut f, Want::Image(None), &clean()),
+            FileOutcome::said("close the print pane first")
+        );
+        f.apply(FileCmd::PreviewClosed, &clean());
+        assert_eq!(ticket_of(&want(&mut f, Want::Open, &clean())), 1);
+
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::New, &clean());
+        assert_eq!(
+            want(&mut f, Want::Image(None), &clean()),
+            FileOutcome::said("finish or cancel the new label first")
+        );
+        f.apply(FileCmd::Sized(None), &clean());
+        assert_eq!(ticket_of(&want(&mut f, Want::Open, &clean())), 1);
+
+        let mut f = at("/l/a.relabel");
+        let t = ticket_of(&want(&mut f, Want::Open, &clean()));
+        assert_eq!(
+            want(&mut f, Want::Image(None), &clean()),
+            FileOutcome::said("a file dialog is already open")
+        );
+        chosen(&mut f, t, Picked::Nothing, &clean());
+        assert_eq!(ticket_of(&want(&mut f, Want::Open, &clean())), t + 1);
+
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::Open, &unsaved(4));
+        assert_eq!(
+            want(&mut f, Want::Image(None), &unsaved(4)),
+            FileOutcome {
+                next: Next::Ask(
+                    "Save the changes to a.relabel before opening another label?".into()
+                ),
+                note: Some("answer the question about unsaved changes first".into()),
+            }
+        );
+        reply(&mut f, Reply::Cancel, &unsaved(4));
+        assert_eq!(ticket_of(&want(&mut f, Want::Open, &clean())), 1);
+    }
+
+    #[test]
+    fn a_cancel_or_no_dialog_says_nothing_was_added() {
+        for (into, note) in [
+            (None, "nothing was added: no file was chosen"),
+            (Some(3), "nothing was imported: no file was chosen"),
+        ] {
+            let mut f = at("/l/a.relabel");
+            let t = ticket_of(&want(&mut f, Want::Image(into), &clean()));
+            assert_eq!(
+                chosen(&mut f, t, Picked::Nothing, &clean()),
+                FileOutcome::said(note)
+            );
+        }
+        let mut f = at("/l/a.relabel");
+        let t = ticket_of(&want(&mut f, Want::Image(None), &clean()));
+        assert_eq!(
+            chosen(&mut f, t, Picked::NoDialog, &clean()),
+            FileOutcome::said(
+                "nothing was added: no file dialog could be shown here (it needs a file-chooser \
+                 portal or zenity), and artwork can be imported no other way"
+            )
+        );
+        // Nothing is left waiting.
+        assert!(matches!(
+            want(&mut f, Want::Image(None), &clean()).next,
+            Next::Choose { .. }
+        ));
+    }
+
+    /// A chosen file is read off the event loop, and while it is, only a second
+    /// import is refused.
+    #[test]
+    fn a_chosen_file_is_one_import_in_flight() {
+        let mut f = at("/l/a.relabel");
+        let t = ticket_of(&want(&mut f, Want::Image(None), &clean()));
+        let out = chosen(&mut f, t, Picked::Path(path("/x/logo.png")), &clean());
+        assert_eq!(
+            out,
+            FileOutcome {
+                next: Next::Import {
+                    ticket: t + 1,
+                    path: path("/x/logo.png"),
+                    into: None,
+                },
+                note: Some("importing logo.png".into()),
+            }
+        );
+        let busy = FileOutcome::said("logo.png is still being imported; nothing else was started");
+        assert_eq!(want(&mut f, Want::Image(None), &clean()), busy);
+        assert_eq!(want(&mut f, Want::Image(Some(3)), &clean()), busy);
+        assert_eq!(
+            want(&mut f, Want::Save, &unsaved(2)).next,
+            Next::Write(path("/l/a.relabel"))
+        );
+        f.apply(
+            FileCmd::Wrote {
+                to: path("/l/a.relabel"),
+                result: Ok(()),
+            },
+            &clean(),
+        );
+        assert_eq!(
+            want(&mut f, Want::Save, &clean()),
+            FileOutcome::said("no changes to save in a.relabel")
+        );
+        assert_eq!(want(&mut f, Want::Preview, &clean()).next, Next::Preview);
+        f.apply(FileCmd::PreviewClosed, &clean());
+        assert!(matches!(
+            want(&mut f, Want::Open, &unsaved(3)).next,
+            Next::Ask(_)
+        ));
+        reply(&mut f, Reply::Cancel, &unsaved(3));
+        let t = ticket_of(&want(&mut f, Want::Open, &clean()));
+        chosen(&mut f, t, Picked::Nothing, &clean());
+        // Still the one import, still owed.
+        assert_eq!(want(&mut f, Want::Image(None), &clean()), busy);
+    }
+
+    #[test]
+    fn a_result_is_placed_with_the_keyboard_only_for_an_add_with_nothing_showing() {
+        let focus_of = |out: FileOutcome| match out.next {
+            Next::Place { focus, .. } => focus,
+            other => panic!("expected the artwork placed, got {other:?}"),
+        };
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/x/logo.png", &clean());
+        let out = imported(&mut f, t, Ok(art()), &clean());
+        assert_eq!(
+            out,
+            FileOutcome::then(Next::Place {
+                into: None,
+                crumb: "logo.png".into(),
+                ready: art(),
+                focus: true,
+            })
+        );
+
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, Some(3), "/x/logo.png", &clean());
+        assert!(!focus_of(imported(&mut f, t, Ok(art()), &clean())));
+
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/x/logo.png", &clean());
+        want(&mut f, Want::Preview, &clean());
+        assert!(!focus_of(imported(&mut f, t, Ok(art()), &clean())));
+        assert!(f.previewing(), "the pane stays open");
+
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/x/logo.png", &clean());
+        want(&mut f, Want::New, &clean());
+        assert!(!focus_of(imported(&mut f, t, Ok(art()), &clean())));
+        assert_eq!(
+            want(&mut f, Want::Save, &clean()),
+            FileOutcome::said("finish or cancel the new label first"),
+            "the New label pane stays open"
+        );
+    }
+
+    /// Dropped, not queued, for a dialog answer's reasons: the document is
+    /// mid-gesture, or the question about unsaved work is showing.
+    #[test]
+    fn a_result_is_dropped_when_held_or_under_the_question() {
+        let pressed = Now {
+            pressed: true,
+            ..clean()
+        };
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/x/logo.png", &clean());
+        assert_eq!(
+            imported(&mut f, t, Ok(art()), &pressed),
+            FileOutcome::said(
+                "nothing was added: logo.png was read while an element was held; let go, then \
+                 choose Image again"
+            )
+        );
+        // The slot is free again.
+        assert!(matches!(
+            want(&mut f, Want::Image(None), &clean()).next,
+            Next::Choose { .. }
+        ));
+
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/x/logo.png", &clean());
+        want(&mut f, Want::Open, &unsaved(2));
+        assert_eq!(
+            imported(&mut f, t, Ok(art()), &unsaved(2)),
+            FileOutcome::said(
+                "nothing was added: logo.png was read while the window was asking about \
+                 unsaved changes; choose Image again"
+            )
+        );
+        // The question stays, and its answer goes ahead.
+        assert!(matches!(
+            reply(&mut f, Reply::DontSave, &unsaved(2)).next,
+            Next::Choose {
+                ask: Ask::Open { .. },
+                ..
+            }
+        ));
+
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, Some(3), "/x/logo.png", &clean());
+        let note = imported(&mut f, t, Ok(art()), &pressed).note.expect("said");
+        assert!(
+            note.starts_with("nothing was imported: logo.png was read while an element was held")
+                && note.ends_with("; let go, then press Import again once more"),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn an_import_error_is_said_with_the_file_name() {
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/x/logo.png", &clean());
+        assert_eq!(
+            imported(&mut f, t, Err("the file is empty".into()), &clean()),
+            FileOutcome::said("could not import logo.png: the file is empty; nothing was added")
+        );
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, Some(5), "/x/logo.png", &clean());
+        assert_eq!(
+            imported(&mut f, t, Err("element 5 is gone".into()), &clean()),
+            FileOutcome::said("could not import logo.png: element 5 is gone; nothing was imported")
+        );
+    }
+
+    /// The document the import was for is gone, so its answer is dropped; but the
+    /// worker still runs, and no second one starts beside it.
+    #[test]
+    fn opening_or_making_a_label_lets_a_running_import_go() {
+        for from in [
+            Source::File(path("/l/b.relabel")),
+            Source::New(d110_m_at(300)),
+        ] {
+            let mut f = at("/l/a.relabel");
+            let t = importing(&mut f, None, "/x/logo.png", &clean());
+            let out = f.apply(
+                FileCmd::Opened {
+                    from: from.clone(),
+                    result: Ok("the head runs down the side".into()),
+                },
+                &clean(),
+            );
+            let note = out.note.expect("said");
+            assert!(
+                note.ends_with("the head runs down the side; the import of logo.png was let go"),
+                "{note}"
+            );
+            assert_eq!(
+                want(&mut f, Want::Image(None), &clean()),
+                FileOutcome::said("logo.png is still being imported; nothing else was started"),
+                "{from:?}"
+            );
+            assert_eq!(
+                imported(&mut f, t, Ok(art()), &clean()),
+                FileOutcome::quiet()
+            );
+            assert!(
+                matches!(
+                    want(&mut f, Want::Image(None), &clean()).next,
+                    Next::Choose { .. }
+                ),
+                "{from:?}"
+            );
+        }
+
+        // An open that failed replaced nothing, and the import goes on.
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/x/logo.png", &clean());
+        let out = f.apply(
+            FileCmd::Opened {
+                from: Source::File(path("/l/bad.relabel")),
+                result: Err("it is empty".into()),
+            },
+            &clean(),
+        );
+        assert_eq!(
+            out,
+            FileOutcome::said("could not open bad.relabel: it is empty; a.relabel is still open")
+        );
+        assert!(matches!(
+            imported(&mut f, t, Ok(art()), &clean()).next,
+            Next::Place { .. }
+        ));
+    }
+
+    /// Nothing lands in a window that has closed.
+    #[test]
+    fn closing_the_window_lets_a_running_import_go() {
+        // Let go, not forgotten: until its answer comes the worker is still
+        // running, and no second one is started beside it.
+        let still = FileOutcome::said("logo.png is still being imported; nothing else was started");
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/x/logo.png", &clean());
+        assert_eq!(want(&mut f, Want::Close, &clean()).next, Next::Allow);
+        assert_eq!(want(&mut f, Want::Image(None), &clean()), still);
+        assert_eq!(
+            imported(&mut f, t, Ok(art()), &clean()),
+            FileOutcome::quiet()
+        );
+
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/x/logo.png", &clean());
+        want(&mut f, Want::Close, &unsaved(2));
+        assert_eq!(reply(&mut f, Reply::DontSave, &unsaved(2)).next, Next::Hide);
+        assert_eq!(want(&mut f, Want::Image(None), &unsaved(2)), still);
+        assert_eq!(
+            imported(&mut f, t, Ok(art()), &unsaved(2)),
+            FileOutcome::quiet()
+        );
+
+        // A close cancelled leaves the import to land.
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/x/logo.png", &clean());
+        want(&mut f, Want::Close, &unsaved(2));
+        reply(&mut f, Reply::Cancel, &unsaved(2));
+        assert!(matches!(
+            imported(&mut f, t, Ok(art()), &unsaved(2)).next,
+            Next::Place { .. }
+        ));
+    }
+
+    #[test]
+    fn a_stale_import_answer_is_quiet() {
+        let mut f = at("/l/a.relabel");
+        let t = importing(&mut f, None, "/x/logo.png", &clean());
+        assert_eq!(
+            imported(&mut f, t + 1, Ok(art()), &clean()),
+            FileOutcome::quiet()
+        );
+        assert_eq!(
+            imported(&mut f, t - 1, Err("late".into()), &clean()),
+            FileOutcome::quiet()
+        );
+        assert!(matches!(
+            imported(&mut f, t, Ok(art()), &clean()).next,
+            Next::Place { .. }
+        ));
+        // Answered once, it is answered: the same ticket again is stale.
+        assert_eq!(
+            imported(&mut f, t, Ok(art()), &clean()),
+            FileOutcome::quiet()
+        );
+    }
+
+    #[test]
+    fn a_close_over_an_artwork_dialog_shelves_it() {
+        let mut f = at("/l/a.relabel");
+        let t = ticket_of(&want(&mut f, Want::Image(None), &unsaved(2)));
+        assert_eq!(
+            want(&mut f, Want::Close, &unsaved(2)).next,
+            Next::Ask("Save the changes to a.relabel before closing?".into())
+        );
+        assert_eq!(
+            chosen(&mut f, t, Picked::Path(path("/x/logo.png")), &unsaved(2)),
+            FileOutcome::said(
+                "nothing was added: logo.png was chosen while the window was asking whether to \
+                 close; choose Image again"
+            )
+        );
+        // Nothing was started, and the question is still the one showing.
+        assert_eq!(
+            reply(&mut f, Reply::Cancel, &unsaved(2)),
+            FileOutcome::said("nothing was closed")
+        );
+        assert!(matches!(
+            want(&mut f, Want::Image(None), &unsaved(2)).next,
+            Next::Choose { .. }
+        ));
+
+        // Cancelled, the dialog is pending again, and its answer is an import.
+        let mut f = at("/l/a.relabel");
+        let t = ticket_of(&want(&mut f, Want::Image(Some(3)), &unsaved(2)));
+        want(&mut f, Want::Close, &unsaved(2));
+        reply(&mut f, Reply::Cancel, &unsaved(2));
+        assert_eq!(
+            want(&mut f, Want::Image(None), &unsaved(2)),
+            FileOutcome::said("a file dialog is already open")
+        );
+        let out = chosen(&mut f, t, Picked::Path(path("/x/logo.png")), &unsaved(2));
+        assert!(
+            matches!(out.next, Next::Import { into: Some(3), .. }),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn a_file_chosen_while_held_is_dropped_for_artwork_too() {
+        let pressed = Now {
+            pressed: true,
+            ..clean()
+        };
+        for (into, note) in [
+            (
+                None,
+                "nothing was added: logo.png was chosen while an element was held; let go, then \
+                 choose Image again",
+            ),
+            (
+                Some(3),
+                "nothing was imported: logo.png was chosen while an element was held; let go, \
+                 then press Import again once more",
+            ),
+        ] {
+            let mut f = at("/l/a.relabel");
+            let t = ticket_of(&want(&mut f, Want::Image(into), &clean()));
+            assert_eq!(
+                chosen(&mut f, t, Picked::Path(path("/x/logo.png")), &pressed),
+                FileOutcome::said(note)
+            );
+            assert_eq!(f.wait, Wait::Idle);
+            assert_eq!(f.importing, None);
+        }
     }
 }

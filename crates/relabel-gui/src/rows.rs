@@ -360,6 +360,7 @@ macro_rules! impl_ins_host {
                     maximum: s.max,
                     step: s.step,
                     read_only: s.read_only,
+                    face: s.face.as_str().into(),
                 }
             }
         }
@@ -420,6 +421,11 @@ pub trait EditHost: CanvasHost {
 
     fn set_tools(&self, tools: slint::ModelRc<Self::Tool>);
     fn set_grips(&self, grips: Self::Grips);
+    /// Ask for artwork: a new image for -1, otherwise element `id`'s imported
+    /// again. Not the edit bar's to answer: a window whose files are wired answers
+    /// it through [`FileHost::on_import_artwork`], and one whose files are not
+    /// does nothing.
+    fn invoke_import_artwork(&self, id: i32);
 
     /// Answers whether an element was added, which decides whether the keyboard moves.
     fn on_add(&self, f: impl FnMut(i32) -> bool + 'static);
@@ -487,6 +493,9 @@ macro_rules! impl_edit_host {
             fn set_grips(&self, grips: $grips) {
                 <$win>::set_grips(self, grips)
             }
+            fn invoke_import_artwork(&self, id: i32) {
+                <$win>::invoke_import_artwork(self, id)
+            }
             fn on_add(&self, f: impl FnMut(i32) -> bool + 'static) {
                 <$win>::on_add(self, f)
             }
@@ -550,6 +559,11 @@ pub trait FileHost: InsHost + EditHost + ViewHost {
     fn on_new_make(&self, f: impl FnMut(slint::SharedString) + 'static);
     fn on_new_preset(&self, f: impl FnMut(i32) + 'static);
     fn on_new_cancel(&self, f: impl FnMut() + 'static);
+    /// Artwork asked for, by [`EditHost::invoke_import_artwork`]: -1 for a new
+    /// image, otherwise the element to import it into again.
+    fn on_import_artwork(&self, f: impl FnMut(i32) + 'static);
+    /// An action slot's button in the inspector, by its field token.
+    fn on_field_action(&self, f: impl FnMut(i32) + 'static);
 }
 
 /// Bind a compiled shell window and its preset struct to [`crate::file`]. Once for
@@ -631,6 +645,12 @@ macro_rules! impl_file_host {
             }
             fn on_new_cancel(&self, f: impl FnMut() + 'static) {
                 <$win>::on_new_cancel(self, f)
+            }
+            fn on_import_artwork(&self, f: impl FnMut(i32) + 'static) {
+                <$win>::on_import_artwork(self, f)
+            }
+            fn on_field_action(&self, f: impl FnMut(i32) + 'static) {
+                <$win>::on_field_action(self, f)
             }
         }
     };

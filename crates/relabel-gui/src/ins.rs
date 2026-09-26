@@ -14,11 +14,12 @@ use crate::doc::{Cmd, Doc};
 use crate::doc::{describe, kind_name};
 use crate::geom;
 use crate::rows::{InsHost, InsRow};
+use relabel_render::artwork;
 use relabel_render::barcode::{MIN_MODULE_DOTS, Symbology};
 use relabel_render::code2d::DM_SIZES;
 use relabel_render::document::{
-    Common, DmSize, Element, ElementId, GlyphRaster, ImageFit, ImageHalftone, Ink, LoadError, QrEc,
-    Rot, TextAlign, TextWeight,
+    Common, DmSize, Element, ElementId, GlyphRaster, ImageEl, ImageFit, ImageHalftone, Ink,
+    LoadError, QrEc, Rot, TextAlign, TextWeight,
 };
 use relabel_render::text;
 use slint::{Model, ModelRc, VecModel};
@@ -219,7 +220,7 @@ impl Field {
             Field::Artwork => "embedded PNG",
             Field::Fit => "contain, cover, stretch or dots",
             Field::Halftone => "threshold, floyd_steinberg, atkinson, sierra3 or bayer8",
-            Field::Threshold => "grey level",
+            Field::Threshold => "grey level; higher prints more",
             Field::StrokeDots => "dots; 0 fills",
             Field::RadiusDots => "dots",
             Field::ThicknessDots => "dots",
@@ -228,6 +229,10 @@ impl Field {
 
     /// What an empty field means, shown as placeholder text. Empty when an empty
     /// field means nothing at all.
+    ///
+    /// An image's empty halftone and threshold are the page's, which are
+    /// `Zone::PAGE`'s; `an_empty_halftone_or_threshold_says_what_the_page_uses`
+    /// holds the two spelled here to it.
     pub fn hint(self) -> &'static str {
         match self {
             Field::Name => "no name",
@@ -238,7 +243,8 @@ impl Field {
             Field::Version => "the smallest that fits",
             Field::DmSize => "no size",
             Field::Path => "not recorded",
-            Field::Halftone | Field::Threshold => "the page's",
+            Field::Halftone => "the page's: threshold",
+            Field::Threshold => "the page's: 128",
             _ => "",
         }
     }
@@ -313,6 +319,9 @@ impl Field {
 
     /// Which control this field is. A property of the field alone: whether the
     /// element is locked is the slot's business, not the field's.
+    ///
+    /// The artwork is a button rather than a row that is only read: there is
+    /// nothing to type into it, and what it offers is to import it again.
     pub fn shape(self) -> Shape {
         match self {
             Field::Feed
@@ -328,7 +337,8 @@ impl Field {
             | Field::Threshold
             | Field::StrokeDots
             | Field::ThicknessDots => Shape::Number,
-            Field::State | Field::Spec | Field::Artwork | Field::RadiusDots => Shape::Read,
+            Field::State | Field::Spec | Field::RadiusDots => Shape::Read,
+            Field::Artwork => Shape::Action,
             _ => Shape::Word,
         }
     }
@@ -355,13 +365,17 @@ impl Field {
     }
 }
 
-/// Which of the three controls a slot is, or none at all.
+/// Which of the four controls a slot is, or none at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shape {
     Unused,
     Number,
     Word,
     Read,
+    /// A button beside a summary: pressed, it asks for something to be done
+    /// rather than for a value. Its face is [`Slot::face`] and the summary is
+    /// the slot's value.
+    Action,
 }
 
 impl Shape {
@@ -373,6 +387,7 @@ impl Shape {
             Shape::Number => 1,
             Shape::Word => 2,
             Shape::Read => 3,
+            Shape::Action => 4,
         }
     }
 }
@@ -388,7 +403,12 @@ pub struct Slot {
     pub min: f32,
     pub max: f32,
     pub step: f32,
+    /// For an action, announced read-only as unavailable; pressing it is still
+    /// answered, with the refusal.
     pub read_only: bool,
+    /// What an action's button says, which is also the name it announces. Empty
+    /// for every other shape.
+    pub face: String,
 }
 
 impl Slot {
@@ -402,6 +422,7 @@ impl Slot {
             max: 0.0,
             step: 0.0,
             read_only: true,
+            face: String::new(),
         }
     }
 }
@@ -427,6 +448,7 @@ fn slot(e: &Element, f: Field, (min, max, step): (f32, f32, f32)) -> Slot {
         // is `Doc::write_field`'s, because no widget's own set-value action
         // checks the flag.
         read_only: shape == Shape::Read || e.common().locked,
+        face: String::new(),
     }
 }
 
@@ -502,10 +524,22 @@ fn kind_fields(e: &Element) -> &'static [Field] {
 }
 
 /// The rows that belong to this kind, in pane and Tab order.
-pub fn kind_slots(e: &Element) -> Vec<Slot> {
+///
+/// `upright` is the frame as the element's content sees it,
+/// `relabel_render::rasterise::local_size`'s answer, or `None` when it has no
+/// area: an image's artwork row says from it whether its artwork is drawn as
+/// imported.
+pub fn kind_slots(e: &Element, upright: Option<(u32, u32)>) -> Vec<Slot> {
     kind_fields(e)
         .iter()
-        .map(|&f| slot(e, f, f.range()))
+        .map(|&f| {
+            let mut s = slot(e, f, f.range());
+            if let (Element::Image(i), Field::Artwork) = (e, f) {
+                s.value = artwork_says(i, upright);
+                s.face = artwork_face(i).into();
+            }
+            s
+        })
         .collect()
 }
 
@@ -553,7 +587,7 @@ pub fn read(e: &Element, f: Field) -> String {
         (Element::DataMatrix(d), Field::DmSize) => String::from(d.size.clone()),
         (Element::DataMatrix(d), Field::Spec) => spec(d.out_of_spec),
         (Element::Image(i), Field::Path) => i.path.clone(),
-        (Element::Image(i), Field::Artwork) => artwork(&i.png),
+        (Element::Image(i), Field::Artwork) => artwork_says(i, None),
         (Element::Image(i), Field::Fit) => fit_spelling(&i.fit).to_string(),
         (Element::Image(i), Field::Halftone) => i
             .halftone
@@ -584,6 +618,9 @@ pub enum Wrote {
 
 /// Write one field of one element. `Err` is a refusal, already phrased.
 ///
+/// An action is refused in the words a read-only row is: it has no value to
+/// write, and what pressing it does is `filing`'s.
+///
 /// The only place a per-kind field is written, the way `Doc::write_frame` is the
 /// only place a frame is written. Matching on the element first, with no
 /// top-level wildcard, so an eighth element type fails to compile here; the
@@ -603,7 +640,7 @@ pub fn write(e: &mut Element, f: Field, text: &str) -> Result<Wrote, String> {
     if !COMMON.contains(&f) && !kind_fields(e).contains(&f) {
         return Err(format!("a {kind} has no {}", f.label()));
     }
-    if f.shape() == Shape::Read {
+    if matches!(f.shape(), Shape::Read | Shape::Action) {
         return Err(format!("{} is shown here and not edited", f.label()));
     }
     let (id, who) = {
@@ -1002,7 +1039,7 @@ fn closed(f: Field, text: &str) -> String {
     )
 }
 
-fn open_note(who: &str, f: Field, text: &str) -> Option<String> {
+pub(crate) fn open_note(who: &str, f: Field, text: &str) -> Option<String> {
     (!f.drawable_values().contains(&text)).then(|| undrawable(who, f, text))
 }
 
@@ -1040,7 +1077,7 @@ fn module_note(who: &str, v: u16, out_of_spec: bool) -> Option<String> {
     }
 }
 
-fn spoken_list(v: &[&str]) -> String {
+pub(crate) fn spoken_list(v: &[&str]) -> String {
     match v {
         [] => String::new(),
         [one] => (*one).to_string(),
@@ -1099,7 +1136,7 @@ fn fit_spelling(f: &ImageFit) -> &str {
     }
 }
 
-fn halftone_spelling(h: &ImageHalftone) -> &str {
+pub(crate) fn halftone_spelling(h: &ImageHalftone) -> &str {
     match h {
         ImageHalftone::Threshold => "threshold",
         ImageHalftone::FloydSteinberg => "floyd_steinberg",
@@ -1135,16 +1172,69 @@ fn state(c: &Common) -> String {
     }
 }
 
-/// The artwork's size, counted from the length of its base64 and never decoded:
-/// this row is rebuilt on every pointer move of a drag, and a PNG decode per
-/// moved dot is the cost the row must not have.
-fn artwork(png: &str) -> String {
-    if png.is_empty() {
-        return "no artwork".into();
+/// What the artwork row says: the artwork's size in dots, its size in bytes, and,
+/// given the frame as its content sees it, whether it is drawn as imported.
+///
+/// Never decoded: the size is read from the PNG's header, the first 24 bytes, by
+/// `artwork::stored_size`, and the byte count from the length of the base64. This
+/// row is rebuilt on every pointer move of a drag, and a PNG decode per moved dot
+/// is the cost the row must not have. The box is `artwork::fit_box`'s, the one the
+/// renderer draws with, and cropped is [`cropped_by_frame`]. No frame clause when
+/// the fit is one this build does not know or the frame has no area: the fit's own
+/// note and the renderer's report say those.
+pub fn artwork_says(i: &ImageEl, upright: Option<(u32, u32)>) -> String {
+    if i.png.is_empty() {
+        return "no artwork: it prints nothing, and printing is refused".into();
     }
-    let pad = png.bytes().rev().take_while(|&b| b == b'=').count();
-    let bytes = (png.len() / 4 * 3).saturating_sub(pad);
-    format!("embedded, {bytes} bytes")
+    let Some((w, h)) = artwork::stored_size(&i.png) else {
+        return "not a readable PNG: it will not be drawn".into();
+    };
+    let pad = i.png.bytes().rev().take_while(|&b| b == b'=').count();
+    let bytes = (i.png.len() / 4 * 3).saturating_sub(pad);
+    let size = format!("{w} by {h} dots, {bytes} bytes");
+    let Some((fw, fh)) = upright else {
+        return size;
+    };
+    let Some(p) = artwork::fit_box((w, h), (fw, fh), &i.fit) else {
+        return size;
+    };
+    // Resampled first: importing again ends a cover's crop as well.
+    if i.fit != ImageFit::Dots && (p.bw, p.bh) != (w, h) {
+        format!("{size}; resampled for its {fw} by {fh} frame: import it again")
+    } else if cropped_by_frame(i, (fw, fh)) {
+        format!("{size}; cropped by its frame")
+    } else {
+        format!("{size}; drawn as imported")
+    }
+}
+
+/// Whether image `i`'s artwork is cut by its frame, `upright` as its content sees
+/// it: fit dots with artwork larger than the frame, which the renderer reports as
+/// clipped, or fit cover with a box that overflows the frame, which it draws cut
+/// without a report. Artwork imported for its frame under cover is exactly the
+/// frame, so the second is a frame changed since. Read from the PNG's header, never
+/// decoded, for [`artwork_says`]'s reason.
+pub(crate) fn cropped_by_frame(i: &ImageEl, upright: (u32, u32)) -> bool {
+    let Some((w, h)) = artwork::stored_size(&i.png) else {
+        return false;
+    };
+    let (fw, fh) = upright;
+    match i.fit {
+        ImageFit::Dots => w > fw || h > fh,
+        ImageFit::Cover => {
+            artwork::fit_box((w, h), upright, &i.fit).is_some_and(|p| p.bw > fw || p.bh > fh)
+        }
+        _ => false,
+    }
+}
+
+/// The artwork button's face: an ellipsis, because it opens a dialog.
+fn artwork_face(i: &ImageEl) -> &'static str {
+    if i.png.is_empty() {
+        "Import\u{2026}"
+    } else {
+        "Import again\u{2026}"
+    }
 }
 
 fn radius(r: u16) -> String {
@@ -1322,7 +1412,7 @@ mod tests {
 
     fn all_slots(e: &Element) -> Vec<Slot> {
         let mut s = common_slots(e, REACH, LENS);
-        s.extend(kind_slots(e));
+        s.extend(kind_slots(e, None));
         s
     }
 
@@ -1361,7 +1451,7 @@ mod tests {
     #[test]
     fn the_fields_each_kind_shows_are_exactly_the_keys_that_kind_writes() {
         for e in every_kind() {
-            let mut shown: Vec<&str> = kind_slots(&e)
+            let mut shown: Vec<&str> = kind_slots(&e, None)
                 .iter()
                 .filter_map(|s| s.field.key())
                 .collect();
@@ -1479,7 +1569,10 @@ mod tests {
             .chain(blank_kinds())
             .chain(unusual_kinds())
         {
-            for s in all_slots(&e).into_iter().filter(|s| s.shape != Shape::Read) {
+            for s in all_slots(&e)
+                .into_iter()
+                .filter(|s| matches!(s.shape, Shape::Number | Shape::Word))
+            {
                 let mut again = e.clone();
                 assert_eq!(
                     write(&mut again, s.field, &read(&e, s.field)),
@@ -1763,6 +1856,114 @@ mod tests {
                 assert!(s.read_only, "{:?} announces itself read-only", s.field);
             }
         }
+    }
+
+    /// An image of `png` in a frame of `upright`, with `fit`; locked or not.
+    fn image_with(png: String, fit: ImageFit, locked: bool) -> Element {
+        let mut e = of_kind(every_kind(), "image");
+        if let Element::Image(i) = &mut e {
+            i.png = png;
+            i.fit = fit;
+            i.common.locked = locked;
+        }
+        e
+    }
+
+    fn artwork_slot(e: &Element, upright: (u32, u32)) -> Slot {
+        kind_slots(e, Some(upright))
+            .into_iter()
+            .find(|s| s.field == Field::Artwork)
+            .expect("an image has an artwork row")
+    }
+
+    #[test]
+    fn the_artwork_row_is_a_button_with_its_face_and_summary() {
+        use crate::import::fixtures::{art, stored};
+        let png = stored(art(240, 80, |x, _| if x % 3 == 0 { 0 } else { 255 }));
+        let pad = png.bytes().rev().take_while(|&b| b == b'=').count();
+        let bytes = png.len() / 4 * 3 - pad;
+        let size = format!("240 by 80 dots, {bytes} bytes");
+        let e = image_with(png.clone(), ImageFit::Contain, false);
+        let s = artwork_slot(&e, (240, 80));
+        assert_eq!(Shape::Action.ordinal(), 4);
+        assert_eq!(
+            (s.shape, s.face.as_str(), s.value.clone(), s.read_only),
+            (
+                Shape::Action,
+                "Import again\u{2026}",
+                format!("{size}; drawn as imported"),
+                false
+            )
+        );
+        assert_eq!(
+            artwork_slot(&e, (320, 96)).value,
+            format!("{size}; resampled for its 320 by 96 frame: import it again")
+        );
+        let dots = image_with(png.clone(), ImageFit::Dots, false);
+        assert_eq!(
+            artwork_slot(&dots, (200, 80)).value,
+            format!("{size}; cropped by its frame")
+        );
+        // A cover in a frame it was not imported for: nothing resampled, and most
+        // of it cut away.
+        let cover = image_with(png.clone(), ImageFit::Cover, false);
+        assert_eq!(
+            artwork_slot(&cover, (240, 80)).value,
+            format!("{size}; drawn as imported")
+        );
+        assert_eq!(
+            artwork_slot(&cover, (240, 20)).value,
+            format!("{size}; cropped by its frame")
+        );
+        assert_eq!(
+            artwork_slot(&cover, (480, 20)).value,
+            format!("{size}; resampled for its 480 by 20 frame: import it again")
+        );
+        // No frame clause for a fit this build does not know, or with no frame.
+        let tile = image_with(png.clone(), ImageFit::Unknown("tile".into()), false);
+        assert_eq!(artwork_slot(&tile, (240, 80)).value, size);
+        assert_eq!(read(&e, Field::Artwork), size);
+        let empty = image_with(String::new(), ImageFit::Contain, false);
+        let s = artwork_slot(&empty, (240, 80));
+        assert_eq!(
+            (s.face.as_str(), s.value.as_str()),
+            (
+                "Import\u{2026}",
+                "no artwork: it prints nothing, and printing is refused"
+            )
+        );
+        let junk = image_with("xxxx".repeat(20), ImageFit::Contain, false);
+        assert_eq!(
+            artwork_slot(&junk, (240, 80)).value,
+            "not a readable PNG: it will not be drawn"
+        );
+        // Read-only exactly when locked; and never a value to write.
+        assert!(artwork_slot(&image_with(png, ImageFit::Contain, true), (240, 80)).read_only);
+        let mut again = e.clone();
+        assert_eq!(
+            write(&mut again, Field::Artwork, "x"),
+            Err("artwork is shown here and not edited".into())
+        );
+        assert_eq!(again, e);
+        // Every other slot has no face.
+        for other in every_kind() {
+            for s in all_slots(&other) {
+                assert_eq!(s.face.is_empty(), s.shape != Shape::Action, "{:?}", s.field);
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_halftone_or_threshold_says_what_the_page_uses() {
+        use relabel_render::halftone::{Halftone, Zone};
+        assert_eq!(Field::Halftone.hint(), "the page's: threshold");
+        assert_eq!(Field::Threshold.hint(), "the page's: 128");
+        assert_eq!(Field::Threshold.unit(), "grey level; higher prints more");
+        // The two spelled above are the page's own.
+        assert_eq!(
+            (Zone::PAGE.halftone, Zone::PAGE.threshold),
+            (Halftone::Threshold, 128)
+        );
     }
 
     #[test]

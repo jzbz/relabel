@@ -152,6 +152,39 @@ fn what_relabel_does_not_draw_is_refused() {
     assert_eq!(refusal(&nested(9)), SvgRefusal::TooDeep(9));
 }
 
+/// Dashes are counted over the whole drawing before any is drawn. tiny-skia
+/// stops dashing one path past a million dashes, but a few thousand short paths
+/// each dashed far finer than a dot stay under that one by one, and together
+/// cost minutes of work while every later import waits.
+#[test]
+fn dashes_finer_than_a_dot_are_counted_before_drawing() {
+    let paths = |n: usize, dash: &str| {
+        let mut s = format!(r#"<svg {NS} width="30" height="10" viewBox="0 0 30 10">"#);
+        for i in 0..n {
+            let y = 0.5 + (i % 9) as f32;
+            s += &format!(
+                r#"<path d="M0 {y} L30 {y}" stroke="black" stroke-width="0.1" stroke-dasharray="{dash}"/>"#
+            );
+        }
+        s + "</svg>"
+    };
+    // An ordinary dashed rule draws, and so does one near the cap.
+    assert!(import(&paths(4, "2 1"), (96, 96), ImageFit::Contain).is_ok());
+    assert!(import(&paths(6, "0.0001"), (96, 96), ImageFit::Contain).is_ok());
+    // Twenty paths of 150000 dashes each: under tiny-skia's cap one by one.
+    let began = std::time::Instant::now();
+    let r = refusal(&paths(20, "0.0001"));
+    assert!(
+        began.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        began.elapsed()
+    );
+    assert_eq!(
+        r.to_string(),
+        "the SVG's dashed lines come to 3000000 dashes; relabel draws at most 1000000"
+    );
+}
+
 /// The ways a file can be too much, or not SVG at all.
 #[test]
 fn oversized_compressed_and_malformed_files_are_refused() {
@@ -241,6 +274,13 @@ fn svg_cover_and_dots_are_centred() {
     let i = import(&half, (50, 50), ImageFit::Cover).unwrap();
     assert_eq!((i.art.w, i.art.h), (50, 50));
     assert!(i.art.px[25 * 50 + 10] == 0 && i.art.px[25 * 50 + 40] == 255);
+    assert_eq!(
+        i.notes,
+        vec![ImportNote::CoverCropped {
+            from: (100, 50),
+            to: (50, 50)
+        }]
+    );
     let i = import(&half, (40, 40), ImageFit::Dots).unwrap();
     assert_eq!((i.art.w, i.art.h), (40, 40));
     assert!(i.art.px[20 * 40 + 10] == 0 && i.art.px[20 * 40 + 30] == 255);

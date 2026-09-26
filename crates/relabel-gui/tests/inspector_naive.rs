@@ -53,6 +53,7 @@ fn slots_with_feed(value: &str) -> Vec<InsSlot> {
         max: 319.0,
         step: 1.0,
         read_only: false,
+        face: String::new(),
     });
     slots
 }
@@ -69,6 +70,7 @@ fn as_row(s: &Slot) -> InsSlot {
         maximum: s.max,
         step: s.step,
         read_only: s.read_only,
+        face: s.face.as_str().into(),
     }
 }
 

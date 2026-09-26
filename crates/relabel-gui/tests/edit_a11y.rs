@@ -87,6 +87,13 @@ fn the_toolbar_buttons_are_named_and_described_and_none_is_a_tab_stop() {
             "{name} says its chord"
         );
     }
+    // The seventh, which asks for artwork rather than adding from nothing.
+    assert_eq!(
+        button_of(&ui, "Add image")
+            .accessible_description()
+            .as_deref(),
+        Some("Control+Shift+I")
+    );
     assert_eq!(
         button_of(&ui, "Delete element")
             .accessible_description()
@@ -241,12 +248,19 @@ fn the_toolbar_row_leaves_the_view_and_the_pane_in_the_window() {
         assert_eq!(canvas.borrow().zoom(), want, "at {scale}x");
         ui.invoke_select(1);
         let (add, zoom_in) = (button_of(&ui, "Add text"), button_of(&ui, "Zoom in"));
+        let image = button_of(&ui, "Add image");
         assert_eq!(
-            add.absolute_position().y,
-            zoom_in.absolute_position().y,
-            "at {scale}x the toolbar shares the zoom bar's row"
+            image.accessible_description().as_deref(),
+            Some("Control+Shift+I")
         );
-        assert_eq!(add.size().height, 28.0, "at {scale}x");
+        for b in [&add, &image] {
+            assert_eq!(
+                b.absolute_position().y,
+                zoom_in.absolute_position().y,
+                "at {scale}x the toolbar shares the zoom bar's row"
+            );
+            assert_eq!(b.size().height, 28.0, "at {scale}x");
+        }
         assert_eq!(zoom_in.size().height, 28.0, "at {scale}x");
         let (delete, fit) = (
             button_of(&ui, "Delete element"),

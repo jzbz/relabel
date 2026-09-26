@@ -44,9 +44,10 @@ export struct ElRow {
 // not know that element kinds exist: `Element::own_keys` answers which fields a
 // kind has, and that answer must not exist twice.
 export struct InsSlot {
-    // 0 unused, 1 a number, 2 a string, 3 read-only. Not an exported Slint enum,
-    // for `ElRow.keepout`'s reason: a shape this build does not know must draw as
-    // nothing rather than fall out of a match.
+    // 0 unused, 1 a number, 2 a string, 3 read-only, 4 an action, drawn as a
+    // button. Not an exported Slint enum, for `ElRow.keepout`'s reason: a shape
+    // this build does not know must draw as nothing rather than fall out of a
+    // match.
     shape: int,
     // An opaque token minted by relabel-gui's `ins` module and handed straight
     // back in the callbacks. Nothing in this file reads it or compares it, which
@@ -74,6 +75,9 @@ export struct InsSlot {
     // std SpinBox's, which announces (maximum - minimum) / 100.
     step: float,
     read-only: bool,
+    // What an action's button says, and the name it announces. Only an action uses
+    // it; every other shape leaves it empty.
+    face: string,
 }
 
 // One button of the edit bar, pushed once from `make::Kind`: the face, the name an

@@ -1,7 +1,8 @@
 //! Labels and handles the canvas tests share. Nothing here touches the
 //! toolkit except the element-tree helpers, each about one trap, the two
-//! choosers the file tests stand in for a file dialog, and the two plugs the
-//! file and print tests stand in for the printer link.
+//! choosers the file tests stand in for a file dialog, the two importers they
+//! stand in for the worker thread, and the two plugs the file and print tests
+//! stand in for the printer link.
 
 // Shared by several test binaries, each of which uses part of it.
 #![allow(dead_code)]
@@ -10,6 +11,7 @@ use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementQuery};
 use relabel_core::link::mock::{MockLink, MockOpener};
 use relabel_core::link::{Events, Finished, Heard, Link, Order};
 use relabel_gui::choose::{Answer, Ask, Chooser, NoDialog, Picked};
+use relabel_gui::import::{self, Done, Importer, Job, NoWorker};
 use relabel_gui::plug::{Deliver, News, Plug};
 use relabel_render::document::{
     Common, Element, ElementId, ElementOrRaw, Label, RectDots, RectEl, Rot,
@@ -189,16 +191,43 @@ pub fn field_of(probe: &impl slint::ComponentHandle, label: &str) -> ElementHand
     })
 }
 
-/// Every inspector field in the tree, in tree order, which is pane and Tab order.
+/// Every inspector field in the tree, in tree order, which is pane and Tab order:
+/// the three roles a value has, and the buttons an action slot is, which are the
+/// only buttons inside the pane. Empty when the pane is not shown.
 pub fn fields_of(probe: &impl slint::ComponentHandle) -> Vec<ElementHandle> {
-    ElementQuery::from_root(probe)
+    let Some(pane) = group_of(probe, "Element") else {
+        return Vec::new();
+    };
+    pane.query_descendants()
         .match_predicate(|h| {
-            is_field_role(h)
+            (is_field_role(h) || h.accessible_role() == Some(AccessibleRole::Button))
                 && !h
                     .accessible_label()
                     .is_some_and(|l| NOT_FIELDS.contains(&l.as_str()))
         })
         .find_all()
+}
+
+/// An action slot's button in the inspector, by its face, which is the name it
+/// announces. Only inside the pane, so an edit bar button that happened to share
+/// the face could not be taken for it; and at most one, for [`find_field`]'s
+/// reason.
+pub fn action_of(probe: &impl slint::ComponentHandle, face: &str) -> ElementHandle {
+    let pane = group_of(probe, "Element").expect("the pane, shown with a selection");
+    let wanted = face.to_string();
+    let mut found = pane
+        .query_descendants()
+        .match_accessible_role(AccessibleRole::Button)
+        .match_predicate(move |h| h.accessible_label().is_some_and(|l| l == wanted.as_str()))
+        .find_all();
+    assert!(
+        found.len() <= 1,
+        "{} buttons in the pane announce themselves as {face:?}",
+        found.len()
+    );
+    found
+        .pop()
+        .unwrap_or_else(|| panic!("no button in the pane is called {face:?}"))
 }
 
 /// The status line.
@@ -484,6 +513,53 @@ impl Chooser for Held {
     fn ask(&self, ask: Ask, answer: Answer) -> Result<(), NoDialog> {
         self.asked.borrow_mut().push(ask);
         *self.answer.borrow_mut() = Some(answer);
+        Ok(())
+    }
+}
+
+/// An importer that reads and decodes on the test's own thread and answers at once,
+/// from inside `start`, as a test's chooser does: the application's own read and
+/// decode, with no worker and no event loop.
+pub struct InlineImporter;
+
+impl Importer for InlineImporter {
+    fn start(&self, job: Job, done: Done) -> Result<(), NoWorker> {
+        done(import::run(&job).map(Box::new));
+        Ok(())
+    }
+}
+
+/// An importer whose job waits until the test lets it run, as a slow decode does
+/// while the operator goes on working.
+#[derive(Default)]
+pub struct HeldImporter {
+    held: RefCell<Option<(Job, Done)>>,
+    jobs: RefCell<Vec<Job>>,
+}
+
+impl HeldImporter {
+    /// Every job started so far, oldest first.
+    pub fn jobs(&self) -> Vec<Job> {
+        self.jobs.borrow().clone()
+    }
+
+    /// Whether a job is waiting to be let run.
+    pub fn holds(&self) -> bool {
+        self.held.borrow().is_some()
+    }
+
+    /// Run the job held, and deliver its answer.
+    pub fn release(&self) {
+        let (job, done) = self.held.borrow_mut().take().expect("a job is held");
+        done(import::run(&job).map(Box::new));
+    }
+}
+
+impl Importer for HeldImporter {
+    fn start(&self, job: Job, done: Done) -> Result<(), NoWorker> {
+        self.jobs.borrow_mut().push(job.clone());
+        let already = self.held.borrow_mut().replace((job, done));
+        assert!(already.is_none(), "one import at a time");
         Ok(())
     }
 }

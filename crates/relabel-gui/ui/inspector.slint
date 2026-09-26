@@ -1,7 +1,7 @@
-import { LineEdit } from "std-widgets.slint";
+import { LineEdit, Palette } from "std-widgets.slint";
 import { InsSlot } from "types.slint";
 
-// One slot of the inspector, in one of three shapes.
+// One slot of the inspector, in one of four shapes.
 //
 // # Nothing here is bound to a property a widget writes
 //
@@ -18,10 +18,12 @@ import { InsSlot } from "types.slint";
 // visibility, the read-only flag - is an ordinary binding onto `spec`, which no
 // widget writes and therefore cannot destroy.
 //
-// # Why three shapes rather than one with a role that follows the field
+// # Why four shapes rather than one with a role that follows the field
 //
 // `accessible-role` must be a constant expression: the compiler refuses anything
-// else (passes/lower_accessibility.rs:25-38). A ternary role does not build.
+// else (passes/lower_accessibility.rs:25-38). A ternary role does not build. So a
+// number, a string, a row that is only read and an action are four branches, and
+// the shape decides which one is visible.
 //
 // # Why a field's focus change is not the operator entering or leaving it
 //
@@ -53,6 +55,9 @@ component Slot inherits Rectangle {
     callback edited(field: int, value: string);
     callback commit();
     callback stepped(field: int, by: int);
+    // An action's button was pressed, by any route. Raised for a read-only one too:
+    // what pressing it does, and why it is refused, is Rust's to say.
+    callback act(field: int);
 
     // Which slot the keyboard is in, or -1, as an operator would say it: a window
     // losing activation or a context menu opening does not change it. Shared by all
@@ -62,7 +67,7 @@ component Slot inherits Rectangle {
     // This slot's number in that count.
     in property <int> index;
     // Whether this slot's editor has the keyboard at this moment, read from focus.
-    out property <bool> has-keyboard: num.has-focus || word-edit.has-focus;
+    out property <bool> has-keyboard: num.has-focus || word-edit.has-focus || press.has-focus;
 
     // The keyboard arriving in this slot's editor, by any route.
     function arrive() {
@@ -320,6 +325,92 @@ component Slot inherits Rectangle {
                     }
                 }
             }
+
+            // --- an action ---
+            //
+            // A button, and beside it what it acts on, said in one line. The one node
+            // is the button: named by its face, described by the summary, and
+            // announced unavailable when the element is locked. Still a Tab stop
+            // then, and still answered when pressed, because a button that cannot
+            // be reached cannot say why it does nothing; the refusal is Rust's.
+            act := Rectangle {
+                visible: root.spec.shape == 4;
+                accessible-role: AccessibleRole.button;
+                accessible-label: root.spec.face;
+                accessible-description: root.spec.value;
+                accessible-enabled: !root.spec.read-only;
+                accessible-action-default => {
+                    root.act(root.spec.field);
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    // Hand-rolled on a FocusScope rather than the std Button, so its
+                    // focus is this slot's: arriving on it is an arrival, which
+                    // commits what the last field held and lets F6 leave from here,
+                    // and while it has the keyboard `has-keyboard` is true, so the
+                    // shell turns down Delete, Backspace and the arrows instead of
+                    // deleting or nudging the element. Exactly as wide as a text
+                    // field, whatever the face says, so the pane is one width
+                    // whatever is selected, for the unit's reason; elided past that.
+                    press := FocusScope {
+                        width: word-edit.min-width;
+                        focus-on-click: false;
+                        key-pressed(event) => {
+                            if (event.text == Key.Space || event.text == Key.Return) {
+                                root.act(root.spec.field);
+                                return EventResult.accept;
+                            }
+                            return EventResult.reject;
+                        }
+                        changed has-focus => {
+                            if (self.has-focus) {
+                                root.arrive();
+                            }
+                        }
+
+                        Rectangle {
+                            y: (parent.height - self.height) / 2;
+                            height: 28px;
+                            border-radius: 4px;
+                            border-width: press.has-focus ? 2px : 1px;
+                            border-color: press.has-focus ? Palette.accent-background : Palette.border;
+                            background: touch.pressed ? Palette.alternate-background : Palette.control-background;
+                            opacity: root.spec.read-only ? 0.6 : 1.0;
+                            Text {
+                                x: 4px;
+                                width: parent.width - 8px;
+                                height: parent.height;
+                                text: root.spec.face;
+                                color: Palette.control-foreground;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                accessible-role: AccessibleRole.none;
+                            }
+                            // The keyboard first, so the button pressed is the one
+                            // the keyboard is on afterwards, as with any button.
+                            touch := TouchArea {
+                                clicked => {
+                                    press.focus();
+                                    root.act(root.spec.field);
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.spec.value;
+                        vertical-alignment: center;
+                        // For the read row's reason: a long summary is elided
+                        // inside the pane rather than widening it.
+                        preferred-width: 0px;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                        accessible-role: AccessibleRole.none;
+                    }
+                }
+            }
         }
     }
 }
@@ -346,6 +437,8 @@ export component Inspector inherits Rectangle {
     callback field-edited(field: int, value: string);
     callback field-commit();
     callback field-stepped(field: int, by: int);
+    // An action slot's button, by the field token its slot carries.
+    callback field-action(field: int);
 
     // Which slot the keyboard is in, or -1; see `Slot.arrive`. Set by a slot when
     // the keyboard arrives in it and by the shell when the canvas takes it.
@@ -457,6 +550,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f1 := Slot {
                 index: 1;
@@ -465,6 +559,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f2 := Slot {
                 index: 2;
@@ -473,6 +568,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f3 := Slot {
                 index: 3;
@@ -481,6 +577,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f4 := Slot {
                 index: 4;
@@ -489,6 +586,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f5 := Slot {
                 index: 5;
@@ -497,6 +595,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f6 := Slot {
                 index: 6;
@@ -505,6 +604,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f7 := Slot {
                 index: 7;
@@ -513,6 +613,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f8 := Slot {
                 index: 8;
@@ -521,6 +622,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f9 := Slot {
                 index: 9;
@@ -529,6 +631,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f10 := Slot {
                 index: 10;
@@ -537,6 +640,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f11 := Slot {
                 index: 11;
@@ -545,6 +649,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f12 := Slot {
                 index: 12;
@@ -553,6 +658,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f13 := Slot {
                 index: 13;
@@ -561,6 +667,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f14 := Slot {
                 index: 14;
@@ -569,6 +676,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
             f15 := Slot {
                 index: 15;
@@ -577,6 +685,7 @@ export component Inspector inherits Rectangle {
                 edited(f, v) => { root.field-edited(f, v); }
                 commit() => { root.field-commit(); }
                 stepped(f, b) => { root.field-stepped(f, b); }
+                act(f) => { root.field-action(f); }
             }
         }
     }

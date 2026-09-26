@@ -60,6 +60,14 @@ pub fn say(
     s
 }
 
+/// The sentence of an image with no artwork, which draws nothing and which
+/// printing refuses: said last, after what [`say`] says, and carrying no number,
+/// so [`parse_say`] reads the placement back as before.
+pub fn flag_no_artwork(mut say: String) -> String {
+    say.push_str(", no artwork");
+    say
+}
+
 /// Said aloud, so it is a phrase rather than a code. The four are
 /// [`Keepout`]'s own order of how much the operator loses.
 pub(crate) fn keepout_phrase(k: Keepout) -> &'static str {
@@ -234,5 +242,15 @@ mod tests {
         let said = say("Rectangle", name, frame(5, 6, 40, 24), false, false, None);
         assert!(said.contains("Joe's 'best'"), "{said}");
         assert!(!said.contains(typed), "{said}");
+    }
+
+    #[test]
+    fn a_missing_artwork_is_the_last_thing_said_and_reads_back() {
+        let s = flag_no_artwork(say("Image", "", frame(8, 8, 64, 32), true, false, None));
+        assert_eq!(
+            s,
+            "Image, feed 8, head 8, 64 by 32 dots, locked, no artwork"
+        );
+        assert_eq!(parse_say(&s), Some((8, 8)));
     }
 }

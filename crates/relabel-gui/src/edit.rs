@@ -1,5 +1,6 @@
 //! The edit bar's wiring and the grips': adding an element, deleting one, and
-//! resizing one by pointer.
+//! resizing one by pointer. The bar's Image tool only asks for artwork, which the
+//! file commands read and place (`crate::file`).
 //!
 //! Called after [`crate::canvas::wire`] and [`crate::ins::wire`], and before
 //! [`crate::view::wire`], which replaces the canvas's `end-move` handler with one
@@ -10,7 +11,7 @@
 use crate::canvas::{Canvas, PanePush};
 use crate::doc::{Cmd, Doc};
 use crate::geom::Grip;
-use crate::make::Kind;
+use crate::make::{self, Kind};
 use crate::rows::{EditHost, GripsRow, ToolRow};
 use relabel_render::document::ElementId;
 use slint::{ModelRc, VecModel};
@@ -23,8 +24,17 @@ type Offered = Option<(ElementId, [i32; 3])>;
 /// Wire the edit bar and the grips to the document the canvas already has.
 pub fn wire<H: EditHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>) {
     // Once: the kinds are this build's, and a model that never changes is never
-    // reset.
-    let tools: Vec<H::Tool> = Kind::ALL.into_iter().map(H::Tool::of).collect();
+    // reset. The image last, since it is the one that opens a dialog.
+    let tools: Vec<H::Tool> = Kind::ALL
+        .into_iter()
+        .map(H::Tool::of)
+        .chain([H::Tool::plain(
+            make::IMAGE_TOOL,
+            make::IMAGE_CAPTION,
+            make::IMAGE_BUTTON_NAME,
+            make::IMAGE_KEYS,
+        )])
+        .collect();
     host.set_tools(ModelRc::new(VecModel::from(tools)));
 
     // After every outcome. While a pointer is down the rooms are the ones the press
@@ -51,7 +61,19 @@ pub fn wire<H: EditHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>) {
     {
         let (weak, canvas) = (host.as_weak(), canvas.clone());
         host.on_add(move |token| {
-            let (Some(host), Some(kind)) = (weak.upgrade(), Kind::from_token(token)) else {
+            let Some(host) = weak.upgrade() else {
+                return false;
+            };
+            // An image is made from artwork, so it is asked for rather than added:
+            // the file commands' to sequence, with no borrow taken here, since a
+            // test's dialog and importer answer before the call returns. Nothing
+            // is added yet, so the keyboard stays where it was; the artwork, once
+            // placed, moves it.
+            if token == make::IMAGE_TOOL {
+                host.invoke_import_artwork(-1);
+                return false;
+            }
+            let Some(kind) = Kind::from_token(token) else {
                 return false;
             };
             let mut c = canvas.borrow_mut();
@@ -63,8 +85,8 @@ pub fn wire<H: EditHost>(host: &H, canvas: &Rc<RefCell<Canvas<H>>>) {
             c.doc().label().elements.len() > before
         });
     }
-    // Needs no document: which letters are chords is `Kind`'s alone.
-    host.on_kind_of_key(|text| Kind::from_letter(&text).map_or(-1, Kind::token));
+    // Needs no document: which letters are chords is `make`'s alone.
+    host.on_kind_of_key(|text| make::tool_of_letter(&text));
     {
         let (weak, canvas) = (host.as_weak(), canvas.clone());
         host.on_delete_element(move |id| {

@@ -108,13 +108,21 @@ pub fn load_bytes(
     Ok(binarise(&grey, &BinariseOpts::with_zones(&zones)))
 }
 
-/// Import chose a threshold of 187 for this line art - see
-/// [`artwork::LINE_ART_THRESHOLD`] - and the command line asked for less,
-/// which will thin its strokes: say why, and what to pass instead.
+/// Import chose 187 for this line art - see [`artwork::LINE_ART_THRESHOLD`] and
+/// [`artwork::join_thin_strokes`] - and the command line asked for less, which
+/// thins its strokes or loses them: say why and what to pass instead, and where
+/// import drew strokes shrunk thinner than a dot at 187, that a lower threshold
+/// leaves them out.
 fn threshold_hint(imported: &Imported, dither: Dither, threshold: u8) -> Option<String> {
     let t = artwork::LINE_ART_THRESHOLD;
     if dither != Dither::Threshold || imported.threshold != t || threshold >= t {
         return None;
+    }
+    if imported.resampled && imported.joined > 0 {
+        return Some(format!(
+            "this line art was resampled, and its strokes shrunk thinner than a dot are drawn \
+             whole, one dot wide, at {t}; --threshold {t} prints them"
+        ));
     }
     let why = if imported.resampled {
         "was resampled"
@@ -307,6 +315,176 @@ mod tests {
             .unwrap();
         let hint = threshold_hint(&soft, Dither::Threshold, 128).unwrap();
         assert!(hint.contains("soft edges"), "{hint}");
+    }
+
+    /// Strokes 2 pixels wide, every 30, shrunk to the head: a third of a dot
+    /// wide, so import drew them whole and one dot wide at 187, and the hint says
+    /// that a lower threshold leaves them out.
+    #[test]
+    fn the_threshold_hint_says_thin_strokes_are_drawn_whole_at_187() {
+        let px: Vec<u8> = (0..600 * 600)
+            .map(|i| if i % 600 % 30 < 2 { 0 } else { 255 })
+            .collect();
+        let mut lines = Vec::new();
+        PngEncoder::new(&mut lines)
+            .write_image(&px, 600, 600, image::ExtendedColorType::L8)
+            .unwrap();
+        let thin = artwork::import_within(&lines, (Some(96), None), Dpmm::DPI_203).unwrap();
+        assert_eq!(thin.threshold, artwork::LINE_ART_THRESHOLD);
+        assert_eq!(
+            threshold_hint(&thin, Dither::Threshold, 128).as_deref(),
+            Some(
+                "this line art was resampled, and its strokes shrunk thinner than a dot are \
+                 drawn whole, one dot wide, at 187; --threshold 187 prints them"
+            )
+        );
+        assert_eq!(threshold_hint(&thin, Dither::Threshold, 187), None);
+    }
+
+    /// A sparse 1-bit dither, one pixel in a hundred, is a tint and not strokes:
+    /// from the command line at 187 it prints as paper, and the hint says only
+    /// that it was resampled.
+    #[test]
+    fn a_sparse_dither_prints_as_paper_and_the_hint_draws_no_strokes() {
+        let mut state: u64 = 7;
+        let px: Vec<u8> = (0..600 * 600)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                if (state >> 33).is_multiple_of(100) {
+                    0
+                } else {
+                    255
+                }
+            })
+            .collect();
+        let mut file = Vec::new();
+        PngEncoder::new(&mut file)
+            .write_image(&px, 600, 600, image::ExtendedColorType::L8)
+            .unwrap();
+        let tint = artwork::import_within(&file, (Some(96), None), Dpmm::DPI_203).unwrap();
+        assert_eq!(
+            (tint.threshold, tint.joined),
+            (artwork::LINE_ART_THRESHOLD, 0)
+        );
+        assert_eq!(
+            threshold_hint(&tint, Dither::Threshold, 128).as_deref(),
+            Some("this line art was resampled; --threshold 187 keeps more of its strokes")
+        );
+        let p = load_bytes(
+            &file,
+            96,
+            PrintDirection::Top,
+            Dpmm::DPI_203,
+            Dither::Threshold,
+            187,
+            false,
+        )
+        .unwrap();
+        let on = (0..p.height())
+            .flat_map(|y| (0..p.width()).map(move |x| (x, y)))
+            .filter(|&(x, y)| p.get(x, y))
+            .count();
+        assert_eq!(on, 0, "the dither prints");
+    }
+
+    /// A dense 1-bit dither, three pixels in ten, shrunk only two times to the
+    /// head: its clumps reach several dots, but lie among dozens of others, so
+    /// they are tone, and the hint draws no strokes.
+    #[test]
+    fn a_dense_dither_shrunk_two_times_draws_no_strokes_in_the_hint() {
+        let mut state: u64 = 11;
+        let px: Vec<u8> = (0..192 * 192)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                if (state >> 33) % 10 < 3 { 0 } else { 255 }
+            })
+            .collect();
+        let mut file = Vec::new();
+        PngEncoder::new(&mut file)
+            .write_image(&px, 192, 192, image::ExtendedColorType::L8)
+            .unwrap();
+        let tint = artwork::import_within(&file, (Some(96), None), Dpmm::DPI_203).unwrap();
+        assert_eq!(
+            (tint.threshold, tint.joined),
+            (artwork::LINE_ART_THRESHOLD, 0)
+        );
+        assert_eq!(
+            threshold_hint(&tint, Dither::Threshold, 128).as_deref(),
+            Some("this line art was resampled; --threshold 187 keeps more of its strokes")
+        );
+    }
+
+    /// Rings and a cross 2 pixels wide beside a square of pale grey 219, printed
+    /// from the command line at 187: the square holds none of their ink and stays
+    /// paper, and the rings and the cross print as one drawing.
+    #[test]
+    fn a_pale_fill_beside_thin_strokes_prints_as_paper_from_the_command_line() {
+        let px: Vec<u8> = (0..600 * 600)
+            .map(|i| {
+                let (x, y) = (i % 600, i / 600);
+                let (dx, dy) = (f64::from(x) + 0.5 - 300.0, f64::from(y) + 0.5 - 300.0);
+                let r = (dx * dx + dy * dy).sqrt();
+                let ring = (258.0..260.0).contains(&r) || (178.0..180.0).contains(&r);
+                let cross = (299..301).contains(&x) || (299..301).contains(&y);
+                if ring || cross {
+                    0
+                } else if x < 50 && y < 50 {
+                    219
+                } else {
+                    255
+                }
+            })
+            .collect();
+        let mut file = Vec::new();
+        PngEncoder::new(&mut file)
+            .write_image(&px, 600, 600, image::ExtendedColorType::L8)
+            .unwrap();
+        let p = load_bytes(
+            &file,
+            96,
+            PrintDirection::Top,
+            Dpmm::DPI_203,
+            Dither::Threshold,
+            187,
+            false,
+        )
+        .unwrap();
+        let (w, h) = (p.width(), p.height());
+        let on: Vec<(u16, u16)> = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| p.get(x, y))
+            .collect();
+        assert!(!on.is_empty(), "nothing prints");
+        assert!(
+            !on.iter().any(|&(x, y)| x < 8 && y < 8),
+            "the pale square prints"
+        );
+        // One piece: every printed dot reached from the first through its eight
+        // neighbours.
+        let mut seen = vec![false; usize::from(w) * usize::from(h)];
+        let mut stack = vec![on[0]];
+        seen[usize::from(on[0].1) * usize::from(w) + usize::from(on[0].0)] = true;
+        let mut reached = 0;
+        while let Some((x, y)) = stack.pop() {
+            reached += 1;
+            for (dx, dy) in (-1i32..=1).flat_map(|dy| (-1i32..=1).map(move |dx| (dx, dy))) {
+                let (nx, ny) = (i32::from(x) + dx, i32::from(y) + dy);
+                if nx < 0 || ny < 0 || nx >= i32::from(w) || ny >= i32::from(h) {
+                    continue;
+                }
+                let (nx, ny) = (nx as u16, ny as u16);
+                let k = usize::from(ny) * usize::from(w) + usize::from(nx);
+                if p.get(nx, ny) && !seen[k] {
+                    seen[k] = true;
+                    stack.push((nx, ny));
+                }
+            }
+        }
+        assert_eq!(reached, on.len(), "the rings and the cross are one drawing");
     }
 
     /// Every command-line choice maps onto a distinct library kernel.
