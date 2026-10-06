@@ -689,6 +689,12 @@ pub trait PrintHost: FileHost {
     fn set_preview_plane_px_w(&self, px: i32);
     fn set_preview_plane_px_h(&self, px: i32);
     fn set_preview_plane_says(&self, says: slint::SharedString);
+    /// The grey half: the grey the dots were cut from, at their scale, and what
+    /// it says. A width of 0 shows the dots alone.
+    fn set_preview_grey(&self, grey: slint::Image);
+    fn set_preview_grey_px_w(&self, px: i32);
+    fn set_preview_grey_px_h(&self, px: i32);
+    fn set_preview_grey_says(&self, says: slint::SharedString);
     fn set_preview_facts(&self, facts: slint::SharedString);
     fn set_preview_issues(&self, issues: slint::ModelRc<Self::Issue>);
     fn set_preview_choices(&self, choices: slint::ModelRc<Self::Choice>);
@@ -774,6 +780,18 @@ macro_rules! impl_print_host {
             }
             fn set_preview_plane_says(&self, says: slint::SharedString) {
                 <$win>::set_preview_plane_says(self, says)
+            }
+            fn set_preview_grey(&self, grey: slint::Image) {
+                <$win>::set_preview_grey(self, grey)
+            }
+            fn set_preview_grey_px_w(&self, px: i32) {
+                <$win>::set_preview_grey_px_w(self, px)
+            }
+            fn set_preview_grey_px_h(&self, px: i32) {
+                <$win>::set_preview_grey_px_h(self, px)
+            }
+            fn set_preview_grey_says(&self, says: slint::SharedString) {
+                <$win>::set_preview_grey_says(self, says)
             }
             fn set_preview_facts(&self, facts: slint::SharedString) {
                 <$win>::set_preview_facts(self, facts)

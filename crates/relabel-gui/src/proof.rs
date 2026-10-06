@@ -32,6 +32,25 @@
 //! made at. The pane is a popup, so pointer and keys cannot edit behind it, and an
 //! assistive technology's action still can (filing.rs); the wiring proves again
 //! whenever either number has moved while the pane is open.
+//!
+//! # The grey half
+//!
+//! The label is drawn once, by `rasterise_preview`, which returns the grey the
+//! dots were cut from beside the dots themselves, the fold applied to both. Its
+//! plane is the one `rasterise_plane` makes, byte for byte, so the stamp and the
+//! page are what they would be without the grey.
+//!
+//! The grey is kept, as [`Greys`], only when some dot of it is not what the plane
+//! prints there: a byte other than 0 where the plane inks, or other than 255
+//! where it does not. The count runs dot for dot over the whole label on every
+//! proof, so it finds an anti-aliased edge, a pure white dot a threshold of 255
+//! inks and a pure dot an ordered dither leaves out, and it keeps nothing for a
+//! label whose grey is already its dots: every black-and-white label, and pure
+//! art under a threshold or a diffusion that prints it as it is. The grey's zone
+//! plane is never read. [`Proof::grey_says`] puts the count into words for the
+//! grey image's description: how many dots differ, the average ink of their
+//! greys, and how many of them print. It says nothing about how dark the label
+//! prints, which neither half predicts.
 
 use crate::doc::Doc;
 use crate::fresh;
@@ -45,7 +64,7 @@ use relabel_render::datetime::CivilTime;
 use relabel_render::document::{DataBinding, KnownBinding};
 use relabel_render::preflight::{Issue, Preflight, Severity, preflight};
 use relabel_render::preview::{Scale, plane_stamp};
-use relabel_render::{Target, rasterise_plane};
+use relabel_render::{GreyMap, Target, rasterise_preview};
 
 /// How many rows the issue list shows. Past it, the last row counts the rest.
 pub const MAX_ROWS: usize = 8;
@@ -191,6 +210,22 @@ impl Stop {
     }
 }
 
+/// The grey a label was drawn in before it became dots, kept because some of
+/// its dots print otherwise than they look.
+#[derive(Debug, Clone)]
+pub struct Greys {
+    /// `rasterise_preview`'s grey, with the fold applied. Drawn as it is, never
+    /// binarised; its zone plane is never read.
+    pub map: GreyMap,
+    /// How many dots' grey is not what the plane prints there: 0 where it inks,
+    /// 255 where it does not. Never 0 in a kept `Greys`.
+    pub differ: u64,
+    /// The ink of those dots' greys, `255 - v` summed.
+    pub grey_ink: u64,
+    /// How many of those dots the plane inks.
+    pub dot_ink: u64,
+}
+
 /// What would print, and why it would not.
 #[derive(Debug, Clone)]
 pub struct Proof {
@@ -204,6 +239,10 @@ pub struct Proof {
     pub plane: Option<BitPlane>,
     /// `plane_stamp` of the plane at one pixel to the dot.
     pub stamp: Option<u64>,
+    /// The grey the plane was cut from, when some of its dots print otherwise
+    /// than they look. `None` for a label whose grey is already its dots, and
+    /// whenever no plane was drawn.
+    pub grey: Option<Greys>,
     /// Preflight against the document's target. `None` when a stop came first.
     pub checked: Option<Preflight>,
     /// In the order the verdict takes them.
@@ -231,6 +270,7 @@ pub fn prove(doc: &Doc, printer: Option<&Facts>, generation: u64) -> Proof {
         target,
         plane: None,
         stamp: None,
+        grey: None,
         checked: None,
         stops: Vec::new(),
         page: None,
@@ -308,19 +348,20 @@ pub fn prove(doc: &Doc, printer: Option<&Facts>, generation: u64) -> Proof {
     };
     proof.checked = Some(checked);
 
-    // 4. The plane. A bind that fails is already one of preflight's refusals,
-    // and draws nothing.
+    // 4. The plane, and the grey it was cut from, both after the fold. A bind
+    // that fails is already one of preflight's refusals, and draws nothing.
     let Ok(bound) = bind(label, &Bindings::clock_only(epoch())) else {
         return proof;
     };
-    let plane = match rasterise_plane(&bound, &target) {
-        Ok(p) => p,
+    let (grey, plane, _) = match rasterise_preview(&bound, &target) {
+        Ok(drawn) => drawn,
         Err(e) => {
             proof.stops.push(Stop::RenderFailed(e.to_string()));
             return proof;
         }
     };
     proof.stamp = Some(plane_stamp(&plane, Scale::ONE));
+    proof.grey = greys(grey, &plane);
 
     // 5. The page, for the target's own head.
     match encode_page(&plane, &HeadSpec::new(target.head_axis(), target.direction)) {
@@ -340,6 +381,43 @@ pub fn prove(doc: &Doc, printer: Option<&Facts>, generation: u64) -> Proof {
         }
     }
     proof
+}
+
+/// `map`, kept when at least one of its dots is not what `plane` prints there,
+/// with the count and the two sums [`Proof::grey_says`] words.
+fn greys(map: GreyMap, plane: &BitPlane) -> Option<Greys> {
+    debug_assert_eq!((map.w, map.h), (plane.width(), plane.height()));
+    let (mut differ, mut grey_ink, mut dot_ink) = (0u64, 0u64, 0u64);
+    for y in 0..map.h {
+        for x in 0..map.w {
+            let v = map.at(x, y);
+            let ink = plane.get(x, y);
+            if v != if ink { 0 } else { 255 } {
+                differ += 1;
+                grey_ink += u64::from(255 - v);
+                dot_ink += u64::from(ink);
+            }
+        }
+    }
+    (differ > 0).then_some(Greys {
+        map,
+        differ,
+        grey_ink,
+        dot_ink,
+    })
+}
+
+/// `part` of `whole` as a whole percentage, "0%" and "100%" only when it is
+/// exactly none or all of it: a share rounded to either end would say the
+/// opposite of what the figure is there to tell.
+fn percent(part: u64, whole: u64) -> String {
+    if part == 0 {
+        return "0%".into();
+    }
+    if part >= whole {
+        return "100%".into();
+    }
+    format!("{}%", ((part * 100 + whole / 2) / whole).clamp(1, 99))
 }
 
 impl Proof {
@@ -478,6 +556,44 @@ impl Proof {
         says
     }
 
+    /// The grey image's accessible description, or nothing when there is no
+    /// grey half: how many dots print otherwise than they look, how much ink
+    /// their greys average, and how many of them print. `reduced` is as
+    /// [`plane_says`](Self::plane_says) takes it, since the two images share one
+    /// scale.
+    pub fn grey_says(&self, reduced: Option<u32>) -> String {
+        let Some(g) = &self.grey else {
+            return String::new();
+        };
+        let mut says = if g.differ == 1 {
+            format!(
+                "1 dot prints differently from how it looks here: its grey is {} ink, and it {}",
+                percent(g.grey_ink, 255),
+                if g.dot_ink == 1 {
+                    "prints"
+                } else {
+                    "does not print"
+                }
+            )
+        } else {
+            let print = match g.dot_ink {
+                0 => "none".to_string(),
+                n if n == g.differ => "all".to_string(),
+                n => percent(n, g.differ),
+            };
+            format!(
+                "{} dots print differently from how they look here: their greys average {} ink, \
+                 and {print} of them print",
+                g.differ,
+                percent(g.grey_ink, 255 * g.differ)
+            )
+        };
+        if let Some(k) = reduced.filter(|&k| k > 1) {
+            says.push_str(&format!("; shown reduced: one pixel is {k} by {k} dots"));
+        }
+        says
+    }
+
     /// The issue list: every stop, then preflight's issues, refusals first and
     /// otherwise in preflight's own order, at most [`MAX_ROWS`] of them.
     ///
@@ -537,10 +653,22 @@ mod tests {
     use crate::make::{self, Kind};
     use relabel_core::link::mock;
     use relabel_render::document::{
-        AuthoredFor, Common, CsvFile, Element, ElementId, ElementOrRaw, Label, RectDots, RectEl,
+        AuthoredFor, Common, CsvFile, Element, ElementId, ElementOrRaw, GlyphRaster, ImageHalftone,
+        Label, RectDots, RectEl,
     };
     use relabel_render::media::Bounds;
+    use relabel_render::preview::grey_stamp;
     use relabel_render::target::Dpmm;
+    use relabel_render::{rasterise, rasterise_plane};
+
+    const KITCHEN_SINK: &str =
+        include_str!("../../relabel-render/tests/corpus/v1/kitchen-sink.relabel");
+    const IMAGES: &str = include_str!("../../relabel-render/tests/corpus/v1/images.relabel");
+    const FOLD_OVER: &str = include_str!("../../relabel-render/tests/corpus/v1/fold-over.relabel");
+    const FOLD_HEAD_AXIS: &str =
+        include_str!("../../relabel-render/tests/corpus/v1/fold-head-axis.relabel");
+    const NESTED_UNKNOWNS: &str =
+        include_str!("../../relabel-render/tests/corpus/v1/nested-unknowns.relabel");
 
     fn rect(id: ElementId, feed: i32, head: i32) -> ElementOrRaw {
         let mut common = Common::new(
@@ -605,6 +733,59 @@ mod tests {
         mock::facts(2320, mock::D110_M_NAME)
     }
 
+    fn corpus(json: &str) -> Label {
+        Label::from_json(json).expect("a corpus label")
+    }
+
+    /// Every text of `label` drawn anti-aliased, left to the page's threshold.
+    fn smooth(mut label: Label) -> Label {
+        for el in &mut label.elements {
+            if let ElementOrRaw::Known(Element::Text(t)) = el {
+                t.raster = GlyphRaster::Smooth;
+            }
+        }
+        label
+    }
+
+    /// Every image of `label` halftoned with `halftone` at `threshold`.
+    fn dithered(mut label: Label, halftone: ImageHalftone, threshold: u8) -> Label {
+        for el in &mut label.elements {
+            if let ElementOrRaw::Known(Element::Image(i)) = el {
+                i.halftone = Some(halftone.clone());
+                i.threshold = Some(threshold);
+            }
+        }
+        label
+    }
+
+    /// The reference label with the corpus's disc, a grey drawing under a
+    /// threshold of 187, clear of the three boxes.
+    fn art_label() -> Label {
+        let mut disc = corpus(IMAGES).elements[1].clone();
+        let ElementOrRaw::Known(Element::Image(i)) = &mut disc else {
+            panic!("the corpus's second element is the disc");
+        };
+        assert_eq!((i.path.as_str(), i.threshold), ("disc.png", Some(187)));
+        i.common.frame.feed = 176;
+        i.common.frame.head = 48;
+        i.common.id = 4;
+        let mut label = reference_label();
+        label.elements.push(disc);
+        label
+    }
+
+    /// The corpus's checker, black and white with nothing between, alone on its
+    /// 40 by 12 mm label.
+    fn checker_alone(halftone: ImageHalftone, threshold: u8) -> Label {
+        let mut label = corpus(IMAGES);
+        label.elements.truncate(1);
+        dithered(label, halftone, threshold)
+    }
+
+    fn greys_of(proof: &Proof) -> &Greys {
+        proof.grey.as_ref().expect("a grey half")
+    }
+
     #[test]
     fn a_plain_label_proves_to_its_canvas_plane() {
         let doc = open(reference_label());
@@ -632,6 +813,270 @@ mod tests {
              nothing refused"
         );
         assert!(proof.issue_rows().is_empty());
+        assert!(proof.grey.is_none());
+    }
+
+    /// A label of nothing but black and white is drawn in pure greys that are
+    /// already its dots, so there is no second half to show, and nothing to say
+    /// of one. The kitchen sink is proved as the editor proves it, with {sku}
+    /// left as written.
+    #[test]
+    fn a_black_and_white_label_has_no_grey_half() {
+        for (name, label) in [
+            ("reference", reference_label()),
+            ("kitchen sink", corpus(KITCHEN_SINK)),
+            ("fold-over", corpus(FOLD_OVER)),
+            ("fold-head-axis", corpus(FOLD_HEAD_AXIS)),
+            ("nested-unknowns", corpus(NESTED_UNKNOWNS)),
+        ] {
+            let proof = prove(&open(label), None, 0);
+            assert!(proof.plane.is_some(), "{name}");
+            assert!(proof.grey.is_none(), "{name}");
+            assert_eq!(proof.grey_says(None), "", "{name}");
+            assert_eq!(proof.grey_says(Some(2)), "", "{name}");
+        }
+    }
+
+    /// The disc is drawn in greys a threshold of 187 prints as ink: 168 dots
+    /// print otherwise than they look, every one of them inked.
+    #[test]
+    fn artwork_that_prints_otherwise_has_a_grey_half() {
+        let proof = prove(&open(art_label()), None, 0);
+        let plane = proof.plane.as_ref().expect("a plane");
+        let g = greys_of(&proof);
+        assert_eq!((g.map.w, g.map.h), (plane.width(), plane.height()));
+        assert_eq!((g.map.w, g.map.h), (320, 96));
+        assert_eq!((g.differ, g.dot_ink), (168, 168));
+        let says = "168 dots print differently from how they look here: their greys average 27% \
+                    ink, and all of them print";
+        assert_eq!(proof.grey_says(None), says);
+        assert_eq!(
+            proof.grey_says(Some(2)),
+            format!("{says}; shown reduced: one pixel is 2 by 2 dots")
+        );
+        assert_eq!(proof.grey_says(Some(1)), says);
+        // The dots' own sentence is the one a black-and-white label has.
+        assert_eq!(
+            proof.plane_says(None),
+            "320 by 96 dots, 40 by 12 millimetres; nothing refused"
+        );
+    }
+
+    /// Smooth text is anti-aliased and cut at the page's 128, at or below which
+    /// a grey is ink, so its grey half is its edges: every dot that differs is a
+    /// grey between ink and paper.
+    #[test]
+    fn smooth_text_has_a_grey_half() {
+        let proof = prove(&open(smooth(corpus(KITCHEN_SINK))), None, 0);
+        let plane = proof.plane.as_ref().expect("a plane");
+        let g = greys_of(&proof);
+        let mut differ = 0;
+        for y in 0..g.map.h {
+            for x in 0..g.map.w {
+                let v = g.map.at(x, y);
+                if v != if plane.get(x, y) { 0 } else { 255 } {
+                    assert!(0 < v && v < 255, "dot ({x}, {y}) is {v}");
+                    assert_eq!(plane.get(x, y), v <= 128, "dot ({x}, {y}) is {v}");
+                    differ += 1;
+                }
+            }
+        }
+        assert_eq!(differ, g.differ);
+        // Measured, with {sku} left as written, as the editor proves it.
+        assert_eq!(differ, 213);
+    }
+
+    /// The checker is pure black and pure white. A threshold up to 254 prints it
+    /// as it is; at 255 its 512 white dots print as ink, and an ordered dither
+    /// away from 128 leaves black dots out.
+    #[test]
+    fn pure_art_has_a_grey_half_only_where_its_dots_differ() {
+        for t in [128, 254] {
+            let proof = prove(&open(checker_alone(ImageHalftone::Threshold, t)), None, 0);
+            assert!(proof.plane.is_some(), "threshold {t}");
+            assert!(proof.grey.is_none(), "threshold {t}");
+        }
+
+        let proof = prove(&open(checker_alone(ImageHalftone::Threshold, 255)), None, 0);
+        let g = greys_of(&proof);
+        assert_eq!((g.differ, g.dot_ink), (512, 512));
+        assert_eq!(
+            proof.grey_says(None),
+            "512 dots print differently from how they look here: their greys average 0% ink, \
+             and all of them print"
+        );
+
+        let proof = prove(&open(checker_alone(ImageHalftone::Bayer8, 64)), None, 0);
+        let g = greys_of(&proof);
+        assert_eq!((g.differ, g.dot_ink), (128, 0));
+        let says = proof.grey_says(None);
+        assert!(
+            says.starts_with("128 dots print differently")
+                && says.ends_with("their greys average 100% ink, and none of them print"),
+            "{says}"
+        );
+
+        let proof = prove(&open(checker_alone(ImageHalftone::Bayer8, 128)), None, 0);
+        assert!(proof.grey.is_none());
+    }
+
+    /// The grey costs the page nothing: drawing it beside the dots leaves the
+    /// plane, its stamp and the encoded page exactly what `rasterise_plane`
+    /// alone gives, folds and refused labels included.
+    #[test]
+    fn the_page_is_the_one_rasterise_plane_makes() {
+        for (name, label) in [
+            ("art", art_label()),
+            ("smooth fold-over", smooth(corpus(FOLD_OVER))),
+            ("kitchen sink", corpus(KITCHEN_SINK)),
+            ("images", corpus(IMAGES)),
+        ] {
+            let doc = open(label);
+            let proof = prove(&doc, None, 0);
+            let bound = bind(doc.label(), &Bindings::clock_only(epoch())).expect("binds");
+            let plane = rasterise_plane(&bound, doc.target()).expect("draws");
+            assert_eq!(proof.stamp, Some(plane_stamp(&plane, Scale::ONE)), "{name}");
+            assert_eq!(
+                proof.page,
+                encode_page(&plane, &HeadSpec::new(96, PrintDirection::Left)).ok(),
+                "{name}"
+            );
+            assert_eq!(proof.plane, Some(plane), "{name}");
+        }
+    }
+
+    /// The grey is taken after the fold, as the plane is, so it shows every
+    /// panel the plane does. The grey from before the repeat would show one,
+    /// and would count dots against panels it never drew. The count is exact
+    /// across the fold: the repeat's copies carry the page's zone, so a count
+    /// that read zone ids would miss the copied panel's dots.
+    #[test]
+    fn a_fold_shows_its_grey_after_the_fold() {
+        let doc = open(smooth(corpus(FOLD_OVER)));
+        let proof = prove(&doc, None, 0);
+        let bound = bind(doc.label(), &Bindings::clock_only(epoch())).expect("binds");
+        let (after, _, _) = rasterise_preview(&bound, doc.target()).expect("draws");
+        let (before, _) = rasterise(&bound, doc.target()).expect("draws");
+        let g = greys_of(&proof);
+        assert_eq!(g.map, after);
+        let moved = g
+            .map
+            .px
+            .iter()
+            .zip(&before.px)
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(moved, 884);
+        // Half the differing dots on each side of the fold at 180.
+        let plane = proof.plane.as_ref().expect("a plane");
+        let mut by_side = [0u64; 2];
+        for y in 0..plane.height() {
+            for x in 0..plane.width() {
+                let v = g.map.at(x, y);
+                let differs = v != if plane.get(x, y) { 0 } else { 255 };
+                by_side[usize::from(x >= 180)] += u64::from(differs);
+            }
+        }
+        assert_eq!((g.differ, g.dot_ink), (570, 300));
+        assert_eq!(by_side, [285, 285]);
+    }
+
+    /// A threshold chooses which greys print; it does not change them. So the
+    /// grey half stays as it was, the same dots differ, and only how many of
+    /// them print moves.
+    #[test]
+    fn a_threshold_change_leaves_the_grey_alone() {
+        let at_187 = prove(&open(art_label()), None, 0);
+        let at_128 = prove(
+            &open(dithered(art_label(), ImageHalftone::Threshold, 128)),
+            None,
+            0,
+        );
+        let (a, b) = (greys_of(&at_187), greys_of(&at_128));
+        assert_eq!(a.map, b.map);
+        assert_eq!(
+            grey_stamp(&a.map, Scale::ONE),
+            grey_stamp(&b.map, Scale::ONE)
+        );
+        assert_eq!((a.differ, b.differ), (168, 168));
+        assert_eq!((a.dot_ink, b.dot_ink), (168, 0));
+        assert_ne!(at_187.plane, at_128.plane);
+        assert!(
+            at_128
+                .grey_says(None)
+                .ends_with("their greys average 27% ink, and none of them print"),
+            "{}",
+            at_128.grey_says(None)
+        );
+    }
+
+    /// The grey is luminance, 0 for ink and 255 for paper, as the pane draws it.
+    #[test]
+    fn the_grey_is_not_inverted() {
+        let proof = prove(&open(art_label()), None, 0);
+        let plane = proof.plane.as_ref().expect("a plane");
+        let g = greys_of(&proof);
+        // Inside box 1, which the plane inks.
+        assert!(plane.get(20, 20));
+        assert_eq!(g.map.at(20, 20), 0);
+        // Bare paper.
+        assert!(!plane.get(300, 90));
+        assert_eq!(g.map.at(300, 90), 255);
+    }
+
+    #[test]
+    fn one_dot_is_said_in_the_singular() {
+        let mut proof = prove(&open(reference_label()), None, 0);
+        proof.grey = greys(GreyMap::from_px(2, 1, vec![128, 255]), &BitPlane::new(2, 1));
+        assert_eq!(greys_of(&proof).differ, 1);
+        assert_eq!(
+            proof.grey_says(None),
+            "1 dot prints differently from how it looks here: its grey is 50% ink, and it does \
+             not print"
+        );
+        let mut inked = BitPlane::new(2, 1);
+        inked.set(0, 0, true);
+        proof.grey = greys(GreyMap::from_px(2, 1, vec![128, 255]), &inked);
+        assert_eq!(
+            proof.grey_says(Some(3)),
+            "1 dot prints differently from how it looks here: its grey is 50% ink, and it \
+             prints; shown reduced: one pixel is 3 by 3 dots"
+        );
+    }
+
+    /// A share is "0%" or "100%" only when it is none or all: a dot in a
+    /// thousand is 1%, and all but one of a thousand is 99%.
+    #[test]
+    fn a_share_is_never_rounded_to_none_or_all() {
+        assert_eq!(percent(0, 1000), "0%");
+        assert_eq!(percent(1, 1000), "1%");
+        assert_eq!(percent(4, 1000), "1%");
+        assert_eq!(percent(5, 1000), "1%");
+        assert_eq!(percent(6, 1000), "1%");
+        assert_eq!(percent(15, 1000), "2%");
+        assert_eq!(percent(500, 1000), "50%");
+        assert_eq!(percent(994, 1000), "99%");
+        assert_eq!(percent(999, 1000), "99%");
+        assert_eq!(percent(1000, 1000), "100%");
+        assert_eq!(percent(0, 0), "0%");
+    }
+
+    /// Nothing drawn, nothing grey: a stop before the plane leaves no grey half.
+    #[test]
+    fn a_stopped_label_has_no_grey() {
+        let mut rows = reference_label();
+        rows.data = Some(DataBinding::Known(KnownBinding::CsvFile(CsvFile {
+            path: "items.csv".into(),
+            delimiter: ',',
+            has_header: true,
+            unknown: serde_json::Map::new(),
+        })));
+        for label in [with(Kind::Text, 4, "{dt}"), rows] {
+            let proof = prove(&open(label), None, 0);
+            assert!(proof.plane.is_none());
+            assert!(proof.grey.is_none());
+            assert_eq!(proof.grey_says(None), "");
+        }
     }
 
     /// The numbers `relabel-cli label --dry-run` prints for the same label: one

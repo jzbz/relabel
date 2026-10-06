@@ -35,6 +35,33 @@ pub fn reference_label() -> Label {
     label
 }
 
+/// The corpus label of embedded artwork. Read, never written: a test saves a
+/// copy of its own.
+pub const IMAGES: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../relabel-render/tests/corpus/v1/images.relabel"
+));
+
+/// The reference label with the corpus's disc, a grey drawing under a threshold
+/// of 187, clear of the three boxes: printable, with nothing to list, and 168
+/// of its dots print otherwise than their greys look.
+pub fn art_label() -> Label {
+    let mut disc = Label::from_json(IMAGES)
+        .expect("the images corpus label")
+        .elements[1]
+        .clone();
+    let ElementOrRaw::Known(Element::Image(i)) = &mut disc else {
+        panic!("the corpus's second element is the disc");
+    };
+    assert_eq!((i.path.as_str(), i.threshold), ("disc.png", Some(187)));
+    i.common.frame.feed = 176;
+    i.common.frame.head = 48;
+    i.common.id = 4;
+    let mut label = reference_label();
+    label.elements.push(disc);
+    label
+}
+
 pub fn frame(feed: i32, head: i32, feed_len: i32, head_len: i32) -> RectDots {
     RectDots {
         feed,

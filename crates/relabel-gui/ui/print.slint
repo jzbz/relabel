@@ -43,6 +43,12 @@ export component PreviewPane inherits PopupWindow {
     in property <int> plane-px-w;
     in property <int> plane-px-h;
     in property <string> plane-says;
+    // The grey the dots were cut from, at the dots' own scale, when some of them
+    // print otherwise than they look; a width of 0 when none do.
+    in property <image> grey;
+    in property <int> grey-px-w;
+    in property <int> grey-px-h;
+    in property <string> grey-says;
     in property <string> facts;
     in property <[IssueRow]> issues;
     in property <[ChoiceRow]> choices;
@@ -153,7 +159,7 @@ export component PreviewPane inherits PopupWindow {
                 // In device pixels, as the canvas's plane is (canvas.slint): the size
                 // is the image's own, so fill is a one-to-one blit, and nearest
                 // neighbour keeps the dots square.
-                if root.plane-px-w > 0: HorizontalLayout {
+                if root.plane-px-w > 0 && root.grey-px-w == 0: HorizontalLayout {
                     alignment: center;
                     Image {
                         source: root.plane;
@@ -165,6 +171,53 @@ export component PreviewPane inherits PopupWindow {
                         // What will print, or what is printing while a job runs.
                         accessible-label: root.image-label;
                         accessible-description: root.plane-says;
+                    }
+                }
+                // The dots over the grey they were cut from, the same size and with
+                // their left edges aligned, so a column of dots sits above its grey.
+                // The captions are for the eye: each image is named for itself, so
+                // a screen reader hears the dots first, then the grey, and no caption.
+                // In the single image's slot and no taller (print.rs, SPLIT_H).
+                if root.plane-px-w > 0 && root.grey-px-w > 0: HorizontalLayout {
+                    alignment: center;
+                    GridLayout {
+                        spacing: 8px;
+                        Row {
+                            Text {
+                                text: "Dots";
+                                width: 56px;
+                                vertical-alignment: center;
+                                accessible-role: AccessibleRole.none;
+                            }
+                            Image {
+                                source: root.plane;
+                                width: root.plane-px-w * 1phx;
+                                height: root.plane-px-h * 1phx;
+                                image-fit: fill;
+                                image-rendering: pixelated;
+                                accessible-role: AccessibleRole.image;
+                                accessible-label: root.image-label;
+                                accessible-description: root.plane-says;
+                            }
+                        }
+                        Row {
+                            Text {
+                                text: "Greys";
+                                width: 56px;
+                                vertical-alignment: center;
+                                accessible-role: AccessibleRole.none;
+                            }
+                            Image {
+                                source: root.grey;
+                                width: root.grey-px-w * 1phx;
+                                height: root.grey-px-h * 1phx;
+                                image-fit: fill;
+                                image-rendering: pixelated;
+                                accessible-role: AccessibleRole.image;
+                                accessible-label: "Greys, before dots";
+                                accessible-description: root.grey-says;
+                            }
+                        }
                     }
                 }
                 Text {

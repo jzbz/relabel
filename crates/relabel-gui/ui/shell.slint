@@ -67,6 +67,10 @@ export component Designer {
     in property <int> preview-plane-px-w;
     in property <int> preview-plane-px-h;
     in property <string> preview-plane-says;
+    in property <image> preview-grey;
+    in property <int> preview-grey-px-w;
+    in property <int> preview-grey-px-h;
+    in property <string> preview-grey-says;
     in property <string> preview-facts;
     in property <[IssueRow]> preview-issues;
     in property <[ChoiceRow]> preview-choices;
@@ -700,12 +704,12 @@ export component Designer {
         preset(token) => { root.new-preset(token); }
         cancel => { root.new-cancel(); }
     }
-    // As wide as the window allows, up to 700 px: print.rs fits the image to the
-    // same arithmetic.
+    // As wide as the window allows, up to 920 px: print.rs fits the image, or the
+    // two halves, to the same arithmetic.
     preview-pane := PreviewPane {
         x: (root.width - self.width) / 2;
         y: 84px;
-        width: Math.min(700px, root.width - 40px);
+        width: Math.min(920px, root.width - 40px);
         // Down to the status line, less the layout's spacing above it, so the pane
         // never covers the line that says what the link is doing. The status line is
         // two lines tall whatever it holds, so this does not move while it talks.
@@ -716,6 +720,10 @@ export component Designer {
         plane-px-w: root.preview-plane-px-w;
         plane-px-h: root.preview-plane-px-h;
         plane-says: root.preview-plane-says;
+        grey: root.preview-grey;
+        grey-px-w: root.preview-grey-px-w;
+        grey-px-h: root.preview-grey-px-h;
+        grey-says: root.preview-grey-says;
         facts: root.preview-facts;
         issues: root.preview-issues;
         choices: root.preview-choices;

@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 use support::{
-    HeldPlug, InlineImporter, Scripted, button_of, group_of, press, reference_label, status_of,
-    tmp_dir,
+    HeldPlug, InlineImporter, Scripted, art_label, button_of, group_of, press, reference_label,
+    status_of, tmp_dir,
 };
 
 include!(concat!(env!("OUT_DIR"), "/ins-probe.rs"));
@@ -296,6 +296,77 @@ fn every_pane_control_is_named_and_reachable_by_tab() {
             ),
         }
         if at == 0 {
+            assert_eq!(plug.orders(), [(1, Order::Find { secs: 4 })]);
+        }
+    }
+}
+
+/// The grey half is a second image, after the dots, named for itself and
+/// described by what differs: how many dots, their greys' average ink, and how
+/// many of them print. Its caption and the dots' are not read, and neither image
+/// is a Tab stop: Connect and Close are still the only two.
+#[test]
+fn the_grey_half_is_named_and_described() {
+    let (_dir, a) = saved("grey_half", &art_label().to_json().unwrap());
+    {
+        let plug = Rc::new(HeldPlug::default());
+        let (ui, _wired) = probe(&a, plug);
+        open_preview(&ui);
+        let pane = group_of(&ui, "Print").expect("the preview is shown");
+        let images = pane
+            .query_descendants()
+            .match_accessible_role(AccessibleRole::Image)
+            .find_all();
+        assert_eq!(images.len(), 2);
+        assert_eq!(
+            images[0].accessible_label().as_deref(),
+            Some("What will print")
+        );
+        assert!(
+            images[0]
+                .accessible_description()
+                .is_some_and(|d| d.contains("dots")),
+            "{:?}",
+            images[0].accessible_description()
+        );
+        assert_eq!(
+            images[1].accessible_label().as_deref(),
+            Some("Greys, before dots")
+        );
+        assert_eq!(
+            images[1].accessible_description().as_deref(),
+            Some(
+                "168 dots print differently from how they look here: their greys average 27% \
+                 ink, and all of them print"
+            )
+        );
+        let captions = pane
+            .query_descendants()
+            .match_accessible_role(AccessibleRole::Text)
+            .match_predicate(|h| {
+                let said =
+                    |s: Option<slint::SharedString>| s.is_some_and(|s| s == "Dots" || s == "Greys");
+                said(h.accessible_label()) || said(h.accessible_value())
+            })
+            .find_all();
+        assert!(captions.is_empty(), "a caption is read");
+    }
+
+    // From Connect: one Tab is Close, and two are Connect again.
+    for (tabs, ordered, open) in [(1, false, false), (2, true, true)] {
+        let plug = Rc::new(HeldPlug::default());
+        let (ui, _wired) = probe(&a, plug.clone());
+        open_preview(&ui);
+        for _ in 0..tabs {
+            key(&ui, Key::Tab);
+        }
+        key(&ui, Key::Return);
+        assert_eq!(
+            (!plug.orders().is_empty(), group_of(&ui, "Print").is_some()),
+            (ordered, open),
+            "{tabs} Tabs"
+        );
+        if ordered {
             assert_eq!(plug.orders(), [(1, Order::Find { secs: 4 })]);
         }
     }

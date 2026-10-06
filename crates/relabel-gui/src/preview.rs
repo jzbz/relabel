@@ -1,12 +1,14 @@
 //! The rendered label, as one Slint image: the canvas's, at the view's zoom, and
-//! the print pane's, fitted to a box.
+//! the print pane's, fitted to a box, with the grey it was cut from at the same
+//! scale when the pane shows one.
 //!
 //! Thin on purpose: `relabel-render`'s own `preview` module owns the pixels and
 //! the scaling, and everything here is about handing them over correctly once.
 
 use crate::doc::Doc;
 use relabel_proto::BitPlane;
-use relabel_render::preview::{Extent, Scale, plane_stamp, plane_to_rgb8};
+use relabel_render::GreyMap;
+use relabel_render::preview::{Extent, Scale, grey_to_rgb8, plane_stamp, plane_to_rgb8};
 use slint::{Image, Rgb8Pixel, SharedPixelBuffer};
 
 /// A pane's worth of dots, and the two numbers the element must be sized with.
@@ -109,6 +111,25 @@ pub fn paint_fit(plane: &BitPlane, box_w: u32, box_h: u32) -> Option<(Painted, S
     Some((painted, scale))
 }
 
+/// A grey map at `scale`: the print pane's grey half, painted at the scale
+/// [`paint_fit`] chose for the dots beside it, so the two share one extent dot
+/// for dot rather than each being fitted on its own.
+///
+/// The bytes are written through as they are. A [`GreyMap`] is already 0 for
+/// ink and 255 for paper, so nothing is inverted. A fresh buffer every time,
+/// for [`Pane::draw`]'s reason. `None` only past `preview::MAX_BYTES`, which a
+/// scale chosen for a plane of the same size never reaches.
+pub fn paint_grey_at(grey: &GreyMap, scale: Scale) -> Option<Painted> {
+    let extent = Extent::for_grey(grey, scale)?;
+    let mut buf = SharedPixelBuffer::<Rgb8Pixel>::new(extent.px_w, extent.px_h);
+    grey_to_rgb8(grey, scale, buf.make_mut_bytes());
+    Some(Painted {
+        image: Image::from_rgb8(buf),
+        px_w: i32::try_from(extent.px_w).ok()?,
+        px_h: i32::try_from(extent.px_h).ok()?,
+    })
+}
+
 impl std::fmt::Display for NoDots {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -131,11 +152,12 @@ mod tests {
     use super::*;
 
     /// The author's 40 by 12 mm label at scale 1: two pixels to the dot in the
-    /// pane's 640 by 200 box, the plane in canvas orientation, never turned.
+    /// pane's 860 by 200 box in the default window, the plane in canvas
+    /// orientation, never turned.
     #[test]
     fn a_40_by_12_mm_plane_fits_the_pane_at_two_pixels_a_dot() {
         let plane = BitPlane::new(320, 96);
-        let (painted, scale) = paint_fit(&plane, 640, 200).expect("a plane fits");
+        let (painted, scale) = paint_fit(&plane, 860, 200).expect("a plane fits");
         assert_eq!(scale, Scale::up(2));
         assert_eq!((painted.px_w, painted.px_h), (640, 192));
         let size = painted.image.size();
@@ -194,5 +216,54 @@ mod tests {
         plane_to_rgb8(&wide, scale, &mut want);
         assert_eq!(px.as_bytes(), want.as_slice());
         assert!(want.iter().any(|&b| b < 128), "something is inked");
+    }
+
+    /// Sixteen by eight dots, each a different grey: 0, 2, 4 and on to 254.
+    fn ramp() -> GreyMap {
+        GreyMap::from_px(16, 8, (0..128).map(|i| 2 * i as u8).collect())
+    }
+
+    /// Magnified, each pixel's three bytes are its dot's grey as it is, never
+    /// 255 minus it; reduced, they are the render crate's own drawing.
+    #[test]
+    fn paint_grey_at_copies_the_grey_through() {
+        let grey = ramp();
+        let painted = paint_grey_at(&grey, Scale::up(2)).expect("a grey fits");
+        assert_eq!((painted.px_w, painted.px_h), (32, 16));
+        let px = painted.image.to_rgb8().expect("an RGB image");
+        assert_eq!((px.width(), px.height()), (32, 16));
+        let bytes = px.as_bytes();
+        for y in 0..16u16 {
+            for x in 0..32u16 {
+                let at = (usize::from(y) * 32 + usize::from(x)) * 3;
+                let want = grey.at(x / 2, y / 2);
+                assert_eq!(&bytes[at..at + 3], &[want; 3], "pixel ({x}, {y})");
+            }
+        }
+
+        let painted = paint_grey_at(&grey, Scale::down(2)).expect("a grey fits");
+        assert_eq!((painted.px_w, painted.px_h), (8, 4));
+        let px = painted.image.to_rgb8().expect("an RGB image");
+        let mut want = vec![0; px.as_bytes().len()];
+        grey_to_rgb8(&grey, Scale::down(2), &mut want);
+        assert_eq!(px.as_bytes(), want.as_slice());
+    }
+
+    /// The grey is painted at the scale the dots were fitted at, so a grey map
+    /// the size of the plane comes out the size of the dots' image.
+    #[test]
+    fn the_grey_and_the_dots_share_one_extent() {
+        let plane = BitPlane::new(320, 96);
+        let grey = GreyMap::new(320, 96);
+        for ((box_w, box_h), scale, size) in [
+            ((824, 96), Scale::ONE, (320, 96)),
+            ((1648, 192), Scale::up(2), (640, 192)),
+        ] {
+            let (dots, chosen) = paint_fit(&plane, box_w, box_h).expect("a plane fits");
+            assert_eq!(chosen, scale, "{box_w} by {box_h}");
+            assert_eq!((dots.px_w, dots.px_h), size, "{box_w} by {box_h}");
+            let greys = paint_grey_at(&grey, chosen).expect("a grey fits");
+            assert_eq!((greys.px_w, greys.px_h), size, "{box_w} by {box_h}");
+        }
     }
 }

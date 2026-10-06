@@ -23,7 +23,9 @@ use relabel_gui::view::Opening;
 use relabel_gui::{Started, start, wire_window};
 use relabel_proto::payload::IDENTITY_READS;
 use relabel_proto::{LabelType, PrinterErrorCode};
-use relabel_render::document::Label;
+use relabel_render::GreyMap;
+use relabel_render::document::{Element, ElementOrRaw, Label};
+use relabel_render::target::Dpmm;
 use slint::ComponentHandle;
 use slint::platform::{Key, WindowEvent};
 use std::fs;
@@ -31,8 +33,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 use support::{
-    HeldPlug, InlineImporter, Scripted, button_of, down, find_button, frame_of, group_of, press,
-    reference_label, rows_of, status_of, tmp_dir, type_text,
+    HeldPlug, IMAGES, InlineImporter, Scripted, art_label, button_of, down, field_of, find_button,
+    frame_of, group_of, press, reference_label, rows_of, status_of, tmp_dir, type_text,
 };
 
 include!(concat!(env!("OUT_DIR"), "/ins-probe.rs"));
@@ -498,6 +500,35 @@ fn shows_the_plane(ui: &InsProbe, plane: &relabel_proto::BitPlane) {
     assert!(inked > 0, "the label prints something");
 }
 
+/// The pane's grey half is `grey`, dot for dot: every pixel's three bytes read
+/// back as its dot's grey, not inverted, at the whole number of pixels a dot the
+/// dots beside it were shown at.
+fn shows_the_grey(ui: &InsProbe, grey: &GreyMap) {
+    let px = ui.get_preview_grey().to_rgb8().expect("an RGB image");
+    let k = px.width() as usize / usize::from(grey.w);
+    assert!(k >= 1, "shown at a whole number of pixels a dot");
+    assert_eq!(px.width() as usize, usize::from(grey.w) * k);
+    assert_eq!(px.height() as usize, usize::from(grey.h) * k);
+    let (w, bytes) = (px.width() as usize, px.as_bytes());
+    for y in 0..grey.h {
+        for x in 0..grey.w {
+            let at = (usize::from(y) * k * w + usize::from(x) * k) * 3;
+            let v = grey.at(x, y);
+            assert_eq!(&bytes[at..at + 3], [v, v, v], "dot ({x}, {y})");
+        }
+    }
+}
+
+/// The images in the pane, in tree order: the dots first, then the grey half
+/// when it is shown.
+fn images_in_pane(ui: &InsProbe) -> Vec<ElementHandle> {
+    group_of(ui, "Print")
+        .expect("the print pane is shown")
+        .query_descendants()
+        .match_accessible_role(AccessibleRole::Image)
+        .find_all()
+}
+
 /// Connected, the label is checked against the printer, the Printer line says what
 /// it is, and the keyboard is on Close: Return closes the pane and cannot
 /// disconnect.
@@ -885,6 +916,80 @@ fn many_issues_label() -> Label {
     Label::from_json(&json).expect("a label of twelve texts")
 }
 
+/// The twelve `{sku}` texts with the art label's disc beside them, clear of them
+/// across the head: the longest issue list and the grey half in one pane.
+fn many_issues_with_art() -> Label {
+    let mut label = many_issues_label();
+    let mut disc = art_label().elements.pop().expect("the disc");
+    let ElementOrRaw::Known(Element::Image(i)) = &mut disc else {
+        panic!("the art label's last element is the disc");
+    };
+    i.common.frame.head = 56;
+    i.common.id = 13;
+    label.elements.push(disc);
+    label
+}
+
+/// The labels the pane's layout is measured on: none of the issue list and the
+/// longest of it, each without and with the grey half, by name.
+fn layout_labels() -> [(Label, &'static str); 4] {
+    [
+        (reference_label(), "none"),
+        (many_issues_label(), "eight"),
+        (art_label(), "art"),
+        (many_issues_with_art(), "art-eight"),
+    ]
+}
+
+/// How many images a layout label shows: the dots, and the grey half for art.
+fn halves_of(name: &str) -> usize {
+    if name.starts_with("art") { 2 } else { 1 }
+}
+
+/// Every image in the pane is inside it, across and down: from its left edge to
+/// its right, and ending at or above its bottom. Two halves are the same size,
+/// in device pixels and on screen, with their left edges aligned.
+fn images_fit(ui: &InsProbe, how: &str, halves: usize) {
+    if halves == 2 {
+        same_extent(ui, how);
+    }
+    let pane = group_of(ui, "Print").expect("the print pane is shown");
+    let (width, bottom) = (pane.size().width, PANE_TOP + pane.size().height);
+    let images = images_in_pane(ui);
+    assert_eq!(images.len(), halves, "{how}: the images shown");
+    for (i, image) in images.iter().enumerate() {
+        let x = image.absolute_position().x;
+        let right = x + image.size().width;
+        let end = ends_at(image);
+        assert!(
+            x >= 0.0 && right <= width,
+            "{how}: image {i} runs from {x} to {right} in a pane {width} wide"
+        );
+        assert!(
+            end <= bottom,
+            "{how}: image {i} ends at {end}, past a pane ending at {bottom}"
+        );
+    }
+}
+
+/// The grey half is painted at the dots' own scale: the same device pixels, the
+/// same size on screen and the same left edge, so each column of dots sits above
+/// its grey at every scale, a reduced one included.
+fn same_extent(ui: &InsProbe, how: &str) {
+    let plane_px = (ui.get_preview_plane_px_w(), ui.get_preview_plane_px_h());
+    let grey_px = (ui.get_preview_grey_px_w(), ui.get_preview_grey_px_h());
+    assert_eq!(grey_px, plane_px, "{how}: the grey at the dots' scale");
+    let images = images_in_pane(ui);
+    assert_eq!(images.len(), 2, "{how}: the dots and the greys");
+    let (dots, greys) = (&images[0], &images[1]);
+    assert_eq!(dots.size(), greys.size(), "{how}: the halves' sizes");
+    assert_eq!(
+        dots.absolute_position().x,
+        greys.absolute_position().x,
+        "{how}: the halves' left edges"
+    );
+}
+
 /// The issue list is the part of the pane that gives way: at its longest the pane
 /// still ends inside the window, with Close on screen, and Tab still reaches every
 /// row and both buttons.
@@ -983,13 +1088,15 @@ fn longest_failure() -> Failure {
 }
 
 /// The pane is a popup over the panes, and it ends above the status line at every
-/// scale, with the longest step line wrapped and the longest issue list: the list is
-/// what gives way, so the pane's border never runs through the status line's words.
+/// scale, with the longest step line and the longest issue list, with and without
+/// the grey half: the list is what gives way, so the pane's border never runs
+/// through the status line's words. At 920 pixels the longest step line is one
+/// line; the job-line test has the longest line that wraps.
 #[test]
 fn the_pane_ends_above_the_status_line_with_the_longest_step_line() {
     let failure = longest_failure();
     let words = failure_says(&failure);
-    for (label, list) in [(reference_label(), "none"), (many_issues_label(), "eight")] {
+    for (label, list) in layout_labels() {
         for scale in [1.0, 1.25, 1.5, 2.0] {
             let (_dir, a) = with_label(&format!("above_status_{list}_{scale}"), &label);
             let plug = Rc::new(HeldPlug::default());
@@ -1016,14 +1123,8 @@ fn the_pane_ends_above_the_status_line_with_the_longest_step_line() {
                     .find_first()
                     .unwrap_or_else(|| panic!("no {name:?} in the pane"))
             };
-            let (step, facts) = (text("Printer link"), text("Size and sending"));
+            let step = text("Printer link");
             let how = format!("{list} issues at scale {scale}");
-            assert!(
-                step.size().height >= 1.5 * facts.size().height,
-                "{how}: the step line wraps: {} against {}",
-                step.size().height,
-                facts.size().height
-            );
             let bottom = PANE_TOP + pane.size().height;
             let status = status_of(&ui).absolute_position().y;
             assert!(
@@ -1037,6 +1138,7 @@ fn the_pane_ends_above_the_status_line_with_the_longest_step_line() {
                 "{how}: Close ends at {close_end} and the step line at {step_end}, inside a \
                  pane ending at {bottom}"
             );
+            images_fit(&ui, &how, halves_of(list));
         }
     }
 }
@@ -1045,17 +1147,21 @@ fn the_pane_ends_above_the_status_line_with_the_longest_step_line() {
 /// longest issue list and at every scale: the choices and Close end inside the
 /// pane, and the pane above the status line. The issue list steps aside while a
 /// printer is chosen, since the choices and the list together are taller than the
-/// room, and comes back once the choice is cancelled.
+/// room, and comes back once the choice is cancelled. The grey half stays.
 #[test]
 fn the_pane_ends_above_the_status_line_with_every_choice_offered() {
-    for (label, list) in [(reference_label(), "none"), (many_issues_label(), "eight")] {
+    for (label, list) in layout_labels() {
         for scale in [1.0, 1.25, 1.5, 2.0] {
             let (_dir, a) = with_label(&format!("choices_above_status_{list}_{scale}"), &label);
             let plug = Rc::new(HeldPlug::default());
             let (ui, _wired) = probe_on(start(Some(&a)), plug.clone(), scale);
             ctrl(&ui, "p");
             let listed = lists_issues(&ui);
-            assert_eq!(listed, list == "eight", "{list} issues: the list is shown");
+            assert_eq!(
+                listed,
+                list.ends_with("eight"),
+                "{list} issues: the list is shown"
+            );
             activate(&ui, "Connect");
             // More than are offered, none heard, so every face is its longest.
             let seen = (0..MAX_CHOICES + 2)
@@ -1092,6 +1198,7 @@ fn the_pane_ends_above_the_status_line_with_every_choice_offered() {
                 close_end <= bottom,
                 "{how}: Close ends at {close_end}, past a pane ending at {bottom}"
             );
+            images_fit(&ui, &how, halves_of(list));
             activate(&ui, "Cancel");
             assert_eq!(lists_issues(&ui), listed, "{how}: the list is back");
         }
@@ -1739,13 +1846,14 @@ fn longest_job_failure() -> RunReport {
 }
 
 /// The pane with its job line, and with the longest job failure on its step line,
-/// ends above the status line at every scale, with the job line, the step line
-/// and Close inside it, and the view keeps its pinned size.
+/// wrapped, ends above the status line at every scale, with and without the grey
+/// half, with the job line, the step line, Close and every image inside it, and
+/// the view keeps its pinned size.
 #[test]
 fn the_pane_fits_with_the_job_line() {
     let report = longest_job_failure();
     let words = job_says(D110_M_NAME, &report, LinkAfter::Up, (3, LabelType::Gap));
-    for (label, list) in [(reference_label(), "none"), (many_issues_label(), "eight")] {
+    for (label, list) in layout_labels() {
         for scale in [1.0, 1.25, 1.5, 2.0] {
             for case in ["printing", "failed"] {
                 let (_dir, a) = with_label(&format!("fits_{case}_{list}_{scale}"), &label);
@@ -1798,6 +1906,23 @@ fn the_pane_fits_with_the_job_line() {
                     .match_predicate(move |h| h.accessible_label().is_some_and(|l| l == watched))
                     .find_first()
                     .expect("the watched line");
+                if case == "failed" {
+                    let facts = pane
+                        .query_descendants()
+                        .match_accessible_role(AccessibleRole::Text)
+                        .match_predicate(|h| {
+                            h.accessible_label()
+                                .is_some_and(|l| l == "Size and sending")
+                        })
+                        .find_first()
+                        .expect("the facts line");
+                    assert!(
+                        text.size().height >= 1.5 * facts.size().height,
+                        "{how}: the step line wraps: {} against {}",
+                        text.size().height,
+                        facts.size().height
+                    );
+                }
                 for (name, end) in [
                     (watched, ends_at(&text)),
                     ("Close", ends_at(&button_of(&ui, "Close"))),
@@ -1820,7 +1945,238 @@ fn the_pane_fits_with_the_job_line() {
                         copies.absolute_position().x
                     );
                 }
+                images_fit(&ui, &how, halves_of(list));
             }
         }
     }
+}
+
+// --- The grey half ---
+
+/// The corpus's checker alone on its 40 by 12 mm label, pure black and white,
+/// under a threshold of `threshold`: printed as it is up to 254, and with its
+/// 512 white dots inked at 255.
+fn checker_alone(threshold: u8) -> Label {
+    let mut label = Label::from_json(IMAGES).expect("the images corpus label");
+    label.elements.truncate(1);
+    let ElementOrRaw::Known(Element::Image(i)) = &mut label.elements[0] else {
+        panic!("the corpus's first element is the checker");
+    };
+    assert_eq!(i.path, "checker.png");
+    i.threshold = Some(threshold);
+    label
+}
+
+/// Artwork whose dots print otherwise than its greys look shows the greys under
+/// the dots: the same size, left edges aligned, the dots first, each named for
+/// itself.
+#[test]
+fn the_grey_half_shows_under_the_dots_for_artwork() {
+    let (_dir, a) = with_label("grey_under_dots", &art_label());
+    let plug = Rc::new(HeldPlug::default());
+    let (ui, wired) = probe(&a, plug);
+    ctrl(&ui, "p");
+    let images = images_in_pane(&ui);
+    assert_eq!(images.len(), 2);
+    assert_eq!(
+        images[0].accessible_label().as_deref(),
+        Some("What will print")
+    );
+    assert_eq!(
+        images[1].accessible_label().as_deref(),
+        Some("Greys, before dots")
+    );
+    let plane_px = (ui.get_preview_plane_px_w(), ui.get_preview_plane_px_h());
+    let grey_px = (ui.get_preview_grey_px_w(), ui.get_preview_grey_px_h());
+    assert_eq!(plane_px, (320, 96), "one pixel to the dot at scale 1");
+    assert_eq!(grey_px, plane_px);
+    let (dots, greys) = (&images[0], &images[1]);
+    let below = dots.absolute_position().y + dots.size().height + 8.0;
+    assert!(
+        greys.absolute_position().y >= below - 0.01,
+        "the greys start at {}, under dots ending at {below} less the spacing",
+        greys.absolute_position().y
+    );
+    assert_eq!(dots.absolute_position().x, greys.absolute_position().x);
+    let proof = wired.prints.proof().expect("proved");
+    let grey = proof.grey.as_ref().expect("a grey half");
+    shows_the_plane(&ui, proof.plane.as_ref().expect("a plane"));
+    shows_the_grey(&ui, &grey.map);
+    assert_eq!(
+        greys.accessible_description().as_deref(),
+        Some(proof.grey_says(None).as_str())
+    );
+}
+
+/// A label whose greys are already its dots shows the dots alone, in the single
+/// image's larger box: two pixels to the dot at scale 1, as before the grey half.
+#[test]
+fn a_black_and_white_label_shows_one_image() {
+    let (_dir, a) = with_a("one_image");
+    let plug = Rc::new(HeldPlug::default());
+    let (ui, _wired) = probe(&a, plug);
+    ctrl(&ui, "p");
+    let images = images_in_pane(&ui);
+    assert_eq!(images.len(), 1);
+    assert_eq!(
+        images[0].accessible_label().as_deref(),
+        Some("What will print")
+    );
+    assert_eq!(ui.get_preview_grey_px_w(), 0);
+    assert_eq!(
+        (ui.get_preview_plane_px_w(), ui.get_preview_plane_px_h()),
+        (640, 192)
+    );
+}
+
+/// The art label's elements on a stock `feed` dots long, 96 across the head.
+fn art_on(feed: i32) -> Label {
+    let mut label = Label::new(feed, 96, Dpmm::DPI_203);
+    label.elements = art_label().elements;
+    label
+}
+
+/// The single box is the pane less 60 by 200, with no cap of its own: a 50 mm
+/// black-and-white label is shown at two pixels to the dot at scale 1, where the
+/// 640-pixel box before the grey half showed it at one, and a 100 mm one at one,
+/// where that box halved it.
+#[test]
+fn a_wider_black_and_white_label_fills_the_single_box() {
+    for (feed, px) in [(400, (800, 192)), (800, (800, 96))] {
+        let mut label = reference_label();
+        label.media = Label::new(feed, 96, Dpmm::DPI_203).media;
+        label.canvas.feed = feed;
+        let (_dir, a) = with_label(&format!("single_box_{feed}"), &label);
+        let plug = Rc::new(HeldPlug::default());
+        let (ui, _wired) = probe(&a, plug);
+        ctrl(&ui, "p");
+        assert_eq!(images_in_pane(&ui).len(), 1, "{feed} dots");
+        assert_eq!(
+            (ui.get_preview_plane_px_w(), ui.get_preview_plane_px_h()),
+            px,
+            "{feed} dots"
+        );
+    }
+}
+
+/// A label the dots are shown reduced for shows its grey reduced with them, at
+/// the same scale and so the same size, and the grey's description ends with
+/// the reduction the dots' description says. A 200 mm label at scale 1 is
+/// halved to fit each half's 824 by 96 box; at scale 2 the 1648 by 192 box
+/// holds it at one pixel to the dot.
+#[test]
+fn a_reduced_label_shows_its_grey_at_the_dots_scale() {
+    for (scale, px, reduced) in [(1.0, (800, 48), true), (2.0, (1600, 96), false)] {
+        let (_dir, a) = with_label(&format!("grey_reduced_{scale}"), &art_on(1600));
+        let plug = Rc::new(HeldPlug::default());
+        let (ui, wired) = probe_on(start(Some(&a)), plug, scale);
+        ctrl(&ui, "p");
+        let how = format!("200 mm at scale {scale}");
+        images_fit(&ui, &how, 2);
+        assert_eq!(
+            (ui.get_preview_plane_px_w(), ui.get_preview_plane_px_h()),
+            px,
+            "{how}"
+        );
+        let proof = wired.prints.proof().expect("proved");
+        let clause = "shown reduced: one pixel is 2 by 2 dots";
+        let images = images_in_pane(&ui);
+        let says = |i: usize| images[i].accessible_description().unwrap_or_default();
+        assert_eq!(says(0).contains(clause), reduced, "{how}: {}", says(0));
+        assert_eq!(says(1).ends_with(clause), reduced, "{how}: {}", says(1));
+        let k = if reduced { 2 } else { 1 };
+        assert_eq!(says(1), proof.grey_says(Some(k)), "{how}");
+    }
+}
+
+/// An assistive technology's edit behind the pane proves it again, and the grey
+/// half comes and goes with the proof. Two writes rather than Control+Z, which
+/// does not reach the document while the pane is open.
+#[test]
+fn an_edit_behind_the_pane_brings_and_takes_the_grey_half() {
+    let (_dir, a) = with_label("grey_comes_and_goes", &checker_alone(128));
+    let plug = Rc::new(HeldPlug::default());
+    let (ui, wired) = probe(&a, plug);
+    ui.invoke_select(1);
+    settle();
+    // Taken before the pane opens, behind which it is still reached.
+    let threshold = field_of(&ui, "threshold");
+    ctrl(&ui, "p");
+    assert_eq!(images_in_pane(&ui).len(), 1);
+    threshold.set_accessible_value("255");
+    settle();
+    let proof = wired.prints.proof().expect("proved");
+    assert_eq!(proof.rev, wired.canvas.borrow().doc().revision());
+    assert_eq!(images_in_pane(&ui).len(), 2);
+    assert_eq!(
+        (ui.get_preview_grey_px_w(), ui.get_preview_grey_px_h()),
+        (ui.get_preview_plane_px_w(), ui.get_preview_plane_px_h())
+    );
+    assert!(group_of(&ui, "Print").is_some(), "the pane is still open");
+    threshold.set_accessible_value("128");
+    settle();
+    assert_eq!(images_in_pane(&ui).len(), 1);
+    assert_eq!(ui.get_preview_grey_px_w(), 0);
+}
+
+/// While a job runs the pane shows the job's own grey beside the job's own
+/// dots, whatever is edited behind it, and the document's once the job ends.
+#[test]
+fn the_grey_half_follows_the_job() {
+    let (_dir, a) = with_label("grey_follows_job", &checker_alone(255));
+    let plug = Rc::new(HeldPlug::default());
+    let (ui, wired) = probe(&a, plug.clone());
+    ui.invoke_select(1);
+    settle();
+    let threshold = field_of(&ui, "threshold");
+    connected(&ui, &plug, d110_m());
+    assert_eq!(images_in_pane(&ui).len(), 2);
+    activate(&ui, "Print");
+    assert_eq!(prints_of(&plug), [(1, 1)]);
+    assert_eq!(image_label(&ui), "What is printing");
+    let job = wired.prints.proof().expect("the job's proof");
+    threshold.set_accessible_value("128");
+    settle();
+    assert_eq!(images_in_pane(&ui).len(), 2);
+    let shown = wired.prints.proof().expect("proved");
+    assert_eq!(shown.rev, job.rev, "the job's own proof");
+    assert_ne!(shown.rev, wired.canvas.borrow().doc().revision());
+    shows_the_grey(&ui, &shown.grey.as_ref().expect("a grey half").map);
+    ended(&plug, 1, 1, RunEnd::Done);
+    assert_eq!(images_in_pane(&ui).len(), 1);
+    assert_eq!(image_label(&ui), "What will print");
+    assert_eq!(ui.get_preview_grey_px_w(), 0);
+}
+
+/// The longest issue list and the grey half together: the list scrolls, the pane
+/// fits the window with Close inside it, and the images add no Tab stop.
+#[test]
+fn a_long_issue_list_with_art_scrolls_inside_the_pane() {
+    let (_dir, a) = with_label("long_list_art", &many_issues_with_art());
+    let plug = Rc::new(HeldPlug::default());
+    let (ui, wired) = probe(&a, plug.clone());
+    ctrl(&ui, "p");
+    let rows = wired.prints.proof().expect("proved").issue_rows();
+    assert_eq!(rows.len(), 8, "{rows:?}");
+    assert_eq!(images_in_pane(&ui).len(), 2);
+    let pane = group_of(&ui, "Print").expect("the preview is shown");
+    let room = ui.window().size().height as f32 - 84.0 - 12.0;
+    assert!(
+        pane.size().height <= room,
+        "the pane is {} tall with {room} to spare",
+        pane.size().height
+    );
+    let close = button_of(&ui, "Close");
+    let bottom = close.absolute_position().y + close.size().height;
+    assert!(
+        bottom <= pane.absolute_position().y + pane.size().height,
+        "Close ends at {bottom}, inside the pane"
+    );
+    // From Connect, round Close, every row and Connect again, to Close.
+    for _ in 0..rows.len() + 3 {
+        key(&ui, Key::Tab);
+    }
+    key(&ui, Key::Return);
+    assert!(group_of(&ui, "Print").is_none(), "Return pressed Close");
+    assert_eq!(plug.orders(), []);
 }

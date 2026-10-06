@@ -710,8 +710,9 @@ pub fn prints(label: &Label, target: &Target, e: &Element) -> Option<String> {
 /// of the frame prints, when that is said differently from before: "Image element
 /// 1 now prints 41% of its frame (was 36%)".
 ///
-/// Until the grey half of the print pane is built, this is how a change of
-/// halftone or threshold is judged without looking at the canvas. Two one-element
+/// This sentence and the print pane's grey half are the two ways a change of
+/// halftone or threshold is judged, and this is the one that needs no pane
+/// opened: it is said with the edit that makes the change. Two one-element
 /// renders per write: a committed value, or one step of the arrows in the
 /// threshold or halftone field, which is a write of its own; never per typed
 /// character.

@@ -56,6 +56,20 @@
 //! choice. Its rows are one model for the life of the window, written row by row,
 //! so an update never takes the keyboard off the row that holds it
 //! (`canvas::Canvas`, `rows`, for the reason).
+//!
+//! # The grey half
+//!
+//! When the proof keeps a grey ([`Proof::grey`]), the pane shows it under the
+//! dots, each beside its caption. The dots are fitted to a box of their own: as
+//! wide as the pane less its padding, the caption column and the spacing beside
+//! it, 96 pixels in all where the single image's box is the pane less 60, and
+//! half of the single image's height once the spacing between the two halves is
+//! taken out, 96 pixels. The grey is painted at the scale the dots were fitted
+//! at. So the two are the same size, left edges aligned, and each column of dots
+//! sits straight above the grey it was cut from. Without a grey the dots have
+//! the single image's larger box. The grey travels inside the proof, so it is
+//! never older or newer than the dots beside it, and the pane changes nothing: a
+//! halftone or a threshold is the inspector's to change, per image.
 
 use crate::canvas::{Canvas, PanePush, said_again};
 use crate::doc::Doc;
@@ -63,7 +77,7 @@ use crate::file::CloseReplay;
 use crate::filing::{FileCmd, Filing, Now};
 use crate::fresh;
 use crate::plug::{News, Plug};
-use crate::preview::paint_fit;
+use crate::preview::{paint_fit, paint_grey_at};
 use crate::printing::{Focus, JobSlot, LinkView, NotReady, PrintCmd, Printing};
 use crate::proof::{Proof, prove};
 use crate::rows::{ChoiceItem, IssueItem, PrintHost};
@@ -74,15 +88,22 @@ use std::rc::Rc;
 
 /// The pane's widest, in logical pixels, and what it keeps from the window's
 /// edges when the window is narrower. shell.slint places it with the same two
-/// numbers.
-const PANE_W: f32 = 700.0;
+/// numbers: `Math.min(920px, root.width - 40px)`.
+const PANE_W: f32 = 920.0;
 const PANE_MARGIN: f32 = 40.0;
-/// The box the image is fitted into, in logical pixels: at most this wide, and
-/// this much narrower than the pane for its padding; and this tall. The author's
-/// 40 by 12 mm label fits it at two pixels to the dot at scale 1.
-const IMAGE_W: f32 = 640.0;
+/// The box the single image is fitted into, in logical pixels: this much
+/// narrower than the pane for its padding, and this tall. The author's 40 by 12
+/// mm label fits it at two pixels to the dot at scale 1, and a 100 mm label at
+/// one.
 const IMAGE_INSET: f32 = 60.0;
 const IMAGE_H: f32 = 200.0;
+/// The box each half is fitted into when the grey is shown, in logical pixels:
+/// this much narrower than the pane, for its 32 of padding, the 56-pixel caption
+/// column and the 8 between caption and image; and this tall, so the two halves
+/// and the 8 between them are the single image's 200. A 100 mm label fits it at
+/// one pixel to the dot at scale 1.
+const SPLIT_INSET: f32 = 96.0;
+const SPLIT_H: f32 = 96.0;
 
 /// Everything `drive` needs, shared by every callback.
 pub struct Prints<H: PrintHost> {
@@ -429,7 +450,8 @@ impl<H: PrintHost> Prints<H> {
         host.set_preview_verdict(proof.verdict().as_str().into());
         host.set_preview_step(view.step.as_str().into());
 
-        let (box_w, box_h) = image_box(host.window());
+        let grey = proof.grey.as_ref();
+        let (box_w, box_h) = image_box(host.window(), grey.is_some());
         match proof
             .plane
             .as_ref()
@@ -441,12 +463,24 @@ impl<H: PrintHost> Prints<H> {
                 host.set_preview_plane(painted.image);
                 let says = proof.plane_says(Some(scale.dots_per_pixel()));
                 host.set_preview_plane_says(says.as_str().into());
+                // At the dots' own scale, never fitted on its own.
+                match grey.and_then(|g| paint_grey_at(&g.map, scale)) {
+                    Some(painted) => {
+                        host.set_preview_grey_px_w(painted.px_w);
+                        host.set_preview_grey_px_h(painted.px_h);
+                        host.set_preview_grey(painted.image);
+                        let says = proof.grey_says(Some(scale.dots_per_pixel()));
+                        host.set_preview_grey_says(says.as_str().into());
+                    }
+                    None => clear_grey(host),
+                }
             }
             None => {
                 host.set_preview_plane(slint::Image::default());
                 host.set_preview_plane_px_w(0);
                 host.set_preview_plane_px_h(0);
                 host.set_preview_plane_says(proof.plane_says(None).as_str().into());
+                clear_grey(host);
             }
         }
 
@@ -510,13 +544,51 @@ fn push_job<H: PrintHost>(host: &H, view: &LinkView) {
     host.set_preview_image_label(view.image_label.into());
 }
 
-/// The box the image is fitted into, in whole physical pixels: the pane's own
-/// arithmetic from shell.slint, in logical pixels, times the display scale.
-fn image_box(window: &slint::Window) -> (u32, u32) {
+/// No grey half: the pane shows the dots alone.
+fn clear_grey<H: PrintHost>(host: &H) {
+    host.set_preview_grey(slint::Image::default());
+    host.set_preview_grey_px_w(0);
+    host.set_preview_grey_px_h(0);
+    host.set_preview_grey_says("".into());
+}
+
+/// The box the dots are fitted into, in whole physical pixels: the single
+/// image's, or each half's when `split`.
+fn image_box(window: &slint::Window, split: bool) -> (u32, u32) {
     let scale = window.scale_factor();
-    let window_w = window.size().width as f32 / scale;
+    image_box_at(window.size().width as f32 / scale, scale, split)
+}
+
+/// The pane's own arithmetic from shell.slint and print.slint, in logical
+/// pixels for a window `window_w` wide, times the display scale `scale`.
+fn image_box_at(window_w: f32, scale: f32, split: bool) -> (u32, u32) {
     let pane_w = PANE_W.min(window_w - PANE_MARGIN);
-    let w = IMAGE_W.min(pane_w - IMAGE_INSET).max(1.0);
+    let (w, h) = if split {
+        (pane_w - SPLIT_INSET, SPLIT_H)
+    } else {
+        (pane_w - IMAGE_INSET, IMAGE_H)
+    };
     let phys = |logical: f32| ((logical * scale).floor() as u32).max(1);
-    (phys(w), phys(IMAGE_H))
+    (phys(w.max(1.0)), phys(h))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The default 1200-pixel window at every scale the layout tests run: the
+    /// single image's box is the pane less 60 by 200, each half's the pane less
+    /// 96 by 96, floored to whole device pixels. A window narrower than the pane
+    /// and its margins narrows both.
+    #[test]
+    fn the_image_box_at_every_scale() {
+        let single = [(860, 200), (1075, 250), (1290, 300), (1720, 400)];
+        let split = [(824, 96), (1030, 120), (1236, 144), (1648, 192)];
+        for (i, s) in [1.0, 1.25, 1.5, 2.0].into_iter().enumerate() {
+            assert_eq!(image_box_at(1200.0, s, false), single[i], "scale {s}");
+            assert_eq!(image_box_at(1200.0, s, true), split[i], "scale {s}");
+        }
+        assert_eq!(image_box_at(700.0, 1.0, true), (564, 96));
+        assert_eq!(image_box_at(700.0, 1.0, false), (600, 200));
+    }
 }
