@@ -110,10 +110,10 @@ fi
 slint_text="$root/packaging/licenses/LicenseRef-Slint-Royalty-free-2.0.md"
 slint_sha=5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe
 if [ "$(sha256sum "$slint_text" | cut -d' ' -f1)" != "$slint_sha" ]; then
-    echo "$slint_text is not the text Slint 1.17 ships; nothing was written to $out" >&2
+    echo "$slint_text is not the text Slint 1.18 ships; nothing was written to $out" >&2
     exit 1
 fi
-for src in "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/slint-1.17.*/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md; do
+for src in "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/slint-1.18.*/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md; do
     [ -f "$src" ] || continue
     if ! cmp -s "$src" "$slint_text"; then
         echo "$slint_text differs from $src; nothing was written to $out" >&2
@@ -130,7 +130,7 @@ done
     for c in slint slint-macros i-slint-common i-slint-compiler i-slint-core \
         i-slint-core-macros i-slint-backend-selector i-slint-backend-winit \
         i-slint-renderer-software; do
-        echo "  - $c 1.17.1 <https://github.com/slint-ui/slint>"
+        echo "  - $c 1.18.1 <https://github.com/slint-ui/slint>"
     done
     echo "    Authors: SixtyFPS GmbH <info@slint.dev>"
     echo

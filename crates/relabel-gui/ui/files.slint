@@ -143,8 +143,14 @@ export component NewLabelPane inherits PopupWindow {
 
     // A preset's button hands its length here rather than closing the popup itself:
     // closing drops the repeated button, and a call made from it afterwards reaches
-    // nothing (measured: the preset was never made).
-    function take(token: int) {
+    // nothing (measured: the preset was never made). A callback, not a function:
+    // Slint 1.18 compiles a function with a single caller into that caller, here
+    // the button, and from there the pane is reached through a weak handle that
+    // close() has already let go, so preset() was skipped and the preset was
+    // never made again. A callback's handler runs on the pane itself, which the
+    // button's call holds until the handler returns.
+    callback take(token: int);
+    take(token) => {
         root.close();
         root.preset(token);
     }

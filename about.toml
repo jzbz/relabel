@@ -16,8 +16,9 @@ accepted = [
     "Unicode-3.0",
     # flagset, via datamatrix, is Apache-2.0 only.
     "Apache-2.0",
-    # foldhash, via hashbrown's default hasher for parley and fontique, is
-    # Zlib only.
+    # foldhash, via hashbrown's default hasher for parley and fontique, and on
+    # Linux for petgraph and tree_magic_mini under Slint's clipboard, is Zlib
+    # only.
     "Zlib",
     # Slint, taken on its royalty-free branch rather than GPL-3.0. Not an SPDX
     # identifier: the text ships in the crates themselves.
@@ -303,12 +304,6 @@ checksum = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
 [ab_glyph_rasterizer.clarify]
 license = "Apache-2.0"
 [[ab_glyph_rasterizer.clarify.files]]
-path = "LICENSE"
-checksum = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
-
-[linked_hash_set.clarify]
-license = "Apache-2.0"
-[[linked_hash_set.clarify.files]]
 path = "LICENSE"
 checksum = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
 

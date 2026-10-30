@@ -100,7 +100,8 @@ Three crates offer Zlib alone, and none asks anything of a binary: Zlib
 requires its notice only in a source distribution.
 
 - **`foldhash`** is compiled in, as `hashbrown`'s default hasher, which parley
-  and fontique ask for. `deny.toml` admits it by name.
+  and fontique ask for, and on Linux petgraph and tree_magic_mini, under
+  Slint's clipboard. `deny.toml` admits it by name.
 - **`slotmap`** is compiled in with the GUI, under Slint's `fontdb` and
   `taffy`, and is admitted by name with the rest of that stack (see below).
 - **`zlib-rs`** is an optional dependency of `flate2` that no feature enables.
@@ -117,7 +118,11 @@ passes with `deny.toml` unchanged.
 
 What is left out matters as much: AVIF, whose decoder links a C library;
 resvg's `text`, which would put `fontdb` and the Zlib-only `slotmap` into
-`relabel-render`'s own graph, not only the GUI's; and its `raster-images`. Two
+`relabel-render`'s own graph, not only the GUI's; and its `raster-images`.
+That holds for `relabel-render` built alone, as the CLI is. In the GUI binary
+resvg is also Slint's copy, and Slint turns `text` and `raster-images` on in
+it; `relabel-render` reaches neither, refusing SVG text by name and loading no
+image. Two
 side effects are worth knowing. resvg asks for tiny-skia's default features, so
 tiny-skia's PNG codec is compiled in - the same `png` crate `image` brings. And
 `pico-args`, a command-line parser that resvg and usvg depend on for their own
@@ -197,18 +202,18 @@ On Linux the GUI now links `libdbus-1` as well (see System libraries).
   `packaging/third-party-notices.sh` appends it the way it already appends the
   fonts' OFL.
 
-  The build brings **24 crates `deny.toml` names one by one**: the ten Slint
-  crates, eight Apache-2.0-only ones (`winit`, `accesskit_winit`, `ab_glyph`,
+  The build brings **23 crates `deny.toml` names one by one**: the ten Slint
+  crates, seven Apache-2.0-only ones (`winit`, `accesskit_winit`, `ab_glyph`,
   `ab_glyph_rasterizer`, `owned_ttf_parser`, `unicode-linebreak`,
-  `linked_hash_set`, `gethostname`), `dpi` whose `Apache-2.0 AND MIT` is a
-  conjunction rather than a choice, `imgref` on CC0-1.0, `libloading` on ISC,
+  `gethostname`), `dpi` whose `Apache-2.0 AND MIT` is a conjunction rather
+  than a choice, `imgref` on CC0-1.0, `libloading` on ISC,
   `slotmap` on Zlib, and `clipboard-win` and `error-code` on BSL-1.0. That is
   fewer than the thirty this section used to estimate, because the GUI takes
   the software renderer rather than femtovg and so brings no OpenGL stack.
 
   Twenty-five of its crates publish no licence text of any kind, so the notice
   reproduces the canonical text for them; they are named in
-  `packaging/third-party-notices.sh`. Eleven more publish one without saying
+  `packaging/third-party-notices.sh`. Ten more publish one without saying
   where, and `about.toml` now points at each, so their copyright lines survive.
 
 ## Fonts

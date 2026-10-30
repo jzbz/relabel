@@ -63,7 +63,6 @@ exceptions = [
     { crate = "ab_glyph_rasterizer", allow = ["Apache-2.0"] },
     { crate = "owned_ttf_parser", allow = ["Apache-2.0"] },
     { crate = "unicode-linebreak", allow = ["Apache-2.0"] },
-    { crate = "linked_hash_set", allow = ["Apache-2.0"] },
     # A conjunction, not a choice: both licences apply at once, so MIT alone
     # cannot admit it.
     { crate = "dpi", allow = ["Apache-2.0", "MIT"] },

@@ -38,7 +38,7 @@ thiserror.workspace = true
 # and the software renderer rounds geometry to whole device pixels where
 # femtovg translates by an unrounded physical distance. Keeping it out also
 # keeps six Apache-2.0-only OpenGL crates out of the licence exception list.
-slint = { version = "1.17", default-features = false, features = [
+slint = { version = "1.18.1", default-features = false, features = [
     "std",
     "compat-1-2",
     "accessibility",
@@ -64,11 +64,11 @@ rfd = "0.17.2"
 # The whole canvas is tested through this: mock_drag for the gesture and the
 # accessibility tree for what a screen reader is told. renderer-software here
 # as well, which is what lets a test take a snapshot and count device pixels.
-i-slint-backend-testing = { version = "1.17", features = ["renderer-software"] }
+i-slint-backend-testing = { version = "1.18.1", features = ["renderer-software"] }
 # Only to write an element of a type this build does not know, which is the one
 # thing the document's escape hatch cannot be tested without. Nothing in the
 # crate itself needs it: a label is loaded and saved as a string.
 serde_json.workspace = true
 
 [build-dependencies]
-slint-build = "1.17"
+slint-build = "1.18.1"

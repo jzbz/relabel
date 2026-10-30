@@ -245,8 +245,8 @@ export component PreviewPane inherits PopupWindow {
                     min-height: Math.min(list.preferred-height, 64px);
                     preferred-height: list.preferred-height;
                     max-height: list.preferred-height;
-                    viewport-width: self.width;
-                    viewport-height: list.preferred-height;
+                    content-width: self.width;
+                    content-height: list.preferred-height;
                     list := Rectangle {
                         width: parent.width;
                         height: self.preferred-height;

@@ -14,7 +14,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 # What cargo will actually enforce, not what the edition alone asks for. The
-# edition's own floor is 1.85, but slint 1.17 declares 1.92 throughout its tree
+# edition's own floor is 1.85, but slint 1.18 declares 1.92 throughout its tree
 # and cargo enforces the maximum over the whole graph. relabel-proto carries no
 # Slint dependency and still checks on 1.85; relabel-render needs 1.88, the
 # floor fontique and ICU4X declare. The toolkit is the rest of the difference,
@@ -86,24 +86,27 @@ datamatrix = "0.3.3"
 # selection (fontique, reached as parley::fontique). Default features off
 # drops fontique's system-font backends - fontconfig, DirectWrite, CoreText -
 # so relabel-render never enumerates or links a system font and a label
-# rasterises the same everywhere. `complex-scripts` stays off too: it swaps in
-# ICU's dictionary and LSTM segmenters for Thai, Lao, Khmer, Myanmar and CJK,
-# which the embedded faces cannot draw, and added 3.8 MB to a release binary
-# when measured on 0.10. Newer than the 0.10 Slint 1.17 pins, so the graph
-# holds two copies each of parley, parley_data, fontique and harfrust. No type
-# passes between the two, and Slint's parley features - `complex-scripts` among
-# them - no longer unify into the copy relabel-render lays text out with.
+# rasterises the same everywhere. `complex-scripts` is not asked for here: it
+# swaps in ICU's dictionary and LSTM segmenters for Thai, Lao, Khmer, Myanmar
+# and CJK, which the embedded faces cannot draw, and added 3.8 MB to a release
+# binary when measured on 0.10. Slint 1.18 asks for this same 0.11.1 with its
+# default system-font backends, `complex-scripts` and `accesskit`, so the
+# graph holds one copy each of parley, parley_data, fontique and harfrust, and
+# wherever Slint is built alongside - the GUI, or any build of the whole
+# workspace - all three unify into the copy relabel-render lays text out with.
+# The backends are then compiled in but never asked: text.rs builds its
+# collection with system fonts off, and relabel-render calls nothing of
+# parley's AccessKit support. relabel-render built alone, as the CLI is, has
+# none of them. Every corpus label renders the same either way; only text in
+# those scripts can break differently.
 parley = { version = "0.11.1", default-features = false, features = ["std"] }
 # Glyph outlines and hinting: the autohinter here is the only hinting measured
 # to keep a one-to-two-dot stem the same width across a glyph. See
-# relabel-render's text module. Newer than the 0.44 parley 0.11 pins and the
-# 0.42 Slint 1.17 pins, so the graph holds three skrifa copies, each over its
-# own read-fonts: 0.42 shared by Slint, its parley 0.10 and swash; 0.44 for
-# parley 0.11 alone; and this one. That is safe because no skrifa type crosses
-# the parley boundary - text.rs builds its own FontRef from the raw font bytes
-# parley hands back. swash's range reaches 0.44, but `cargo update --precise`
-# cannot move it there without moving Slint's crates, which require 0.42.
-# Re-measure the hinted stems when this moves.
+# relabel-render's text module. Newer than the 0.44 that Slint 1.18, parley
+# 0.11 and swash share, so the graph holds two skrifa copies, each over its own
+# read-fonts: 0.44 for them, and this one. That is safe because no skrifa type
+# crosses the parley boundary - text.rs builds its own FontRef from the raw
+# font bytes parley hands back. Re-measure the hinted stems when this moves.
 skrifa = "0.47.0"
 
 # Raster artwork: decoding what a user imports, and the PNG an image element
@@ -121,9 +124,12 @@ image = { version = "=0.25.10", default-features = false, features = [
 # Default features off: no `text` - SVG text is refused, and would put fontdb
 # and a Zlib-only crate into relabel-render's own graph, not only the GUI's -
 # and no `raster-images`, whose decoders ignore `image`'s limits. Pinned
-# exactly: usvg's API changes between releases. Newer than the 0.47 Slint 1.17
-# pins, so resvg and usvg are each in the graph twice, over the one tiny-skia
-# 0.12 both ask for; no SVG type passes between relabel-render and Slint.
+# exactly: usvg's API changes between releases. Slint 1.18 asks for this same
+# 0.48.1, so resvg and usvg are in the graph once, and wherever Slint is built
+# alongside, its `text`, `raster-images` and `svgz` unify into this copy.
+# relabel-render's svg module reaches none of them: it refuses `<text>` and
+# `<image>` by name before usvg builds its tree, its image resolvers load
+# nothing, and it hands usvg a parsed UTF-8 document, never compressed bytes.
 resvg = { version = "=0.48.1", default-features = false }
 # The embedded PNG travels in the label's JSON as base64 text.
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
