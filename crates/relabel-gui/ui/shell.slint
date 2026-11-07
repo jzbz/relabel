@@ -4,6 +4,7 @@ import { ZoomBar, Scroller } from "zoom.slint";
 import { EditBar, FileBar } from "tools.slint";
 import { UnsavedQuestion, NewLabelPane } from "files.slint";
 import { PreviewPane } from "print.slint";
+import { AboutPane } from "about.slint";
 import { ElRow, InsSlot, Tool, Grips, SizePreset, IssueRow, ChoiceRow } from "types.slint";
 
 // The size the application opens at, which its probe is fixed at too, so the two
@@ -42,7 +43,7 @@ export component Designer {
     in property <[Tool]> tools <=> edit-bar.tools;
 
     // --- the files, pushed by crate::file ---
-    // The File bar's five buttons, pushed once.
+    // The File bar's six buttons, pushed once.
     in property <[Tool]> file-tools <=> file-bar.tools;
     // The New label pane's presets, and what the length typed so far comes to,
     // pushed when the pane opens and on every edit.
@@ -55,6 +56,14 @@ export component Designer {
     private property <string> new-about;
     private property <string> new-feed-start;
     private property <string> new-hint;
+    // The About pane's lines, `about`'s. Named for the pane in full: `new-about`
+    // above is the New label pane's.
+    private property <string> about-pane-version;
+    private property <string> about-pane-copyright;
+    private property <string> about-pane-licence;
+    private property <string> about-pane-repository;
+    private property <string> about-pane-notices;
+    private property <string> about-pane-trademark;
 
     // --- the printer, pushed by crate::print ---
     // What is connected, beside the File bar.
@@ -120,6 +129,10 @@ export component Designer {
     // (canvas.slint), read by Rust with the view's size.
     out property <int> grip-reach-px: canvas.grip-reach-px;
     out property <bool> pointer-down: canvas.pointer-down;
+    // Where the About pane's top is, from the window's, kept by the pane's own
+    // placement (below): its elements are measured from the pane, so a test adds
+    // this to find them in the window.
+    out property <length> about-top: 84px;
 
     callback select(id: int);
     callback begin-move(id: int);
@@ -165,10 +178,11 @@ export component Designer {
     // A File bar token: `filing::Want`'s. Every route - a button, its default
     // action, a chord - comes here, and Rust decides everything else.
     callback file-command(token: int);
-    // The File bar token whose chord this key is with Control held, or -1. Rust's,
-    // for `kind-of-key`'s reason; Shift is passed apart from the character because
-    // Save as is told from Save by Shift, never by the letter's case.
-    callback file-of-key(text: string, shift: bool) -> int;
+    // The File bar token whose chord this key is, or -1. Rust's, for
+    // `kind-of-key`'s reason; Shift is passed apart from the character because
+    // Save as is told from Save by Shift, never by the letter's case, and Control
+    // because a letter is a chord only with it and F1 only without it.
+    callback file-of-key(text: string, shift: bool, control: bool) -> int;
     // The answer to the question about unsaved work: `filing::Reply`'s token.
     callback unsaved-reply(answer: int);
     callback new-feed-edited(text: string);
@@ -181,6 +195,8 @@ export component Designer {
     callback preview-act(what: int);
     callback preview-choose(index: int);
     callback preview-copies-edited(text: string);
+    // The About pane has closed itself.
+    callback about-closed();
 
     // On the device size rather than on `width`: a move to a display of another
     // scale changes the first and not the second (measured, reach run4.log). Late by
@@ -242,13 +258,25 @@ export component Designer {
         preview-pane.show();
     }
 
-    // Called from Rust before it shows the question, the print pane or closes the
-    // window: a close abandons the New label pane and the print pane, and no popup
-    // ever opens over another.
+    // Called from Rust with the About pane's lines.
+    public function show-about(version: string, copyright: string, licence: string, repository: string, notices: string, trademark: string) {
+        root.about-pane-version = version;
+        root.about-pane-copyright = copyright;
+        root.about-pane-licence = licence;
+        root.about-pane-repository = repository;
+        root.about-pane-notices = notices;
+        root.about-pane-trademark = trademark;
+        about-pane.show();
+    }
+
+    // Called from Rust before it shows the question, the print pane or the About
+    // pane, or closes the window: a close abandons the New label pane, the print
+    // pane and the About pane, and no popup ever opens over another.
     public function close-file-popups() {
         unsaved.close();
         new-pane.close();
         preview-pane.close();
+        about-pane.close();
     }
 
     // Every route that adds an element: a button, its default action and a chord.
@@ -402,8 +430,15 @@ export component Designer {
                 // rectangle keeps its chord. A held chord
                 // repeats, since the winit backend never sets `repeat`: a second Save
                 // finds nothing to save, and a second Open a dialog already open.
-                if (event.modifiers.control && !event.modifiers.alt
-                    && root.file-by-key(root.file-of-key(event.text, event.modifiers.shift))) {
+                //
+                // And About: F1 alone, from anywhere for F6's reason. A field
+                // inserts nothing for it either: a function key's text is a
+                // private-use character (i-slint-core items/text.rs:1077-1084). Only
+                // Control or F1 reaches Rust, so a letter typed into a field is never
+                // asked about. Rust answers -1 for Control+F1 and Shift+F1, which some
+                // desktops take for their own.
+                if (!event.modifiers.alt && (event.modifiers.control || event.text == Key.F1)
+                    && root.file-by-key(root.file-of-key(event.text, event.modifiers.shift, event.modifiers.control))) {
                     return EventResult.accept;
                 }
                 // Adding an element: Control+Shift and T, B, R, M, O or L, from
@@ -747,5 +782,31 @@ export component Designer {
         act(what) => { root.preview-act(what); }
         choose(index) => { root.preview-choose(index); }
         copies-edited(text) => { root.preview-copies-edited(text); }
+    }
+    about-pane := AboutPane {
+        x: (root.width - self.width) / 2;
+        // 84 pixels down, where the question opens, while the window leaves the
+        // pane its least height there (about.slint). In a shorter window it rises
+        // over the File bar, as far as 8 pixels from the window's top: the bar is
+        // behind a popup that lets nothing behind it be pressed, and the pane's
+        // widget and Close stay whole for longer.
+        y: Math.max(8px, Math.min(84px, status-row.y - 8px - self.least));
+        init => {
+            root.about-top = self.y;
+        }
+        changed y => {
+            root.about-top = self.y;
+        }
+        // Down to the status line, as the print pane is, for its reason: a print
+        // job can be running while the pane is open, and that line says what it
+        // is doing.
+        room: status-row.y - self.y - 8px;
+        version: root.about-pane-version;
+        copyright: root.about-pane-copyright;
+        licence: root.about-pane-licence;
+        repository: root.about-pane-repository;
+        notices: root.about-pane-notices;
+        trademark: root.about-pane-trademark;
+        closed => { root.about-closed(); }
     }
 }

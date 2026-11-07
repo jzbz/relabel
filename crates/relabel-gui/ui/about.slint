@@ -1,0 +1,330 @@
+import { AboutSlint, Button, Palette } from "std-widgets.slint";
+
+// One of relabel's lines: plain text, read under its own name, and the value
+// read is the text drawn. A Tab stop only while `stop` is set, which the pane sets
+// while its lines do not all fit, or while everything above Close scrolls: Slint
+// marks a line a Flickable has scrolled
+// wholly away as hidden to a screen reader (i-slint-backend-winit
+// accesskit.rs:761-763), and Tab reaches it there and scrolls it into view
+// (i-slint-core window.rs:1528-1531), as the print pane's issue rows are
+// reached. The FocusScope is the whole line, so the scroll reveals all of it, and
+// takes no click, so the pointer reaches the scroll beneath.
+component AboutLine inherits Rectangle {
+    in property <string> name;
+    in property <string> text;
+    in property <brush> ink: Palette.foreground;
+    in property <bool> stop;
+
+    border-width: line-focus.has-focus ? 1px : 0px;
+    border-color: Palette.accent-background;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.name;
+    accessible-value: shown.text;
+    forward-focus: line-focus;
+
+    HorizontalLayout {
+        padding: 2px;
+        shown := Text {
+            text: root.text;
+            wrap: word-wrap;
+            color: root.ink;
+            accessible-role: AccessibleRole.none;
+        }
+    }
+    line-focus := FocusScope {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        focus-on-click: false;
+        focus-on-tab-navigation: root.stop;
+    }
+}
+
+// The About pane: relabel's version, copyright, licence and repository, where
+// the third-party notices are, the trademark line, and Slint's own AboutSlint
+// widget.
+// Every line of relabel's comes from Rust (`about`); the widget is Slint's, shown
+// as it ships.
+//
+// The widget is what section 2(a) of Slint's royalty-free licence asks for: it is
+// to be displayed in an About screen or dialog "that is accessible from the top
+// level menu of the Application"
+// (packaging/licenses/LicenseRef-Slint-Royalty-free-2.0.md:25). relabel has no
+// menu bar; this pane opens from the File bar, its top level, which is read as
+// that menu (THIRD-PARTY.md says so, and that the reading is relabel's own). The licence names the widget itself, so it is
+// imported, never redrawn, and nothing here sets or covers any part of it.
+//
+// A popup in the file popups' one place, for their reasons (files.slint): no-auto-
+// close, so a click elsewhere reaches nothing and no chord acts on the document
+// behind it; Escape closes it through its own FocusScope; Tab goes round inside
+// it; and the handler that ends it closes it before it calls out. Slint 1.18 has no
+// dialog role (i-slint-common enums.rs:466-531), so it is a group box named for
+// what it is.
+export component AboutPane inherits PopupWindow {
+    in property <string> version;
+    in property <string> copyright;
+    in property <string> licence;
+    in property <string> repository;
+    in property <string> notices;
+    in property <string> trademark;
+    // The most height the pane may take, which the window decides, as the print
+    // pane's (print.slint).
+    in property <length> room;
+    // The least height that shows the widget and Close whole below a part of
+    // relabel's lines, read by the window, which raises the pane until the room
+    // it leaves is at least this (shell.slint). Where the room is less, as in the
+    // shortest windows, everything above Close scrolls together and Close stays
+    // in the pane.
+    out property <length> least: 2 * root.pad + heading.min-height + root.gap + root.lines-least + root.gap + root.badge-full + root.gap + buttons.min-height;
+
+    // The pane has closed itself.
+    callback closed();
+
+    close-policy: PopupClosePolicy.no-auto-close;
+    width: 440px;
+    height: Math.min(layout.preferred-height, root.room);
+
+    // Close has the keyboard, so Return and Escape both close, and a screen reader
+    // starts inside the pane.
+    init => {
+        close.focus();
+    }
+
+    private property <length> pad: 16px;
+    private property <length> gap: 8px;
+    // The widget's box (below), and the height it has while the pane is
+    // squeezed: as much of the scrolling part as there is, down to the widget's
+    // own least, so that in a window as short as 250 pixels the widget can still
+    // be scrolled wholly into view.
+    private property <length> badge-full: 156px;
+    private property <length> badge-height: root.squeezed ? Math.max(badge.min-height, Math.min(root.badge-full, root.room - 2 * root.pad - root.gap - buttons.min-height)) : root.badge-full;
+    // The least of relabel's lines shown while the widget and Close are whole:
+    // about one line, which scrolls to the rest.
+    private property <length> lines-least: Math.min(texts.preferred-height, 24px);
+    // The room is less than the least, so everything above Close scrolls as one,
+    // and relabel's lines no longer scroll on their own: with both scrolling, Tab,
+    // tried headless, lost the keyboard at the first line the inner one hid.
+    private property <bool> squeezed: root.room < root.least;
+    // relabel's lines, or everything above Close, do not all fit.
+    private property <bool> clipped: lines.content-height > lines.height || root.body-clipped;
+    // Everything above Close does not fit.
+    private property <bool> body-clipped: body.content-height > body.height;
+
+    // The lines' scroll, kept between their top and their bottom.
+    function scroll-lines(to: length) {
+        lines.content-y = Math.max(Math.min(to, 0px), Math.min(0px, lines.height - lines.content-height));
+    }
+
+    // The scroll of everything above Close, kept the same way.
+    function scroll-body(to: length) {
+        body.content-y = Math.max(Math.min(to, 0px), Math.min(0px, body.height - body.content-height));
+    }
+
+    // A step down: relabel's lines first, as far as their end, and then
+    // everything above Close, which brings the widget into view. A step up undoes
+    // them in the other order. `page` steps by the height of what scrolls rather
+    // than by 16 pixels. Where everything fits, a step moves nothing.
+    function step(down: bool, page: bool) {
+        if (down) {
+            if (lines.content-y > lines.height - lines.content-height + 0.5px) {
+                root.scroll-lines(lines.content-y - (page ? lines.height : 16px));
+            } else {
+                root.scroll-body(body.content-y - (page ? body.height : 16px));
+            }
+        } else {
+            if (body.content-y < -0.5px) {
+                root.scroll-body(body.content-y + (page ? body.height : 16px));
+            } else {
+                root.scroll-lines(lines.content-y + (page ? lines.height : 16px));
+            }
+        }
+    }
+
+    Rectangle {
+        background: Palette.background;
+        border-width: 1px;
+        border-color: Palette.border;
+        border-radius: 4px;
+        accessible-role: AccessibleRole.groupbox;
+        accessible-label: "About relabel";
+
+        FocusScope {
+            focus-on-tab-navigation: false;
+            focus-on-click: false;
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    root.close();
+                    root.closed();
+                    return EventResult.accept;
+                }
+                // The pane scrolls from the keyboard while Close keeps it: Close
+                // takes only Space and Return, so the arrows and the page keys come
+                // here.
+                if (event.text == Key.UpArrow) {
+                    root.step(false, false);
+                    return EventResult.accept;
+                }
+                if (event.text == Key.DownArrow) {
+                    root.step(true, false);
+                    return EventResult.accept;
+                }
+                if (event.text == Key.PageUp) {
+                    root.step(false, true);
+                    return EventResult.accept;
+                }
+                if (event.text == Key.PageDown) {
+                    root.step(true, true);
+                    return EventResult.accept;
+                }
+                if (event.text == Key.Home) {
+                    root.scroll-lines(0px);
+                    root.scroll-body(0px);
+                    return EventResult.accept;
+                }
+                if (event.text == Key.End) {
+                    root.scroll-lines(lines.height - lines.content-height);
+                    root.scroll-body(body.height - body.content-height);
+                    return EventResult.accept;
+                }
+                return EventResult.reject;
+            }
+
+            layout := VerticalLayout {
+                padding: root.pad;
+                spacing: root.gap;
+                // Everything above Close. Where the room is at least `least` it
+                // all fits and only relabel's lines give way (below); where it is
+                // less, as in the shortest windows, it scrolls as one, by the same
+                // keys and the pointer, and the widget becomes a Tab stop.
+                body := Flickable {
+                    vertical-stretch: 1;
+                    min-height: 0px;
+                    preferred-height: inner.preferred-height;
+                    max-height: inner.preferred-height;
+                    content-width: self.width;
+                    content-height: inner.height;
+                    inner := VerticalLayout {
+                        width: body.width;
+                        height: Math.max(body.height, self.min-height);
+                        spacing: root.gap;
+                        heading := Text {
+                            text: "relabel";
+                            font-weight: 600;
+                            // The group box already announces it.
+                            accessible-role: AccessibleRole.none;
+                        }
+                        // relabel's lines (AboutLine), the part of the pane that
+                        // gives way first when the window is short: they scroll, by
+                        // the arrows and the page keys (above), the pointer, or Tab,
+                        // which while they do not all fit stops on each and brings it
+                        // into view. Where they fit, nothing acts on any of them and
+                        // Close is the only Tab stop.
+                        lines := Flickable {
+                            vertical-stretch: 1;
+                            min-height: root.squeezed ? texts.preferred-height : root.lines-least;
+                            preferred-height: texts.preferred-height;
+                            max-height: texts.preferred-height;
+                            content-width: self.width;
+                            content-height: texts.preferred-height;
+                            texts := VerticalLayout {
+                                width: parent.width;
+                                height: self.preferred-height;
+                                spacing: 4px;
+                                AboutLine {
+                                    name: "Version";
+                                    text: root.version;
+                                    stop: root.clipped;
+                                }
+                                AboutLine {
+                                    name: "Copyright";
+                                    text: root.copyright;
+                                    stop: root.clipped;
+                                }
+                                AboutLine {
+                                    name: "Licence";
+                                    text: root.licence;
+                                    stop: root.clipped;
+                                }
+                                AboutLine {
+                                    name: "Repository";
+                                    text: root.repository;
+                                    stop: root.clipped;
+                                }
+                                AboutLine {
+                                    name: "Third-party notices";
+                                    text: root.notices;
+                                    stop: root.clipped;
+                                }
+                                AboutLine {
+                                    name: "Trademark";
+                                    text: root.trademark;
+                                    ink: Palette.foreground.transparentize(35%);
+                                    stop: root.clipped;
+                                }
+                            }
+                        }
+                        // The widget takes all of its parent's height as its
+                        // preferred height (about-slint.slint:7-8), which inside
+                        // this layout would be the layout's own, and the pane is as
+                        // tall as the layout wants: a loop. So it sits in a box of a
+                        // height of its own, as wide as the pane, and fills it.
+                        // Inside, its line takes the height it needs and its logo the
+                        // rest, at least 48 px (about-slint.slint:17-28), and keeps
+                        // its shape: 156 px leaves the logo about the 97 px its SVG
+                        // is drawn at. While the pane is squeezed the box is shorter
+                        // where the room is (`badge-height`), never below the
+                        // widget's own least. The line, and the click that opens
+                        // slint.dev, are the widget's own. That click is the
+                        // pointer's alone - the widget has no focus or action of its
+                        // own - and the address it opens is in the line a screen
+                        // reader reads.
+                        //
+                        // A Tab stop only while everything above Close scrolls, for
+                        // the lines' reason (AboutLine): a widget scrolled wholly
+                        // away is hidden to a screen reader, and Tab brings it into
+                        // view. The FocusScope lies beneath the widget, so it covers
+                        // none of it and takes none of its clicks, and is no taller
+                        // than the part that scrolls, so Tab brings as much of the
+                        // widget as fits into view from its top: tried headless, Tab
+                        // lost the keyboard at a stop taller than the part that
+                        // scrolls and wholly out of view. Its border is the box's,
+                        // drawn beneath the widget, which paints no background.
+                        Rectangle {
+                            height: root.badge-height;
+                            border-width: badge-focus.has-focus ? 1px : 0px;
+                            border-color: Palette.accent-background;
+                            accessible-role: AccessibleRole.groupbox;
+                            accessible-label: "About Slint";
+                            forward-focus: badge-focus;
+                            badge-focus := FocusScope {
+                                x: 0px;
+                                y: 0px;
+                                width: parent.width;
+                                height: Math.min(parent.height, body.height);
+                                focus-on-click: false;
+                                focus-on-tab-navigation: root.body-clipped;
+                            }
+                            badge := AboutSlint {
+                                width: parent.width;
+                                height: parent.height;
+                            }
+                        }
+                    }
+                }
+                buttons := HorizontalLayout {
+                    alignment: end;
+                    close := Button {
+                        text: "Close";
+                        primary: true;
+                        accessible-description: "returns to the label";
+                        clicked => {
+                            root.close();
+                            root.closed();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

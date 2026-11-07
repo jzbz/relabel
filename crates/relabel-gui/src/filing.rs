@@ -1,5 +1,6 @@
-//! New, open, save, save as, the print pane and closing the window: which of them
-//! may go ahead, what has to be asked first, and what the operator is told.
+//! New, open, save, save as, the print pane, the About pane and closing the
+//! window: which of them may go ahead, what has to be asked first, and what the
+//! operator is told.
 //!
 //! A synchronous state machine with no toolkit and no I/O in it, for `doc`'s
 //! reason: one [`FileCmd`] in, one [`FileOutcome`] out, and every rule reached by
@@ -24,6 +25,15 @@
 //! pane asks nothing about unsaved work: printing changes nothing in the
 //! document. A close held for a print job is `print`'s, and reaches this machine
 //! only once the job has ended.
+//!
+//! # So does the About pane
+//!
+//! The About pane opens in the same place, from the File bar's sixth button or
+//! F1, for the print pane's reasons: only one popup is ever shown, a command an
+//! assistive technology presses behind it is refused with "close the About pane
+//! first", it is refused itself while another popup is open, and closing the
+//! window with it open is an ordinary close. Like the print pane it asks nothing
+//! about unsaved work, and it reads nothing of the document.
 //!
 //! # Consent is to a revision, not to a moment
 //!
@@ -63,6 +73,9 @@ pub enum Want {
     /// The print pane: what will print, the printer link, and Print. Named
     /// Preview inside, as the pane was before it printed.
     Preview,
+    /// The About pane: relabel's version, copyright, licence and repository,
+    /// where the third-party notices are, and Slint's AboutSlint widget.
+    About,
     /// The window's close button, or anything else that asks the window to go.
     Close,
     /// A new image, from a file, for `None`; otherwise that image's artwork,
@@ -74,12 +87,13 @@ pub enum Want {
 impl Want {
     /// The File bar's buttons, in order, which is also token order. Close has no
     /// button: the window's own close is the way to ask for it.
-    pub const BAR: [Want; 5] = [
+    pub const BAR: [Want; 6] = [
         Want::New,
         Want::Open,
         Want::Save,
         Want::SaveAs,
         Want::Preview,
+        Want::About,
     ];
 
     /// The integer the File bar sends back, for `Field::token`'s reason. `None`
@@ -98,17 +112,25 @@ impl Want {
             .copied()
     }
 
-    /// The file command a key held with Control is, in either case. Save as is
-    /// told from Save by Shift, never by the letter's case: one layout sends `S`
-    /// with Shift held and another `s`. Control+Shift+O and Control+Shift+N are
-    /// not file commands: the first adds a rectangle (`make::Kind`), and the
-    /// second is left alone as the add chords leave U and E. Control+Shift+P is
-    /// left alone the same way.
-    pub fn of_key(text: &str, shift: bool) -> Option<Want> {
+    /// The file command a key is: a letter held with Control, in either case, or
+    /// F1 with neither Control nor Shift. Save as is told from Save by Shift,
+    /// never by the letter's case: one layout sends `S` with Shift held and
+    /// another `s`. Control+Shift+O and Control+Shift+N are not file commands: the
+    /// first adds a rectangle (`make::Kind`), and the second is left alone as the
+    /// add chords leave U and E. Control+Shift+P is left alone the same way. A
+    /// letter without Control is typing, never a command. Control+F1 and Shift+F1
+    /// are left to the desktop, which takes them for its own on some (KDE).
+    pub fn of_key(text: &str, shift: bool, control: bool) -> Option<Want> {
         let mut chars = text.chars();
         let (Some(c), None) = (chars.next(), chars.next()) else {
             return None;
         };
+        if c == F1 {
+            return (!shift && !control).then_some(Want::About);
+        }
+        if !control {
+            return None;
+        }
         match (c.to_ascii_lowercase(), shift) {
             ('s', false) => Some(Want::Save),
             ('s', true) => Some(Want::SaveAs),
@@ -127,6 +149,7 @@ impl Want {
             Want::Save => "Save",
             Want::SaveAs => "Save as",
             Want::Preview => "Print",
+            Want::About => "About",
             Want::Close => "Close",
             Want::Image(_) => crate::make::IMAGE_CAPTION,
         }
@@ -140,6 +163,7 @@ impl Want {
             Want::Save => "Save label",
             Want::SaveAs => "Save label as",
             Want::Preview => "Print the label",
+            Want::About => "About relabel",
             Want::Close => "Close the window",
             Want::Image(_) => crate::make::IMAGE_BUTTON_NAME,
         }
@@ -154,6 +178,7 @@ impl Want {
             Want::Save => "Control+S",
             Want::SaveAs => "Control+Shift+S",
             Want::Preview => "Control+P",
+            Want::About => "F1",
             Want::Close => "",
             Want::Image(_) => crate::make::IMAGE_KEYS,
         }
@@ -166,11 +191,19 @@ impl Want {
             Want::Open => "nothing was opened",
             Want::Save | Want::SaveAs => "nothing was saved",
             Want::Preview => "the print pane was not opened",
+            Want::About => "the About pane was not opened",
             Want::Close => "nothing was closed",
             Want::Image(into) => Purpose::Artwork(into).undone(),
         }
     }
 }
+
+/// F1 as the toolkit spells it in a key event's text: the private-use code point
+/// Slint gives the key (i-slint-common key_codes.rs:60), which is what
+/// `slint::platform::Key::F1` converts to. Spelled here, not taken from the
+/// toolkit, because this module has none; the File bar's tests press F1 through
+/// the toolkit and find the About pane open.
+const F1: char = '\u{F704}';
 
 /// The three answers to the question about unsaved work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,6 +313,8 @@ pub enum FileCmd {
     },
     /// The print pane closed, by its Close button or Escape.
     PreviewClosed,
+    /// The About pane closed, by its Close button or Escape.
+    AboutClosed,
     /// What [`Next::Import`] came to. `ticket` is the one it carried.
     Imported {
         ticket: u64,
@@ -313,6 +348,8 @@ pub enum Next {
     Fresh(NewSpec),
     /// Show the print pane, or show it again with what it says now.
     Preview,
+    /// Show the About pane, or show it again.
+    About,
     /// Close the window: the question was answered and the work is saved or let
     /// go.
     Hide,
@@ -439,6 +476,8 @@ enum Wait {
     },
     /// The print pane is open.
     Previewing,
+    /// The About pane is open.
+    About,
 }
 
 /// Which file the document is, and what is open or under way.
@@ -499,6 +538,11 @@ impl Filing {
         self.wait == Wait::Previewing
     }
 
+    /// Whether the About pane is open.
+    pub fn about_open(&self) -> bool {
+        self.wait == Wait::About
+    }
+
     pub fn apply(&mut self, cmd: FileCmd, now: &Now) -> FileOutcome {
         let out = match cmd {
             FileCmd::Want(w) => self.want(w, now),
@@ -509,6 +553,12 @@ impl Filing {
             FileCmd::Opened { from, result } => self.opened(from, result),
             FileCmd::PreviewClosed => {
                 if self.wait == Wait::Previewing {
+                    self.wait = Wait::Idle;
+                }
+                FileOutcome::quiet()
+            }
+            FileCmd::AboutClosed => {
+                if self.wait == Wait::About {
                     self.wait = Wait::Idle;
                 }
                 FileOutcome::quiet()
@@ -580,6 +630,10 @@ impl Filing {
             // Pointer and keys cannot reach the File bar behind the pane, and an
             // assistive technology's action can, for the question's reason above.
             (Wait::Previewing, _) => return FileOutcome::said("close the print pane first"),
+            // The About pane keeps the print pane's three rules, for its reasons.
+            (Wait::About, Want::Close) => {}
+            (Wait::About, Want::About) => return FileOutcome::then(Next::About),
+            (Wait::About, _) => return FileOutcome::said("close the About pane first"),
             (Wait::Idle | Wait::Writing { .. }, _) => {}
         }
         if let Want::Image(into) = w {
@@ -593,6 +647,11 @@ impl Filing {
             Want::Preview => {
                 self.wait = Wait::Previewing;
                 return FileOutcome::then(Next::Preview);
+            }
+            // Nor here: the pane says what relabel is, not what the label is.
+            Want::About => {
+                self.wait = Wait::About;
+                return FileOutcome::then(Next::About);
             }
             Want::New => Intent::New,
             Want::Open => Intent::Open,
@@ -1298,6 +1357,10 @@ mod tests {
                 "the print pane was not opened: let go of the element first",
             ),
             (
+                Want::About,
+                "the About pane was not opened: let go of the element first",
+            ),
+            (
                 Want::Close,
                 "nothing was closed: let go of the element first",
             ),
@@ -1778,13 +1841,15 @@ mod tests {
             ("ss", false, None),
             ("", false, None),
         ] {
-            assert_eq!(Want::of_key(text, shift), want, "{text:?} {shift}");
+            assert_eq!(Want::of_key(text, shift, true), want, "{text:?} {shift}");
+            // Without Control a letter is typing.
+            assert_eq!(Want::of_key(text, shift, false), None, "{text:?} {shift}");
         }
         for w in Want::BAR {
             assert_eq!(w.token().and_then(Want::from_token), Some(w));
         }
         assert_eq!(Want::Close.token(), None);
-        assert_eq!(Want::from_token(5), None);
+        assert_eq!(Want::from_token(6), None);
         assert_eq!(Want::from_token(-1), None);
         for r in Reply::ALL {
             assert_eq!(Reply::from_token(r.token()), Some(r));
@@ -1801,11 +1866,10 @@ mod tests {
             ("p", true, None),
             ("P", true, None),
         ] {
-            assert_eq!(Want::of_key(text, shift), want, "{text:?} {shift}");
+            assert_eq!(Want::of_key(text, shift, true), want, "{text:?} {shift}");
         }
         assert_eq!(Want::Preview.token(), Some(4));
         assert_eq!(Want::from_token(4), Some(Want::Preview));
-        assert_eq!(Want::from_token(5), None);
         assert_eq!(
             (
                 Want::Preview.caption(),
@@ -1862,7 +1926,7 @@ mod tests {
     fn file_commands_are_refused_while_the_preview_is_open() {
         let mut f = at("/l/a.relabel");
         want(&mut f, Want::Preview, &unsaved(1));
-        for w in [Want::New, Want::Open, Want::Save, Want::SaveAs] {
+        for w in [Want::New, Want::Open, Want::Save, Want::SaveAs, Want::About] {
             assert_eq!(
                 want(&mut f, w, &unsaved(1)),
                 FileOutcome::said("close the print pane first"),
@@ -1942,6 +2006,148 @@ mod tests {
             FileOutcome::said("a file dialog is already open")
         );
         assert!(!f.previewing());
+    }
+
+    /// The sixth command opens the About pane: named About relabel, on F1 with
+    /// no modifier, with token 5. Its refusals name the About pane.
+    #[test]
+    fn about_is_the_sixth_command() {
+        assert_eq!(Want::About.token(), Some(5));
+        assert_eq!(Want::from_token(5), Some(Want::About));
+        assert_eq!(
+            (
+                Want::About.caption(),
+                Want::About.button_name(),
+                Want::About.keys()
+            ),
+            ("About", "About relabel", "F1")
+        );
+        let f1 = F1.to_string();
+        for (shift, control, want) in [
+            (false, false, Some(Want::About)),
+            (true, false, None),
+            (false, true, None),
+            (true, true, None),
+        ] {
+            assert_eq!(Want::of_key(&f1, shift, control), want, "{shift} {control}");
+        }
+        let held = Now {
+            pressed: true,
+            ..clean()
+        };
+        let mut f = at("/l/a.relabel");
+        assert_eq!(
+            want(&mut f, Want::About, &held),
+            FileOutcome::said("the About pane was not opened: let go of the element first")
+        );
+        assert!(!f.about_open());
+    }
+
+    #[test]
+    fn about_opens_without_asking_and_is_drawn_again_when_asked_again() {
+        let mut f = at("/l/a.relabel");
+        assert!(!f.about_open());
+        assert_eq!(
+            want(&mut f, Want::About, &unsaved(3)),
+            FileOutcome::then(Next::About)
+        );
+        assert!(f.about_open());
+        assert_eq!(
+            want(&mut f, Want::About, &unsaved(3)),
+            FileOutcome::then(Next::About)
+        );
+        assert!(f.about_open());
+    }
+
+    /// Only an assistive technology can reach the File bar behind the pane, and
+    /// what it presses there is refused, the print pane's button among it.
+    #[test]
+    fn file_commands_are_refused_while_the_about_pane_is_open() {
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::About, &unsaved(1));
+        for w in Want::BAR.into_iter().filter(|&w| w != Want::About) {
+            assert_eq!(
+                want(&mut f, w, &unsaved(1)),
+                FileOutcome::said("close the About pane first"),
+                "{w:?}"
+            );
+            assert!(f.about_open(), "{w:?}");
+        }
+        assert_eq!(
+            want(&mut f, Want::Image(None), &unsaved(1)),
+            FileOutcome::said("close the About pane first")
+        );
+        assert!(f.about_open());
+    }
+
+    #[test]
+    fn closing_with_the_about_pane_open_asks_or_allows() {
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::About, &clean());
+        assert_eq!(want(&mut f, Want::Close, &clean()).next, Next::Allow);
+
+        let mut f = Filing::new(None);
+        want(&mut f, Want::About, &unsaved(2));
+        assert_eq!(
+            want(&mut f, Want::Close, &unsaved(2)).next,
+            Next::Ask("Save this label before closing?".into())
+        );
+        assert!(!f.about_open());
+        assert_eq!(
+            reply(&mut f, Reply::Cancel, &unsaved(2)),
+            FileOutcome::said("nothing was closed")
+        );
+        assert_eq!(want(&mut f, Want::About, &unsaved(2)).next, Next::About);
+    }
+
+    #[test]
+    fn the_about_pane_closing_frees_the_file_commands() {
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::About, &clean());
+        assert_eq!(
+            f.apply(FileCmd::AboutClosed, &clean()),
+            FileOutcome::quiet()
+        );
+        assert!(!f.about_open());
+        assert_eq!(want(&mut f, Want::Preview, &clean()).next, Next::Preview);
+        // A late close, with the print pane showing, leaves it showing.
+        assert_eq!(
+            f.apply(FileCmd::AboutClosed, &clean()),
+            FileOutcome::quiet()
+        );
+        assert!(f.previewing());
+        assert_eq!(
+            want(&mut f, Want::About, &clean()),
+            FileOutcome::said("close the print pane first")
+        );
+    }
+
+    /// The question, a dialog and the New label pane keep the one place: F1 over
+    /// any of them is refused with their own words.
+    #[test]
+    fn about_is_refused_while_a_question_dialog_or_new_label_pane_is_open() {
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::Open, &unsaved(4));
+        assert_eq!(
+            want(&mut f, Want::About, &unsaved(4)).note.as_deref(),
+            Some("answer the question about unsaved changes first")
+        );
+        assert!(!f.about_open());
+
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::Open, &clean());
+        assert_eq!(
+            want(&mut f, Want::About, &clean()),
+            FileOutcome::said("a file dialog is already open")
+        );
+
+        let mut f = at("/l/a.relabel");
+        want(&mut f, Want::New, &clean());
+        assert_eq!(
+            want(&mut f, Want::About, &clean()),
+            FileOutcome::said("finish or cancel the new label first")
+        );
+        assert!(!f.about_open());
     }
 
     #[test]

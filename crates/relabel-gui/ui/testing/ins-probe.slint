@@ -9,11 +9,12 @@ export { ElRow, InsSlot, Tool, Grips, SizePreset, IssueRow, ChoiceRow, DefaultWi
 // Ctrl+Z code the application runs, and the pane it measures is the pane an
 // operator gets.
 //
-// Fixed at the application window's preferred size, because what the pane costs
-// the canvas beside it is measured against that size. Read from the shell's
-// global rather than copied, so the two cannot drift; the testing backend does
-// not size a window to its preferred size (testing_backend.rs:385-386). Exported
-// so a test can read the same numbers through `global::<DefaultWindow>()`.
+// At the application window's preferred size unless a test asks for another
+// (`probe-width`, `probe-height`), because what the pane costs the canvas beside
+// it is measured against that size. Read from the shell's global rather than
+// copied, so the two cannot drift; the testing backend does not size a window to
+// its preferred size (testing_backend.rs:385-386). Exported so a test can read
+// the same numbers through `global::<DefaultWindow>()`.
 export component InsProbe inherits Window {
     in property <image> plane <=> shell.plane;
     in property <int> plane-px-w <=> shell.plane-px-w;
@@ -40,6 +41,7 @@ export component InsProbe inherits Window {
     out property <int> view-px-h <=> shell.view-px-h;
     out property <int> grip-reach-px <=> shell.grip-reach-px;
     out property <bool> pointer-down <=> shell.pointer-down;
+    out property <length> about-top <=> shell.about-top;
     in property <string> status <=> shell.status;
     in property <[Tool]> file-tools <=> shell.file-tools;
     in property <[SizePreset]> new-presets <=> shell.new-presets;
@@ -104,13 +106,13 @@ export component InsProbe inherits Window {
     callback pan-to(x: int, y: int);
     callback view-resized();
     callback file-command(token: int);
-    callback file-of-key(text: string, shift: bool) -> int;
+    callback file-of-key(text: string, shift: bool, control: bool) -> int;
     // No chord is a file command until Rust says which are. A callback with no
     // handler answers 0 (i-slint-core callbacks.rs:34-42), which is New's token, so
     // a window whose files are not wired - most test probes - would take every
     // Control chord that reaches this far for New, the add chords among them.
     // `file::wire` replaces this.
-    file-of-key(text, shift) => {
+    file-of-key(text, shift, control) => {
         return -1;
     }
     callback unsaved-reply(answer: int);
@@ -122,6 +124,7 @@ export component InsProbe inherits Window {
     callback preview-act(what: int);
     callback preview-choose(index: int);
     callback preview-copies-edited(text: string);
+    callback about-closed();
 
     public function show-fields() {
         shell.show-fields();
@@ -147,13 +150,22 @@ export component InsProbe inherits Window {
         shell.show-preview();
     }
 
+    public function show-about(version: string, copyright: string, licence: string, repository: string, notices: string, trademark: string) {
+        shell.show-about(version, copyright, licence, repository, notices, trademark);
+    }
+
     // The testing backend ignores a window's title (testing_backend.rs:404-409), so
     // a test reads this property instead; bound as the application's is.
     in property <string> doc-title: "relabel";
     title: root.doc-title;
 
-    width: DefaultWindow.width;
-    height: DefaultWindow.height;
+    // The size, the application window's unless a test asks for another: the
+    // testing backend sizes the window it is told to (`Window::set_size`) but never
+    // its root, so a test that wants a shorter window sets both.
+    in property <length> probe-width: DefaultWindow.width;
+    in property <length> probe-height: DefaultWindow.height;
+    width: root.probe-width;
+    height: root.probe-height;
     background: #ffffff;
 
     shell := Designer {
@@ -186,7 +198,7 @@ export component InsProbe inherits Window {
         pan-to(x, y) => { root.pan-to(x, y); }
         view-resized() => { root.view-resized(); }
         file-command(t) => { root.file-command(t); }
-        file-of-key(t, s) => { return root.file-of-key(t, s); }
+        file-of-key(t, s, c) => { return root.file-of-key(t, s, c); }
         unsaved-reply(a) => { root.unsaved-reply(a); }
         new-feed-edited(t) => { root.new-feed-edited(t); }
         new-check(t) => { return root.new-check(t); }
@@ -196,5 +208,6 @@ export component InsProbe inherits Window {
         preview-act(w) => { root.preview-act(w); }
         preview-choose(i) => { root.preview-choose(i); }
         preview-copies-edited(t) => { root.preview-copies-edited(t); }
+        about-closed() => { root.about-closed(); }
     }
 }

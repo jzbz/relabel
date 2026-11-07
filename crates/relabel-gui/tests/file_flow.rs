@@ -657,6 +657,7 @@ fn the_file_bar_buttons_carry_their_chords_and_are_not_tab_stops() {
         ("Save label", "Control+S"),
         ("Save label as", "Control+Shift+S"),
         ("Print the label", "Control+P"),
+        ("About relabel", "F1"),
     ] {
         assert_eq!(
             button_of(&ui, name).accessible_description().as_deref(),

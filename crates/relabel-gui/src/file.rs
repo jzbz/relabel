@@ -1,7 +1,7 @@
 //! The file commands' wiring: the File bar, the chords, the question about unsaved
 //! work, the New label pane, importing artwork for the edit bar's Image tool and
-//! the inspector's artwork button, opening the print pane and the window's close
-//! button, driven through [`Filing`].
+//! the inspector's artwork button, opening the print pane and the About pane, and
+//! the window's close button, driven through [`Filing`].
 //!
 //! A close while a print job runs is `print`'s first: it is held there, and asked
 //! for again through [`Filing`] once the job has ended, by the replay [`wire`]
@@ -11,7 +11,7 @@
 //! commit what a field is holding, unless an element is held or the command is an
 //! import's answer, which the operator did not ask for then; read the document
 //! into a [`Now`]; apply the command; say the note; and do what [`Next`] says -
-//! show the question or the pane, ask the chooser, write, read, make, start an
+//! show the question or a pane, ask the chooser, write, read, make, start an
 //! import or place its artwork, or hide the window - feeding a write's, an open's
 //! or an import's result back in as the next command.
 //!
@@ -22,6 +22,7 @@
 //! surface commits a field when it gets the keyboard and that borrows the canvas
 //! (canvas.slint `surface-focused`, ins.rs `on_field_commit`).
 
+use crate::about;
 use crate::canvas::{Canvas, PanePush, said_again};
 use crate::choose::{Answer, Chooser, Picked};
 use crate::disk;
@@ -161,11 +162,20 @@ pub fn wire<H: FileHost>(
             drive(files, host, FileCmd::Want(w));
         }
     });
-    // Needs no document: which letters are chords is `Want`'s alone.
-    host.on_file_of_key(|text, shift| {
-        Want::of_key(&text, shift)
+    // Needs no document: which keys are chords is `Want`'s alone.
+    host.on_file_of_key(|text, shift, control| {
+        Want::of_key(&text, shift, control)
             .and_then(Want::token)
             .unwrap_or(-1)
+    });
+    // The About pane has closed itself. It reads nothing of the document, so no
+    // `Now` is read for it, as for the print pane's close (`print`).
+    on!(on_about_closed, |files, _host| {
+        let out = files
+            .filing
+            .borrow_mut()
+            .apply(FileCmd::AboutClosed, &Now::default());
+        debug_assert_eq!(out.note, None, "closing the pane is quiet");
     });
     on!(on_unsaved_reply, |files, host, token| {
         if let Some(r) = Reply::from_token(token) {
@@ -422,6 +432,19 @@ impl<H: FileHost> Files<H> {
             Next::Preview => {
                 host.invoke_close_file_popups();
                 (self.preview)(host);
+            }
+            // The same: closed first, then shown, so asked again it is shown
+            // afresh with the keyboard back on Close.
+            Next::About => {
+                host.invoke_close_file_popups();
+                host.invoke_show_about(
+                    about::version_says().as_str().into(),
+                    about::COPYRIGHT.into(),
+                    about::licence_says().as_str().into(),
+                    about::REPOSITORY.into(),
+                    about::NOTICES.into(),
+                    about::TRADEMARK.into(),
+                );
             }
             Next::Fresh(spec) => {
                 let made =

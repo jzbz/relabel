@@ -521,7 +521,7 @@ pub trait PresetRow: Clone + 'static {
 }
 
 /// The file half of a window: the File bar, the title, the question about unsaved
-/// work and the New label pane.
+/// work, the New label pane and the About pane.
 ///
 /// Over the other three halves rather than beside them, because a file command
 /// replaces the document every one of them shows and ends with the keyboard on the
@@ -546,12 +546,27 @@ pub trait FileHost: InsHost + EditHost + ViewHost {
         feed: slint::SharedString,
         hint: slint::SharedString,
     );
+    /// The version, the copyright, the licence, the repository, where the notices
+    /// are, and the
+    /// trademark line: `about`'s.
+    fn invoke_show_about(
+        &self,
+        version: slint::SharedString,
+        copyright: slint::SharedString,
+        licence: slint::SharedString,
+        repository: slint::SharedString,
+        notices: slint::SharedString,
+        trademark: slint::SharedString,
+    );
     fn invoke_close_file_popups(&self);
     fn invoke_focus_canvas(&self);
 
     fn on_file_command(&self, f: impl FnMut(i32) + 'static);
-    /// Answers a File bar token, or -1 for a key that is no file command's chord.
-    fn on_file_of_key(&self, f: impl FnMut(slint::SharedString, bool) -> i32 + 'static);
+    /// Answers a File bar token, or -1 for a key that is no file command's chord:
+    /// the key's text, then whether Shift and Control are held.
+    fn on_file_of_key(&self, f: impl FnMut(slint::SharedString, bool, bool) -> i32 + 'static);
+    /// The About pane has closed itself.
+    fn on_about_closed(&self, f: impl FnMut() + 'static);
     fn on_unsaved_reply(&self, f: impl FnMut(i32) + 'static);
     fn on_new_feed_edited(&self, f: impl FnMut(slint::SharedString) + 'static);
     /// Answers whether the length can make a label, having said why not when not.
@@ -616,6 +631,19 @@ macro_rules! impl_file_host {
             ) {
                 <$win>::invoke_show_new(self, printer, across, about, feed, hint)
             }
+            fn invoke_show_about(
+                &self,
+                version: slint::SharedString,
+                copyright: slint::SharedString,
+                licence: slint::SharedString,
+                repository: slint::SharedString,
+                notices: slint::SharedString,
+                trademark: slint::SharedString,
+            ) {
+                <$win>::invoke_show_about(
+                    self, version, copyright, licence, repository, notices, trademark,
+                )
+            }
             fn invoke_close_file_popups(&self) {
                 <$win>::invoke_close_file_popups(self)
             }
@@ -625,8 +653,14 @@ macro_rules! impl_file_host {
             fn on_file_command(&self, f: impl FnMut(i32) + 'static) {
                 <$win>::on_file_command(self, f)
             }
-            fn on_file_of_key(&self, f: impl FnMut(slint::SharedString, bool) -> i32 + 'static) {
+            fn on_file_of_key(
+                &self,
+                f: impl FnMut(slint::SharedString, bool, bool) -> i32 + 'static,
+            ) {
                 <$win>::on_file_of_key(self, f)
+            }
+            fn on_about_closed(&self, f: impl FnMut() + 'static) {
+                <$win>::on_about_closed(self, f)
             }
             fn on_unsaved_reply(&self, f: impl FnMut(i32) + 'static) {
                 <$win>::on_unsaved_reply(self, f)

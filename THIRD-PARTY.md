@@ -53,6 +53,21 @@ btleplug's tree since it gained the printer link (see The printer link, below),
 so its notice file needs the network as the workspace's does, and it has to be
 generated again before any release.
 
+The notice file travels beside the binary, not inside it. The About pane says
+that each release ships with it and that this file says how it is made; it
+names no path, because where a release puts the file is not decided yet. No
+release step puts it there yet either, so before the first release the place
+has to be chosen and the GUI's file, generated for that release, bundled with
+the binary there; the pane's notices line (`crates/relabel-gui/src/about.rs`)
+can name the path then. Building the file in was considered and not done: the
+script needs the network, so `cargo build` and the offline tests could not make
+it; a copy kept in the repository would go stale with every change to
+`Cargo.lock`, the reason this ledger gives above for generating it; the GUI's
+file is about 376 KB, which compressed would need a new dependency; and
+thousands of lines in one popup are no way to read anything with a screen
+reader. Shipping the file with the binary is what the MIT and BSD notices ask
+of a binary distribution.
+
 The script appends the embedded fonts' licence, `crates/relabel-render/fonts/
 OFL.txt`, after the crates' notices; cargo-about knows only crates. See Fonts,
 below.
@@ -187,13 +202,37 @@ On Linux the GUI now links `libdbus-1` as well (see System libraries).
   use in an embedded system and exposing Slint's API, neither of which this
   does.
 
-  **Section 2 is an obligation this project has not yet met.** It requires
-  either Slint's `AboutSlint` widget in an About screen reachable from the
-  application's top level, or Slint's attribution badge on a public page,
-  preferably where the binaries are downloaded. The licence names the widget
-  itself, so an About screen with only a line of text naming Slint is not what
-  it asks for. The first slice of the editor has no About screen at all, so
-  **no binary may be released until one of the two is in place.**
+  **Section 2 is met by the About pane, on a reading still to be settled.** It
+  requires either Slint's `AboutSlint` widget in an About screen or dialog
+  "that is accessible from the top level menu of the Application"
+  (`packaging/licenses/LicenseRef-Slint-Royalty-free-2.0.md:25`), or Slint's
+  attribution badge on a public page, preferably where the binaries are
+  downloaded. The licence names the widget itself, so an About screen with only
+  a line of text naming Slint is not what it asks for. relabel has no menu bar.
+  Its top level is the File bar, which this project reads as the top level
+  menu the licence means, and the File bar's sixth button, About, opens the
+  About pane, as F1 does. That reading is relabel's own and has not been put to
+  Slint; publishing the badge would meet section 2 without it. The pane shows
+  the widget as Slint ships it - the MadeWithSlint logo, the line with Slint's
+  version and address, and the click that opens slint.dev - beside relabel's
+  own version, copyright, licence and repository
+  (`crates/relabel-gui/ui/about.slint`).
+  Tests hold it there: `tests/about_flow.rs` finds the widget's logo in the
+  pane, at a size that shows it and wholly inside it, in the default window and
+  in two shorter ones, where relabel's lines scroll so that the widget stays
+  whole. In shorter windows still the pane rises over the File bar, and in the
+  shortest everything above Close scrolls as one, so the widget is brought
+  into view by the keys or the pointer rather than shown at once; the tests
+  find it brought wholly into view that way in a window 250 pixels tall, and
+  its logo in one 220 pixels tall. `tests/about_pixels.rs` finds it drawn, in
+  Slint's colours, with
+  the software renderer the application ships. The licence sets no size,
+  wording or placement for the widget, and does not ask for its link to work
+  from the keyboard, which it does not: the click is the pointer's alone, and
+  the address it opens is in the line a screen reader reads. The widget's line
+  says the Slint version it came with, so it follows an update by itself. The
+  badge is published nowhere: putting it on the README or a release page is a
+  decision of its own, and the one that would close the question above.
 
   It is also the one licence in the notice file that cargo-about cannot carry:
   a `LicenseRef` has no canonical text and a clarification does not give the

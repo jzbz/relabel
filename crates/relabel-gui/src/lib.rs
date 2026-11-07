@@ -3,12 +3,14 @@
 //! Two panes: the label as dots, with a frame round every element, placement and
 //! size by pointer or by keyboard, and a bar to add and delete elements; and beside
 //! it the selected element's fields. Above them, a bar to make, open, save and
-//! print a label, and a line saying which printer is connected. The print pane
+//! print a label and to say what relabel is, and a line saying which printer is
+//! connected. The print pane
 //! shows what will print, connects to a printer and prints on it, each copy its
 //! own one-copy job. The document lives in Rust; the `.slint` side holds flat
 //! models of rows and slots and no rules at all.
 
 pub mod a11y;
+pub mod about;
 pub mod canvas;
 pub mod choose;
 pub mod disk;

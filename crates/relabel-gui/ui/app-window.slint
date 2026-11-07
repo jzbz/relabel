@@ -98,13 +98,13 @@ export component AppWindow inherits Window {
     callback pan-to(x: int, y: int);
     callback view-resized();
     callback file-command(token: int);
-    callback file-of-key(text: string, shift: bool) -> int;
+    callback file-of-key(text: string, shift: bool, control: bool) -> int;
     // No chord is a file command until Rust says which are. A callback with no
     // handler answers 0 (i-slint-core callbacks.rs:34-42), which is New's token, so
     // a window whose files are not wired - most test probes - would take every
     // Control chord that reaches this far for New, the add chords among them.
     // `file::wire` replaces this.
-    file-of-key(text, shift) => {
+    file-of-key(text, shift, control) => {
         return -1;
     }
     callback unsaved-reply(answer: int);
@@ -116,6 +116,7 @@ export component AppWindow inherits Window {
     callback preview-act(what: int);
     callback preview-choose(index: int);
     callback preview-copies-edited(text: string);
+    callback about-closed();
 
     public function show-fields() {
         shell.show-fields();
@@ -139,6 +140,10 @@ export component AppWindow inherits Window {
 
     public function show-preview() {
         shell.show-preview();
+    }
+
+    public function show-about(version: string, copyright: string, licence: string, repository: string, notices: string, trademark: string) {
+        shell.show-about(version, copyright, licence, repository, notices, trademark);
     }
 
     // Computed in Rust (`filing::title`) and pushed after every outcome, so the
@@ -179,7 +184,7 @@ export component AppWindow inherits Window {
         pan-to(x, y) => { root.pan-to(x, y); }
         view-resized() => { root.view-resized(); }
         file-command(t) => { root.file-command(t); }
-        file-of-key(t, s) => { return root.file-of-key(t, s); }
+        file-of-key(t, s, c) => { return root.file-of-key(t, s, c); }
         unsaved-reply(a) => { root.unsaved-reply(a); }
         new-feed-edited(t) => { root.new-feed-edited(t); }
         new-check(t) => { return root.new-check(t); }
@@ -189,5 +194,6 @@ export component AppWindow inherits Window {
         preview-act(w) => { root.preview-act(w); }
         preview-choose(i) => { root.preview-choose(i); }
         preview-copies-edited(t) => { root.preview-copies-edited(t); }
+        about-closed() => { root.about-closed(); }
     }
 }
