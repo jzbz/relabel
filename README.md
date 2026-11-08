@@ -216,3 +216,11 @@ open. See the bring-up checklist in
 MIT. See [LICENSE](LICENSE). The licences of the crates relabel is built from,
 and how the notice file that ships with each release is generated, are in
 [THIRD-PARTY.md](THIRD-PARTY.md).
+
+relabel uses [Slint](https://slint.dev) under its royalty-free licence. Its
+attribution is Slint's own widget in the About pane, and this badge:
+
+<a href="https://slint.dev"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/made-with-slint-dark.svg">
+  <img src="docs/made-with-slint-light.svg" alt="Made with Slint" width="110">
+</picture></a>
